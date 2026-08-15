@@ -1,0 +1,14 @@
+# @dsn/dsh-review bundle patch: insert the review plugin row.
+# Applied after the base + web-app bundle layers; the profile's own
+# cordis.patch.yml can override this row's config by id ("review").
+- insert:
+    - id: review
+      name: '@dsn/dsh-review'
+      config:
+        enabled: true
+        autoOpenDiff: true
+        openOnRevert: true
+        traeCommand: ''
+        reuseWindow: true
+        trackTools: ['write', 'edit']
+        maxSnapshotBytes: 10485760

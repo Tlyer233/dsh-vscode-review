@@ -1,0 +1,4 @@
+# dsh-review-changes bundle patch: inserts plugin row into web profile roster.
+- insert:
+    - id: review-changes
+      name: review-changes 

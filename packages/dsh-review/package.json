@@ -1,0 +1,25 @@
+{
+  "name": "@dsn/dsh-review",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "dsh review plugin: journals every AI write/edit into a change-manifest store, opens the Trae diff view, exposes review_status / review_revert / review_open tools — no git involved.",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./review-journal": "./lib/review-journal.js",
+    "./trae": "./lib/trae.js"
+  },
+  "files": [
+    "lib",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "license": "MIT",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}
