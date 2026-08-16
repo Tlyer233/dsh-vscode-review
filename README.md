@@ -1,6 +1,10 @@
 # dsh-vscode-review
 
-一个仓库装齐 dsh 插件 + VS Code 插件：
+![banner](assets/banner.jpg)
+
+一个仓库装齐 dsh 插件 + VS Code 插件。
+
+![flow](assets/flow.png)
 
 | 文件夹 | 内容 | 说明 |
 |---|---|---|
