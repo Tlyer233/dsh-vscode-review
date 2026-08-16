@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { createRequire } from 'node:module'
 
 const require = createRequire(import.meta.url)
-const { computeReviewEntries } = require('../lib/index.js')
+const { computeReviewEntries, computeReviewEntriesAll } = require('../lib/index.js')
 
 let failures = 0
 function check(name, cond, extra) {
@@ -99,6 +99,41 @@ console.log('\n[3] counts')
   check('a1 one hunk +1/-1', a1?.unreviewedHunks === 1 && a1?.additions === 1 && a1?.deletions === 1)
   const multi = entries.find(e => e.id === 'a4-new')
   check('multi one hunk', multi?.unreviewedHunks === 1)
+}
+
+console.log('\n[4] all-workbenches history view')
+{
+  const fs = require('node:fs')
+  const keyA = fs.realpathSync.native(wbA)
+  const keyB = fs.realpathSync.native(wbB)
+  const all = computeReviewEntriesAll(store, wbA)
+  const groups = all.groups
+  const legacy = groups.find(g => g.key === '__legacy__')
+  const gA = groups.find(g => g.key === keyA)
+  const gB = groups.find(g => g.key === keyB)
+  check('total files matches pending across groups', all.totalFiles === 4, String(all.totalFiles))
+  check('workbench A group exists', !!gA && gA.entries.length === 2)
+  check('workbench B group exists', !!gB && gB.entries.length === 1)
+  check('legacy group exists with legacy entry', !!legacy && legacy.entries.length === 1 && legacy.entries[0].id === 'legacy1')
+  check('legacy group sorted last', groups[groups.length - 1].key === '__legacy__')
+  check('current workbench sorted first', groups[0].key === keyA)
+}
+
+console.log('\n[5] subdirectory workbench scope')
+{
+  const wbSub = join(wbA, 'sub')
+  mkdirSync(wbSub, { recursive: true })
+  const wbSibling = wbA + '-sibling'
+  mkdirSync(wbSibling, { recursive: true })
+  const f8 = join(wbSub, 'sub.py')
+  putEntry('sub1', wbSub, f8, 'update', 'a' + NL, 'b' + NL)
+  writeFileSync(f8, 'b' + NL)
+  const f9 = join(wbSibling, 'sibling.py')
+  putEntry('sib1', wbSibling, f9, 'update', 'a' + NL, 'b' + NL)
+  writeFileSync(f9, 'b' + NL)
+  const entries = computeReviewEntries(store, wbA)
+  check('subdirectory workbenchId included', entries.some(e => e.id === 'sub1'))
+  check('sibling workbenchId excluded', !entries.some(e => e.id === 'sib1'))
 }
 
 rmSync(root, { recursive: true, force: true })

@@ -145,17 +145,22 @@ function computeReviewEntries(storeDir, workbench) {
   let names = []
   try { names = fs.readdirSync(storeDir).filter(n => n.endsWith('.json')) } catch {}
 
-  // 1. Strict workbench isolation. Legacy entries without workbenchId are
-  //    deliberately hidden everywhere (they predate workbench tagging).
-  //    Keep ALL statuses here: the newest entry decides whether the file is
-  //    pending. Never fall back to an older committed entry after the newest
-  //    one was accepted/reverted — that is what made reviewed files reappear.
+  // 1. Workbench isolation, now with subdirectory scope. Legacy entries
+  //    without workbenchId are deliberately hidden everywhere (they predate
+  //    workbench tagging). Keep ALL statuses here: the newest entry decides
+  //    whether the file is pending. Never fall back to an older committed
+  //    entry after the newest one was accepted/reverted — that is what made
+  //    reviewed files reappear.
+  const scope = canonicalPath(workbench)
   const byFile = new Map()
   for (const n of names) {
     const e = readJson(path.join(storeDir, n))
     if (!e || !e.filePath) continue
     if (typeof e.workbenchId !== 'string' || !e.workbenchId) continue
-    if (canonicalPath(e.workbenchId) !== canonicalPath(workbench)) continue
+    const wb = canonicalPath(e.workbenchId)
+    const same = wb === scope
+    const child = wb.startsWith(scope + path.sep)
+    if (!same && !child) continue
     const key = path.resolve(e.filePath)
     if (!byFile.has(key)) byFile.set(key, [])
     byFile.get(key).push(e)
@@ -164,89 +169,174 @@ function computeReviewEntries(storeDir, workbench) {
   const results = []
   for (const [filePath, entries] of byFile) {
     entries.sort((a, b) => String(b.at || '').localeCompare(String(a.at || '')))
-    const newest = entries[0]
-
-    // File-level gate, identical to VSCode findEntryForFile: only the
-    // newest entry counts. Accepted/reverted newest entry -> file hidden.
-    if (newest.status !== 'committed') continue
-
-    // 2. Baseline = VSCode ReviewCore.original when this entry was reviewed
-    //    with the new core; otherwise the newest committed entry's own .before
-    //    (create -> empty baseline). This is what keeps the panel and the
-    //    inline editor showing the same hunks.
-    const core = readCore(storeDir, newest.id)
-    let beforeText
-    let coreUsed = false
-    if (core) {
-      beforeText = core.original
-      coreUsed = true
-    } else {
-      const beforePath = path.join(storeDir, newest.id + '.before')
-      if (fs.existsSync(beforePath)) {
-        beforeText = fs.readFileSync(beforePath, 'utf8')
-      } else if (newest.operation === 'create') {
-        beforeText = ''
-      } else {
-        continue
-      }
-    }
-
-    // 3. Current file from disk. Missing files are skipped until the
-    //    extension supports inline review for deletions — never show a file
-    //    that cannot actually be AC/RJ-ed.
-    let currentText
-    try { currentText = fs.readFileSync(filePath, 'utf8') } catch { continue }
-
-    const totalHunks = diffHunks(beforeText, currentText)
-    if (totalHunks.length === 0) continue
-
-    // 4. Core baseline already absorbed accepted hunks, so every diff hunk
-    //    is unreviewed. Legacy no-core entries use the old decisions fallback
-    //    so pre-core review data stays hidden.
-    let unreviewed = totalHunks
-    if (!coreUsed) {
-      const reviewed = new Set()
-      const decs = readJson(path.join(storeDir, newest.id + '.decisions.json'))
-      if (Array.isArray(decs)) {
-        for (const d of decs) {
-          if (typeof d?.text === 'string' && d.text) reviewed.add(d.text)
-          if (typeof d?.bt === 'string' && d.bt) reviewed.add(d.bt)
-        }
-      }
-      const docLines = splitLines(currentText)
-      const blines = splitLines(beforeText)
-      unreviewed = totalHunks.filter(h => {
-        const afterBlock = h.afterCount > 0 ? docLines.slice(h.afterStart, h.afterStart + h.afterCount).join('\n') : ''
-        const beforeBlock = h.beforeCount > 0 ? blines.slice(h.beforeStart, h.beforeStart + h.beforeCount).join('\n') : ''
-        if (afterBlock && reviewed.has(afterBlock)) return false
-        if (beforeBlock && reviewed.has(beforeBlock)) return false
-        return true
-      })
-    }
-    if (unreviewed.length === 0) continue
-
-    let additions = 0, deletions = 0
-    for (const h of unreviewed) {
-      additions += h.afterCount
-      deletions += h.beforeCount
-    }
-
-    results.push({
-      id: newest.id,
-      filePath: newest.filePath,
-      operation: newest.operation || 'update',
-      additions,
-      deletions,
-      totalHunks: totalHunks.length,
-      unreviewedHunks: unreviewed.length,
-      fileExists: true,
-      at: newest.at || '',
-      workbenchId: newest.workbenchId,
-    })
+    const item = computeFileReview(storeDir, filePath, entries[0])
+    if (item) results.push(item)
   }
 
   results.sort((a, b) => String(b.at).localeCompare(String(a.at)))
   return results
+}
+
+/**
+ * File-level review computation shared by the single-workbench panel and the
+ * historical all-workbenches view. `newest` must be the newest entry for the
+ * file (the file-level gate: accepted/reverted newest hides the file).
+ */
+function computeFileReview(storeDir, filePath, newest) {
+  if (!newest || newest.status !== 'committed') return null
+
+  // 2. Baseline = VSCode ReviewCore.original when this entry was reviewed
+  //    with the new core; otherwise the newest committed entry's own .before
+  //    (create -> empty baseline). This is what keeps the panel and the
+  //    inline editor showing the same hunks.
+  const core = readCore(storeDir, newest.id)
+  let beforeText
+  let coreUsed = false
+  if (core) {
+    beforeText = core.original
+    coreUsed = true
+  } else {
+    const beforePath = path.join(storeDir, newest.id + '.before')
+    if (fs.existsSync(beforePath)) {
+      beforeText = fs.readFileSync(beforePath, 'utf8')
+    } else if (newest.operation === 'create') {
+      beforeText = ''
+    } else {
+      return null
+    }
+  }
+
+  // 3. Current file from disk. Missing files are skipped until the
+  //    extension supports inline review for deletions — never show a file
+  //    that cannot actually be AC/RJ-ed.
+  let currentText
+  try { currentText = fs.readFileSync(filePath, 'utf8') } catch { return null }
+
+  const totalHunks = diffHunks(beforeText, currentText)
+  if (totalHunks.length === 0) return null
+
+  // 4. Core baseline already absorbed accepted hunks, so every diff hunk
+  //    is unreviewed. Legacy no-core entries use the old decisions fallback
+  //    so pre-core review data stays hidden.
+  let unreviewed = totalHunks
+  if (!coreUsed) {
+    const reviewed = new Set()
+    const decs = readJson(path.join(storeDir, newest.id + '.decisions.json'))
+    if (Array.isArray(decs)) {
+      for (const d of decs) {
+        if (typeof d?.text === 'string' && d.text) reviewed.add(d.text)
+        if (typeof d?.bt === 'string' && d.bt) reviewed.add(d.bt)
+      }
+    }
+    const docLines = splitLines(currentText)
+    const blines = splitLines(beforeText)
+    unreviewed = totalHunks.filter(h => {
+      const afterBlock = h.afterCount > 0 ? docLines.slice(h.afterStart, h.afterStart + h.afterCount).join('\n') : ''
+      const beforeBlock = h.beforeCount > 0 ? blines.slice(h.beforeStart, h.beforeStart + h.beforeCount).join('\n') : ''
+      if (afterBlock && reviewed.has(afterBlock)) return false
+      if (beforeBlock && reviewed.has(beforeBlock)) return false
+      return true
+    })
+  }
+  if (unreviewed.length === 0) return null
+
+  let additions = 0, deletions = 0
+  for (const h of unreviewed) {
+    additions += h.afterCount
+    deletions += h.beforeCount
+  }
+
+  return {
+    id: newest.id,
+    filePath: newest.filePath,
+    operation: newest.operation || 'update',
+    additions,
+    deletions,
+    totalHunks: totalHunks.length,
+    unreviewedHunks: unreviewed.length,
+    fileExists: true,
+    at: newest.at || '',
+    workbenchId: newest.workbenchId,
+  }
+}
+
+/**
+ * Historical view across ALL workbenches. Groups every file whose newest
+ * review entry is still `committed`, including legacy entries that predate
+ * workbench tagging (they are grouped under '(未归属工作区)'). Exported for
+ * tests.
+ */
+function computeReviewEntriesAll(storeDir, currentWorkbench) {
+  let names = []
+  try { names = fs.readdirSync(storeDir).filter(n => n.endsWith('.json')) } catch {}
+
+  // Collect every entry for each file path, then let the GLOBAL newest entry
+  // decide. This matches VSCode findEntryForFile (the extension picks the
+  // newest committed entry for a file across all workbenches), so the AC/RJ
+  // buttons in the history panel always act on the entry the extension will
+  // actually use. The file is grouped under the workbench of that newest
+  // committed entry; legacy entries without workbenchId go to
+  // '(未归属工作区)'.
+  const byFile = new Map()
+  for (const n of names) {
+    const e = readJson(path.join(storeDir, n))
+    if (!e || !e.filePath) continue
+    const key = path.resolve(e.filePath)
+    if (!byFile.has(key)) byFile.set(key, [])
+    byFile.get(key).push(e)
+  }
+
+  const groups = new Map()
+  const groupFor = (key, label) => {
+    if (!groups.has(key)) groups.set(key, { key, workbenchId: label, entries: [] })
+    return groups.get(key)
+  }
+
+  for (const [filePath, arr] of byFile) {
+    arr.sort((a, b) => String(b.at || '').localeCompare(String(a.at || '')))
+    const newest = arr[0]
+    const item = computeFileReview(storeDir, filePath, newest)
+    if (!item) continue
+
+    let key, label
+    if (typeof newest.workbenchId === 'string' && newest.workbenchId) {
+      key = canonicalPath(newest.workbenchId)
+      label = newest.workbenchId
+    } else {
+      key = '__legacy__'
+      label = '(未归属工作区)'
+    }
+    const g = groupFor(key, label)
+    g.entries.push(item)
+  }
+
+  const outGroups = [...groups.values()]
+  for (const g of outGroups) {
+    g.entries.sort((a, b) => String(b.at).localeCompare(String(a.at)))
+  }
+
+  const canonicalCurrent = currentWorkbench ? canonicalPath(currentWorkbench) : ''
+  outGroups.sort((a, b) => {
+    if (canonicalCurrent) {
+      if (a.key === canonicalCurrent && b.key !== canonicalCurrent) return -1
+      if (b.key === canonicalCurrent && a.key !== canonicalCurrent) return 1
+    }
+    if (a.key === '__legacy__') return 1
+    if (b.key === '__legacy__') return -1
+    return String(a.workbenchId).localeCompare(String(b.workbenchId))
+  })
+
+  let totalFiles = 0, totalHunks = 0, totalAdditions = 0, totalDeletions = 0
+  for (const g of outGroups) {
+    totalFiles += g.entries.length
+    for (const e of g.entries) {
+      totalHunks += e.unreviewedHunks
+      totalAdditions += e.additions
+      totalDeletions += e.deletions
+    }
+  }
+
+  return { groups: outGroups, totalFiles, totalUnreviewedHunks: totalHunks, totalAdditions, totalDeletions }
 }
 
 function apply(ctx) {
@@ -267,6 +357,25 @@ function apply(ctx) {
       }
     },
   }), 'review-changes: API route')
+
+  // API: all historical unresolved files grouped by workbench.
+  ctx.effect(() => webServer.register({
+    kind: 'exact',
+    path: '/api/review/all',
+    handler: async (req, res) => {
+      if (req.method !== 'GET') { res.writeHead(405); res.end(); return }
+      try {
+        let current = ''
+        try {
+          const url = new URL(req.url, 'http://127.0.0.1')
+          current = url.searchParams.get('current') || ''
+        } catch { /* noop */ }
+        sendJson(res, 200, computeReviewEntriesAll(storeDir, current))
+      } catch (err) {
+        sendJson(res, 500, { error: String(err?.message || err) })
+      }
+    },
+  }), 'review-changes: all-workbenches route')
 
   // API: open file in VS Code
   ctx.effect(() => webServer.register({
@@ -310,4 +419,4 @@ function apply(ctx) {
   }), 'review-changes: batch route')
 }
 
-module.exports = { name, inject, apply, computeReviewEntries }
+module.exports = { name, inject, apply, computeReviewEntries, computeReviewEntriesAll }
