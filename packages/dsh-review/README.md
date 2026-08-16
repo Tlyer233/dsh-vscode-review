@@ -11,20 +11,28 @@ dsh (write/edit) ─▶ review 插件 ─▶ 记录 before/after 快照 ($DSH_HO
                               └─▶ trae --diff <before快照> <当前文件> (自动打开 diff)
         ├─ review_status   列出改动并验证磁盘内容是否与写入一致 (match/drifted/missing)
         ├─ review_revert   用 before 快照还原（版本守卫，防覆盖新改动；新建文件则删除）
-        └─ review_open     重新打开某个改动的 VSCODE diff
+        └─ review_open     重新打开某个改动的 diff
 ```
 
 ## Install
 
-### 方式一：GitHub 分支安装（推荐）
+### 推荐：套件一键安装（同时装 dsh 和 VSCode 插件）
+
+```sh
+git clone https://github.com/Tlyer233/dsh-vscode-review.git
+cd dsh-vscode-review
+./install.sh          # Windows 用 .\install.ps1
+```
+
+### 仅安装 dsh-review
 
 ```sh
 dsh plugin --profile web add github:Tlyer233/dsh-vscode-review#dsh-review
 ```
 
-安装后重启 dsh web 生效
+安装后重启 dsh web 生效。
 
-### 方式二：源码目录安装
+### 源码目录安装
 
 ```sh
 git clone https://github.com/Tlyer233/dsh-vscode-review.git
