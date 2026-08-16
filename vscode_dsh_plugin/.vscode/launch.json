@@ -1,0 +1,17 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "dsh-review (proposed API)",
+      "type": "extensionHost",
+      "request": "launch",
+      "args": [
+        "--extensionDevelopmentPath=${workspaceFolder}",
+        "--enable-proposed-api=dsn.dsh-review-vscode"
+      ],
+      "outFiles": [
+        "${workspaceFolder}/extension.js"
+      ]
+    }
+  ]
+}

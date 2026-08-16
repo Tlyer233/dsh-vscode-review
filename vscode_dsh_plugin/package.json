@@ -1,0 +1,226 @@
+{
+  "name": "dsh-review-vscode",
+  "displayName": "dsh review — inline diff + revert",
+  "description": "Pops an INLINE diff in VS Code whenever the dsh-review dsh plugin journals a write/edit, with one-command revert from the before snapshot (no git).",
+  "version": "0.1.0",
+  "publisher": "dsn",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "keywords": [
+    "dsh",
+    "review",
+    "diff",
+    "ai"
+  ],
+  "activationEvents": [
+    "onStartupFinished",
+    "onView:dshReview.dshWebview"
+  ],
+  "main": "./extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "dshReview.showDiff",
+        "title": "dsh review: Show diff for active file"
+      },
+      {
+        "command": "dshReview.revert",
+        "title": "dsh review: Revert active file to before-state"
+      },
+      {
+        "command": "dshReview.status",
+        "title": "dsh review: Show change log"
+      },
+      {
+        "command": "dshReview.acceptAll",
+        "title": "dsh review: Accept All hunks in active file"
+      },
+      {
+        "command": "dshReview.goToNextHunk",
+        "title": "dsh review: Next hunk"
+      },
+      {
+        "command": "dshReview.goToPrevHunk",
+        "title": "dsh review: Previous hunk"
+      },
+      {
+        "command": "dshReview.focusEditor",
+        "title": "dsh review: Return to inline review editor"
+      },
+      {
+        "command": "dshReview.listPending",
+        "title": "dsh review: Show pending inline reviews"
+      },
+      {
+        "command": "dshReview.undoLast",
+        "title": "dsh review: Undo last hunk action"
+      },
+      {
+        "command": "dshReview.undoReviewAction",
+        "title": "dsh review: Undo last review action"
+      },
+      {
+        "command": "dshReview.openDshSidebar",
+        "title": "dsh: Toggle dsh panel"
+      },
+      {
+        "command": "dshReview.sendSelectionToDsh",
+        "title": "dsh: Send selection to dsh input"
+      },
+      {
+        "command": "dshReview.acceptAllTitle",
+        "title": "dsh review: Accept all in this file",
+        "icon": {
+          "light": "media/dsh-accept.svg",
+          "dark": "media/dsh-accept.svg"
+        }
+      },
+      {
+        "command": "dshReview.rejectAllTitle",
+        "title": "dsh review: Reject all in this file",
+        "icon": {
+          "light": "media/dsh-reject.svg",
+          "dark": "media/dsh-reject.svg"
+        }
+      },
+      {
+        "command": "dshReview.restartDsh",
+        "title": "dsh: Restart dsh",
+        "icon": "$(debug-restart)"
+      },
+      {
+        "command": "dshReview.stopDsh",
+        "title": "dsh: Stop dsh",
+        "icon": "$(debug-stop)"
+      }
+    ],
+    "configuration": {
+      "title": "dsh review",
+      "properties": {
+        "dshReview.storeDir": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Path to the dsh review change store. Empty = $DSH_HOME/review/changes (default ~/.dsh/review/changes)."
+        },
+        "dshReview.webUrl": {
+          "type": "string",
+          "default": "http://127.0.0.1:3080",
+          "markdownDescription": "URL loaded inside the dsh sidebar webview."
+        },
+        "dshReview.dshCommand": {
+          "type": "string",
+          "default": "node ${env:HOME}/.local/bin/dsh --profile web",
+          "markdownDescription": "Shell command used by `dsh: Restart dsh`. `${env:HOME}` is replaced with the home directory."
+        },
+        "dshReview.dshPort": {
+          "type": "number",
+          "default": 3080,
+          "markdownDescription": "TCP port used to detect/stop the dsh web process."
+        }
+      }
+    },
+    "menus": {
+      "editor/title": [
+        {
+          "command": "dshReview.revert",
+          "when": "isInDiffEditor && resourceScheme == file",
+          "group": "navigation@1"
+        },
+        {
+          "command": "dshReview.acceptAllTitle",
+          "when": "dshReview.hasPendingFile",
+          "group": "navigation@2"
+        },
+        {
+          "command": "dshReview.rejectAllTitle",
+          "when": "dshReview.hasPendingFile",
+          "group": "navigation@3"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "dshReview.sendSelectionToDsh",
+          "when": "editorHasSelection",
+          "group": "9_cutcopypaste@1"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "dshReview.restartDsh",
+          "when": "view == dshReview.dshWebview",
+          "group": "navigation@1"
+        },
+        {
+          "command": "dshReview.stopDsh",
+          "when": "view == dshReview.dshWebview",
+          "group": "navigation@2"
+        }
+      ]
+    },
+    "viewsContainers": {
+      "secondarySidebar": [
+        {
+          "id": "dsh",
+          "title": "dsh",
+          "icon": "media/dsh.svg"
+        }
+      ]
+    },
+    "views": {
+      "dsh": [
+        {
+          "type": "webview",
+          "id": "dshReview.dshWebview",
+          "name": "dsh"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "dshReview.goToNextHunk",
+        "key": "alt+down",
+        "when": "editorTextFocus"
+      },
+      {
+        "command": "dshReview.goToPrevHunk",
+        "key": "alt+up",
+        "when": "editorTextFocus"
+      },
+      {
+        "command": "dshReview.undoReviewAction",
+        "key": "cmd+z",
+        "mac": "cmd+z",
+        "win": "ctrl+z",
+        "linux": "ctrl+z",
+        "when": "dshReview.reviewMode && !terminalFocus"
+      },
+      {
+        "command": "dshReview.openDshSidebar",
+        "key": "cmd+alt+d",
+        "mac": "cmd+alt+d",
+        "win": "ctrl+alt+d",
+        "linux": "ctrl+alt+d"
+      }
+    ]
+  },
+  "scripts": {
+    "test": "node test/node-test.mjs && node test/inline-diff-test.mjs && node test/review-core-test.mjs"
+  },
+  "enabledApiProposals": [
+    "editorInsets"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Tlyer233/vscode_dsh_plugin"
+  },
+  "__metadata": {
+    "installedTimestamp": 1786855792793,
+    "targetPlatform": "undefined",
+    "size": 129348
+  },
+  "icon": "media/dsh.png"
+}
