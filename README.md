@@ -1,10 +1,10 @@
 # dsh-vscode-review
 
-![banner](assets/banner.jpg)
+![vsdp联名.jpg](https://20040424.xyz/PicList/vsdp联名.jpg)
 
 一个仓库装齐 dsh 插件 + VS Code 插件。
 
-![flow](assets/flow.png)
+![PixPin_2026-08-16_23-10-56.png](https://20040424.xyz/PicList/PixPin_2026-08-16_23-10-56.png)
 
 | 文件夹 | 内容 | 说明 |
 |---|---|---|
