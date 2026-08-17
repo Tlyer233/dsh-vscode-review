@@ -110,6 +110,21 @@ function dshCommand() {
   return raw.replace(/\$\{env:HOME\}/g, os.homedir())
 }
 
+function proxyPort() {
+  const cfg = vscode.workspace.getConfiguration('dshReview')
+  const p = Number(cfg.get('proxyPort'))
+  return Number.isFinite(p) && p > 0 ? p : 7897
+}
+
+function dshProxyCommand() {
+  const p = proxyPort()
+  const prefix = 'env NODE_USE_ENV_PROXY=1' +
+    ' HTTPS_PROXY=http://127.0.0.1:' + p +
+    ' HTTP_PROXY=http://127.0.0.1:' + p +
+    ' NO_PROXY=localhost,127.0.0.1,::1 '
+  return prefix + dshCommand()
+}
+
 function stopDshProcess(port) {
   return new Promise((resolve) => {
     execFile('lsof', ['-ti', 'tcp:' + port], { timeout: 5000 }, (err, stdout) => {
@@ -140,9 +155,9 @@ function scheduleDshReload(delays) {
   }
 }
 
-function startDshProcess() {
+function startDshProcess(command) {
   const logPath = path.join(os.homedir(), '.dsh', 'review', 'dsh-restart.log')
-  const child = spawn('/bin/sh', ['-c', dshCommand() + ' >> "' + logPath + '" 2>&1'], {
+  const child = spawn('/bin/sh', ['-c', (command || dshCommand()) + ' >> "' + logPath + '" 2>&1'], {
     cwd: os.homedir(),
     detached: true,
     stdio: 'ignore',
@@ -160,6 +175,16 @@ async function restartDsh() {
   // The iframe may be sitting on a dead connection (black view), where the
   // user cannot press Ctrl+R. Force-reload it after startup, with retries in
   // case the dsh server needs a moment to listen.
+  scheduleDshReload([1200, 3000, 6000])
+}
+
+async function restartDshProxy() {
+  const port = dshPort()
+  const proxy = proxyPort()
+  const killed = await stopDshProcess(port)
+  await new Promise((resolve) => setTimeout(resolve, killed > 0 ? 700 : 0))
+  startDshProcess(dshProxyCommand())
+  vscode.window.showInformationMessage('dsh restarted via proxy 127.0.0.1:' + proxy + ' (dsh port ' + port + (killed > 0 ? ', killed ' + killed + ' old process' : '') + ')')
   scheduleDshReload([1200, 3000, 6000])
 }
 
@@ -416,6 +441,7 @@ function activate(context) {
   }))
   context.subscriptions.push(vscode.commands.registerCommand('dshReview.restartDsh', restartDsh))
   context.subscriptions.push(vscode.commands.registerCommand('dshReview.stopDsh', stopDsh))
+  context.subscriptions.push(vscode.commands.registerCommand('dshReview.restartDshProxy', restartDshProxy))
   context.subscriptions.push(vscode.commands.registerCommand('dshReview.sendSelectionToDsh', async () => {
     const editor = vscode.window.activeTextEditor
     if (!editor || editor.selection.isEmpty) {

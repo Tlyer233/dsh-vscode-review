@@ -96,6 +96,14 @@
         "command": "dshReview.stopDsh",
         "title": "dsh: Stop dsh",
         "icon": "$(debug-stop)"
+      },
+      {
+        "command": "dshReview.restartDshProxy",
+        "title": "dsh: Restart dsh (proxy)",
+        "icon": {
+          "light": "media/dsh-refresh-proxy.svg",
+          "dark": "media/dsh-refresh-proxy.svg"
+        }
       }
     ],
     "configuration": {
@@ -120,6 +128,11 @@
           "type": "number",
           "default": 3080,
           "markdownDescription": "TCP port used to detect/stop the dsh web process."
+        },
+        "dshReview.proxyPort": {
+          "type": "number",
+          "default": 7897,
+          "markdownDescription": "Local proxy port used by `dsh: Restart dsh (proxy)` (e.g. Clash mixed port). Host is fixed at 127.0.0.1 over HTTP; NO_PROXY keeps localhost/loopback direct."
         }
       }
     },
@@ -158,6 +171,11 @@
           "command": "dshReview.stopDsh",
           "when": "view == dshReview.dshWebview",
           "group": "navigation@2"
+        },
+        {
+          "command": "dshReview.restartDshProxy",
+          "when": "view == dshReview.dshWebview",
+          "group": "navigation@3"
         }
       ]
     },
@@ -215,7 +233,7 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/Tlyer233/vscode_dsh_plugin"
+    "url": "https://github.com/Tlyer233/dsh-vscode-review"
   },
   "__metadata": {
     "installedTimestamp": 1786855792793,

@@ -11,6 +11,16 @@
   - `dsh review: Revert active file to before-state` — 把 before 快照写回文件（AI 新建的文件则删除），并同步把 manifest 标记为 `reverted`
   - `dsh review: Show change log` — 输出面板列出全部改动及 match/drifted/missing 校验
 
+## 代理重启（走梯子重启 dsh）
+
+当 opencode.ai 等网关按**出口 IP 判定区域**（例如 gpt-5.6 在中国 IP 下返回 403 `This model is not available in your region`，界面可能显示 `API key is invalid`）时，用代理重启 dsh 即可让请求走代理出口：
+
+- 侧边栏标题栏**黄色刷新按钮**（`navigation@3`），或命令面板 `dsh: Restart dsh (proxy)`
+- 等价于以 `env NODE_USE_ENV_PROXY=1 HTTPS_PROXY=http://127.0.0.1:<端口> HTTP_PROXY=...` 重启 dsh；Node ≥22 的全局 fetch（openai SDK 同款）会读取这些变量
+- 代理端口在 VSCode 设置中配置：`dshReview.proxyPort`（默认 `7897`，host 固定 `127.0.0.1`、HTTP 协议）
+- `NO_PROXY=localhost,127.0.0.1,::1` 已内置，环回流量不受影响
+- 原直连重启 `dsh: Restart dsh` 保持不变
+
 ## 运行（开发模式，无需打包）
 
 1. 确保 dsh web 已重启（使 `autoOpenDiff: false` 的 patch 生效，Trae 不再弹）
@@ -38,6 +48,7 @@ code --install-extension dsh-review-vscode-0.1.0.vsix
 | 键 | 默认 | 说明 |
 |---|---|---|
 | `dshReview.storeDir` | 空 | dsh 插件 change-store 路径；空 = `$DSH_HOME/review/changes`（默认 `~/.dsh/review/changes`） |
+| `dshReview.proxyPort` | `7897` | 代理重启（`dsh: Restart dsh (proxy)`）使用的本地代理端口（`127.0.0.1`，HTTP） |
 
 扩展对 manifest 的读写与 dsh 插件共用同一文件（单一口径）：扩展撤回后写 `status: reverted`，dsh 侧的 `review_status` 同样可见。
 

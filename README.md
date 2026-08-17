@@ -52,6 +52,12 @@ VS Code 侧：
 code --install-extension ./vscode_dsh_plugin/dsh-review-vscode-0.1.0.vsix --force
 ```
 
+## 代理重启（VS Code 扩展）
+
+扩展提供 `dsh: Restart dsh (proxy)`（侧边栏**黄色刷新按钮**）：带 `HTTPS_PROXY` 环境变量重启 dsh，
+使 opencode.ai 等按出口 IP 判定区域的模型（如 gpt-5.6）走梯子代理。
+代理端口在 VSCode 设置 `dshReview.proxyPort` 配置（默认 `7897`，`127.0.0.1`）。
+
 ## 升级 / 卸载
 
 ```bash
