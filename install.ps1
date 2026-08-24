@@ -9,6 +9,36 @@ $DshPlugin = Join-Path $Root 'dsh-review'
 $VscodeSrc = Join-Path $Root 'dsh-review-vscode'
 $VscodeExtDir = if ($env:VSCODE_EXTENSIONS_DIR) { $env:VSCODE_EXTENSIONS_DIR } else { Join-Path $env:USERPROFILE '.vscode\extensions' }
 
+# Write JSON array as UTF-8 without BOM. PS 5.1 `ConvertTo-Json` + `Set-Content UTF8` breaks VS Code:
+# one item becomes `{...}` not `[{...}]`, and UTF8 encoding adds a BOM.
+function Write-Utf8JsonArray {
+  param(
+    [Parameter(Mandatory = $true)][string]$Path,
+    [AllowEmptyCollection()][object[]]$Items
+  )
+  $list = @($Items)
+  if ($list.Count -eq 0) {
+    $text = '[]' # catalog must stay an array
+  } elseif ($list.Count -eq 1) {
+    $one = ConvertTo-Json -InputObject $list[0] -Depth 16 -Compress
+    $text = '[' + $one + ']' # wrap: PS 5.1 emits a bare object for a 1-item array
+  } else {
+    $text = ConvertTo-Json -InputObject $list -Depth 16 -Compress
+  }
+  $utf8 = New-Object System.Text.UTF8Encoding $false
+  [System.IO.File]::WriteAllText($Path, $text + "`n", $utf8)
+}
+
+# Register an unpacked folder or .vsix with the VS Code CLI. Returns $true on exit 0.
+function Install-VscodeExtensionCli {
+  param([Parameter(Mandatory = $true)][string]$Target)
+  $code = Get-Command code -ErrorAction SilentlyContinue
+  if (-not $code) { return $false }
+  # code.cmd writes to stderr; cmd.exe keeps that from becoming a terminating NativeCommandError.
+  cmd.exe /c "`"$($code.Source)`" --install-extension `"$Target`" --force"
+  return ($LASTEXITCODE -eq 0)
+}
+
 function Merge-ArgvJson {
   param([string]$File, [string]$Id)
   $dir = Split-Path -Parent $File
@@ -105,7 +135,7 @@ function Sync-VscodeExtensionCatalog {
       }
     }
   }
-  ($kept | ConvertTo-Json -Depth 8 -Compress) + "`n" | Set-Content -Path $catalog -Encoding UTF8
+  Write-Utf8JsonArray -Path $catalog -Items $kept
   if ($removed.Count -gt 0) {
     Write-Host ("removed old extension dirs: " + ($removed -join ', '))
   } else {
@@ -182,15 +212,15 @@ if (-not (Test-Path $VscodeExtDir)) {
   New-Item -ItemType Directory -Force -Path $VscodeExtDir | Out-Null
 }
 $vsix = Get-ChildItem -Path $VscodeSrc -Filter '*.vsix' -File -ErrorAction SilentlyContinue | Select-Object -First 1
+$dest = Join-Path $VscodeExtDir "${ExtId}-${ExtVer}"
 if ($vsix) {
-  if (-not (Get-Command code -ErrorAction SilentlyContinue)) {
-    throw 'missing command: code (add VS Code to PATH)'
+  Write-Host "installing $($vsix.FullName)"
+  if (-not (Install-VscodeExtensionCli -Target $vsix.FullName)) {
+    throw 'code --install-extension failed (add VS Code to PATH, then fully quit VS Code)'
   }
-  & code --install-extension $vsix.FullName --force
   Sync-VscodeExtensionCatalog -ExtDir $VscodeExtDir -Id $ExtId -Ver $ExtVer -Mode 'vsix'
 } else {
-  Write-Host "VSIX not found; copying source into $VscodeExtDir" -ForegroundColor Yellow
-  $dest = Join-Path $VscodeExtDir "${ExtId}-${ExtVer}"
+  Write-Host "VSIX not found; copying source into $dest" -ForegroundColor Yellow
   if (Test-Path $dest) { Remove-Item -Recurse -Force $dest }
   New-Item -ItemType Directory -Force -Path $dest | Out-Null
   Copy-Item (Join-Path $VscodeSrc 'extension.js') $dest
@@ -200,6 +230,12 @@ if ($vsix) {
   $scripts = Join-Path $VscodeSrc 'scripts'
   if (Test-Path $scripts) { Copy-Item -Recurse $scripts $dest }
   Sync-VscodeExtensionCatalog -ExtDir $VscodeExtDir -Id $ExtId -Ver $ExtVer -Mode 'copy'
+  if (Install-VscodeExtensionCli -Target $dest) {
+    Write-Host "registered $ExtId via code --install-extension"
+  } else {
+    Write-Host "code CLI missing or failed; left unpacked extension at $dest" -ForegroundColor Yellow
+    Write-Host 'Add `code` to PATH, or fully quit VS Code (not just close the window) and reopen.' -ForegroundColor Yellow
+  }
 }
 
 Write-Host '=== [3/4] Enable editorInsets in VS Code argv.json ===' -ForegroundColor Cyan

@@ -5,6 +5,25 @@ $ErrorActionPreference = 'Stop'
 $ExtId = 'dsn.dsh-review-vscode'
 $VscodeExtDir = if ($env:VSCODE_EXTENSIONS_DIR) { $env:VSCODE_EXTENSIONS_DIR } else { Join-Path $env:USERPROFILE '.vscode\extensions' }
 
+# Same helper as install.ps1: VS Code catalog must be a JSON array, UTF-8 no BOM.
+function Write-Utf8JsonArray {
+  param(
+    [Parameter(Mandatory = $true)][string]$Path,
+    [AllowEmptyCollection()][object[]]$Items
+  )
+  $list = @($Items)
+  if ($list.Count -eq 0) {
+    $text = '[]'
+  } elseif ($list.Count -eq 1) {
+    $one = ConvertTo-Json -InputObject $list[0] -Depth 16 -Compress
+    $text = '[' + $one + ']'
+  } else {
+    $text = ConvertTo-Json -InputObject $list -Depth 16 -Compress
+  }
+  $utf8 = New-Object System.Text.UTF8Encoding $false
+  [System.IO.File]::WriteAllText($Path, $text + "`n", $utf8)
+}
+
 # Drop dsn.dsh-review-vscode. Missing id must not abort (code.cmd stderr + Stop).
 function Uninstall-CodeExtensionQuiet {
   param([string]$Id)
@@ -76,7 +95,7 @@ function Purge-VscodeExtension {
     if ($path -and -not (Test-Path (Join-Path $path 'package.json'))) { continue }
     $kept += $item
   }
-  ($kept | ConvertTo-Json -Depth 8 -Compress) + "`n" | Set-Content -Path $catalog -Encoding UTF8
+  Write-Utf8JsonArray -Path $catalog -Items $kept
   if ($removed.Count -gt 0) {
     Write-Host ("removed extension dirs: " + ($removed -join ', '))
   } else {

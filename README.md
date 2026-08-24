@@ -18,9 +18,6 @@ Mac:
 
 Windows：
 
-```powershell
-.\install.ps1
-```
 ```cmd
 powershell -ExecutionPolicy Bypass -File .\install.ps1
 ```
@@ -38,9 +35,6 @@ Mac:
 
 Windows：
 
-```powershell
-.\uninstall.ps1
-```
 ```cmd
 powershell -ExecutionPolicy Bypass -File .\uninstall.ps1
 ```
