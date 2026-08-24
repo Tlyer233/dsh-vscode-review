@@ -124,6 +124,7 @@ fi
 purge_vscode_extension "$VSCODE_EXT_DIR"
 
 echo "=== [3/4] Revert VS Code argv.json (enable-proposed-api) ==="
+unmerge_argv "$HOME/.vscode/argv.json"
 case "$(uname -s)" in
   Darwin)
     unmerge_argv "$HOME/Library/Application Support/Code/argv.json"
@@ -133,9 +134,6 @@ case "$(uname -s)" in
     ;;
   Linux)
     unmerge_argv "${XDG_CONFIG_HOME:-$HOME/.config}/Code/argv.json"
-    ;;
-  *)
-    echo "skip argv.json on this OS; use uninstall.ps1 on Windows"
     ;;
 esac
 

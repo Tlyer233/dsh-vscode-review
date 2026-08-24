@@ -22,15 +22,18 @@ function activate(context) {
 
   // Persist enable-proposed-api in user-data argv.json so Dock launches get editorInsets.
   const argvResult = ensureProposedApi(context.extension.id)
+  const insetsOn = typeof vscode.window.createWebviewTextEditorInset === 'function'
   log.appendLine(
     'argv.json proposed-api id=' + context.extension.id
     + ' path=' + argvResult.path
     + ' changed=' + argvResult.changed
+    + ' insetsOn=' + insetsOn
     + (argvResult.error ? ' err=' + argvResult.error : ''),
   )
-  if (argvResult.changed) {
+  if (!insetsOn) {
     void vscode.window.showWarningMessage(
-      '已写入 VS Code argv.json（启用行内大按钮）。请完全退出 VS Code 后再打开，之后从 Dock 启动即可。',
+      '行内大按钮未启用。已写入 ' + argvResult.path
+      + ' 。请用「文件 → 退出」关掉 VS Code 再打开（不要只关窗口）。',
     )
   }
   setTimeout(() => {

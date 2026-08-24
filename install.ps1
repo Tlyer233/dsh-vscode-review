@@ -262,15 +262,13 @@ if ($vsix) {
 }
 
 Write-Host '=== [3/4] Enable editorInsets in VS Code argv.json ===' -ForegroundColor Cyan
-$appData = $env:APPDATA
-if (-not $appData) { $appData = Join-Path $env:USERPROFILE 'AppData\Roaming' }
-$argvFile = Join-Path $appData 'Code\argv.json'
+$argvFile = Join-Path $env:USERPROFILE '.vscode\argv.json'
 Merge-ArgvJson -File $argvFile -Id $ExtId
 if (-not (Select-String -LiteralPath $argvFile -Pattern ([regex]::Escape($ExtId)) -Quiet -ErrorAction SilentlyContinue)) {
   throw "argv.json missing $ExtId (editorInsets will not work): $argvFile"
 }
 Write-Host "argv.json = $argvFile" -ForegroundColor Yellow
-$insiders = Join-Path $appData 'Code - Insiders\argv.json'
+$insiders = Join-Path $env:USERPROFILE '.vscode-insiders\argv.json'
 if (Test-Path (Split-Path $insiders)) {
   Merge-ArgvJson -File $insiders -Id $ExtId
 }

@@ -249,6 +249,7 @@ echo "=== [2/4] Install VS Code extension ==="
 install_vscode_extension
 
 echo "=== [3/4] Enable editorInsets in VS Code argv.json ==="
+merge_argv "$HOME/.vscode/argv.json"
 case "$(uname -s)" in
   Darwin)
     merge_argv "$HOME/Library/Application Support/Code/argv.json"
@@ -258,9 +259,6 @@ case "$(uname -s)" in
     ;;
   Linux)
     merge_argv "${XDG_CONFIG_HOME:-$HOME/.config}/Code/argv.json"
-    ;;
-  *)
-    echo "skip argv.json on this OS; use install.ps1 on Windows"
     ;;
 esac
 

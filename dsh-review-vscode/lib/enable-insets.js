@@ -8,7 +8,8 @@
  *   + user argv.json enable-proposed-api: ["<publisher>.<name>"]
  *
  * After a full restart, Dock/Finder launches pick it up — no shell script.
- * VS Code does NOT read ~/.vscode/argv.json; it reads the user-data file.
+ * VS Code reads `$HOME/.vscode/argv.json` (product dataFolderName), not
+ * `%APPDATA%/Code/argv.json`. See src/main.ts getArgvConfigPath().
  */
 
 const fs = require('node:fs')
@@ -22,22 +23,14 @@ const vscode = require('vscode')
  * @returns {string}
  */
 function argvJsonPath(appName) {
-  const home = os.homedir()
-  if (process.env.VSCODE_APPDATA) {
-    return path.join(process.env.VSCODE_APPDATA, 'argv.json')
+  if (process.env.VSCODE_PORTABLE) {
+    return path.join(process.env.VSCODE_PORTABLE, 'argv.json')
   }
   const name = String(appName || '')
-  let product = 'Code'
-  if (/insiders/i.test(name)) product = 'Code - Insiders'
-  else if (/cursor/i.test(name)) product = 'Cursor'
-  else if (/visual studio code|vscode/i.test(name)) product = 'Code'
-  if (process.platform === 'darwin') {
-    return path.join(home, 'Library', 'Application Support', product, 'argv.json')
-  }
-  if (process.platform === 'win32') {
-    return path.join(process.env.APPDATA || path.join(home, 'AppData', 'Roaming'), product, 'argv.json')
-  }
-  return path.join(home, '.config', product, 'argv.json')
+  let folder = '.vscode' // product.dataFolderName for stable Code
+  if (/insiders/i.test(name)) folder = '.vscode-insiders'
+  else if (/cursor/i.test(name)) folder = '.cursor'
+  return path.join(os.homedir(), folder, 'argv.json')
 }
 
 /**
@@ -48,7 +41,7 @@ function argvJsonPath(appName) {
  */
 function mergeProposedApi(text, extensionId) {
   const idJson = JSON.stringify(extensionId)
-  const re = /"enable-proposed-api"\s*:\s*(\[[^\]]*\])/
+  const re = /^[ \t]*"enable-proposed-api"\s*:\s*(\[[^\]]*\])/m // skip `// "enable-proposed-api"` comments
   const m = text.match(re)
   if (m) {
     let arr

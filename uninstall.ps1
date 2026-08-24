@@ -146,10 +146,12 @@ if (Get-Command code -ErrorAction SilentlyContinue) {
 Purge-VscodeExtension -ExtDir $VscodeExtDir -Id $ExtId
 
 Write-Host '=== [3/4] Revert VS Code argv.json (enable-proposed-api) ===' -ForegroundColor Cyan
+$argvFile = Join-Path $env:USERPROFILE '.vscode\argv.json'
+Unmerge-ArgvJson -File $argvFile -Id $ExtId
 $appData = $env:APPDATA
 if (-not $appData) { $appData = Join-Path $env:USERPROFILE 'AppData\Roaming' }
 Unmerge-ArgvJson -File (Join-Path $appData 'Code\argv.json') -Id $ExtId
-$insiders = Join-Path $appData 'Code - Insiders\argv.json'
+$insiders = Join-Path $env:USERPROFILE '.vscode-insiders\argv.json'
 if (Test-Path (Split-Path $insiders)) {
   Unmerge-ArgvJson -File $insiders -Id $ExtId
 }
