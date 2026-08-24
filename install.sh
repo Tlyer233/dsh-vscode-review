@@ -1,13 +1,11 @@
 #!/usr/bin/env bash
 # One-click install: dsh plugin + VS Code extension + editorInsets argv.json
-# Idempotent: safe to re-run. Replaces the current extension and drops obsolete ids.
+# Idempotent: safe to re-run. Replaces the current dsh-review VS Code extension.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 EXT_ID="dsn.dsh-review-vscode"
 EXT_VER="0.1.0"
-# Previous publisher/name left behind after rename; folder gone but catalog still lists it.
-EXT_OBSOLETE="demo.my-vscode-plugin"
 DSH_PLUGIN="$ROOT/dsh-review"
 VSCODE_SRC="$ROOT/dsh-review-vscode"
 VSCODE_EXT_DIR="${VSCODE_EXTENSIONS_DIR:-$HOME/.vscode/extensions}"
@@ -16,7 +14,7 @@ die() { echo "ERROR: $*" >&2; exit 1; }
 need() { command -v "$1" >/dev/null 2>&1 || die "missing command: $1"; }
 
 # Write EXT_ID into argv.json enable-proposed-api (keeps comments / other ids).
-# Also drops obsolete ids from the same array. No-op if already correct.
+# No-op if already listed.
 merge_argv() {
   local file="$1"
   mkdir -p "$(dirname "$file")"
@@ -28,19 +26,16 @@ merge_argv() {
 
   if command -v python3 >/dev/null 2>&1; then
     local st=0
-    python3 - "$file" "$EXT_ID" "$EXT_OBSOLETE" <<'PY' || st=$?
+    python3 - "$file" "$EXT_ID" <<'PY' || st=$?
 import pathlib, re, json, sys
 path = pathlib.Path(sys.argv[1])
 ext_id = sys.argv[2]
-obsolete = [x for x in sys.argv[3].split(",") if x]
 text = path.read_text(encoding="utf-8")
 m = re.search(r'"enable-proposed-api"\s*:\s*(\[[^\]]*\])', text)
 if m:
     arr = json.loads(m.group(1))
     cleaned = []
     for item in arr:
-        if item in obsolete:
-            continue
         if item not in cleaned:
             cleaned.append(item)
     if ext_id not in cleaned:
@@ -62,20 +57,17 @@ PY
     fi
   fi
 
-  if grep -Fq "$EXT_ID" "$file" && ! grep -Fq "$EXT_OBSOLETE" "$file"; then
+  if grep -Fq "$EXT_ID" "$file"; then
     echo "already listed in $file"
     return
   fi
 
   local tmp="${file}.tmp"
   if grep -q '"enable-proposed-api"' "$file"; then
-    awk -v id="$EXT_ID" -v old="$EXT_OBSOLETE" '
+    awk -v id="$EXT_ID" '
       BEGIN { done=0 }
       {
         if (!done && $0 ~ /"enable-proposed-api"[[:space:]]*:[[:space:]]*\[/) {
-          gsub("\"" old "\", ", "")
-          gsub(", \"" old "\"", "")
-          gsub("\"" old "\"", "")
           if (index($0, "\"" id "\"") == 0) sub(/\[/, "[\"" id "\", ")
           done=1
         }
@@ -100,24 +92,23 @@ PY
   echo "updated $file"
 }
 
-# Drop obsolete folders and stale extensions.json rows.
-# $5 = copy: also replace other versions of EXT_ID. vsix: only drop missing/obsolete.
+# Keep extensions.json in sync with dsn.dsh-review-vscode.
+# copy: replace other versions of EXT_ID. vsix: leave catalog rows that still exist.
 sync_vscode_extension_catalog() {
   local ext_dir="$1"
   local mode="$2"
   mkdir -p "$ext_dir"
-  python3 - "$ext_dir" "$EXT_ID" "$EXT_VER" "$EXT_OBSOLETE" "$mode" <<'PY'
+  python3 - "$ext_dir" "$EXT_ID" "$EXT_VER" "$mode" <<'PY'
 import json, pathlib, shutil, sys, time
 
 ext_dir = pathlib.Path(sys.argv[1])
 ext_id = sys.argv[2]
 ext_ver = sys.argv[3]
-obsolete = [x for x in sys.argv[4].split(",") if x]
-mode = sys.argv[5] if len(sys.argv) > 5 else "copy"
+mode = sys.argv[4] if len(sys.argv) > 4 else "copy"
 dest_name = f"{ext_id}-{ext_ver}"
 dest = ext_dir / dest_name
 catalog = ext_dir / "extensions.json"
-drop_ids = set(obsolete)
+drop_ids = set()
 if mode == "copy":
     drop_ids.add(ext_id)
 
@@ -127,10 +118,6 @@ for child in list(ext_dir.iterdir()):
         continue
     name = child.name
     drop = False
-    for oid in obsolete:
-        if name == oid or name.startswith(oid + "-"):
-            drop = True
-            break
     if mode == "copy" and name.startswith(ext_id + "-") and name != dest_name:
         drop = True
     if drop:
@@ -185,15 +172,6 @@ PY
 install_vscode_extension() {
   mkdir -p "$VSCODE_EXT_DIR"
   need python3
-
-  # CLI uninstall is a no-op when the id is already gone.
-  if command -v code >/dev/null 2>&1; then
-    local oid
-    IFS=',' read -r -a _obsolete <<< "$EXT_OBSOLETE"
-    for oid in "${_obsolete[@]}"; do
-      code --uninstall-extension "$oid" >/dev/null 2>&1 || true
-    done
-  fi
 
   VSIX="$(find "$VSCODE_SRC" -maxdepth 1 -name '*.vsix' | head -n 1 || true)"
   if [ -n "${VSIX:-}" ] && [ -f "$VSIX" ]; then

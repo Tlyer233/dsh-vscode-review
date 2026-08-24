@@ -1,17 +1,16 @@
 # One-click install: dsh plugin + VS Code extension + editorInsets argv.json
-# Idempotent: safe to re-run. Replaces the current extension and drops obsolete ids.
+# Idempotent: safe to re-run. Replaces the current dsh-review VS Code extension.
 $ErrorActionPreference = 'Stop'
 
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $ExtId = 'dsn.dsh-review-vscode'
 $ExtVer = '0.1.0'
-$ExtObsolete = @('demo.my-vscode-plugin')
 $DshPlugin = Join-Path $Root 'dsh-review'
 $VscodeSrc = Join-Path $Root 'dsh-review-vscode'
 $VscodeExtDir = if ($env:VSCODE_EXTENSIONS_DIR) { $env:VSCODE_EXTENSIONS_DIR } else { Join-Path $env:USERPROFILE '.vscode\extensions' }
 
 function Merge-ArgvJson {
-  param([string]$File, [string]$Id, [string[]]$Obsolete)
+  param([string]$File, [string]$Id)
   $dir = Split-Path -Parent $File
   if (-not (Test-Path $dir)) {
     New-Item -ItemType Directory -Force -Path $dir | Out-Null
@@ -29,7 +28,6 @@ function Merge-ArgvJson {
     $ids = @()
     foreach ($m in [regex]::Matches($inner, '"([^"]+)"')) {
       $item = $m.Groups[1].Value
-      if ($Obsolete -contains $item) { continue }
       if ($ids -notcontains $item) { $ids += $item }
     }
     if ($ids -notcontains $Id) { $ids += $Id }
@@ -54,7 +52,7 @@ function Merge-ArgvJson {
 }
 
 function Sync-VscodeExtensionCatalog {
-  param([string]$ExtDir, [string]$Id, [string]$Ver, [string[]]$Obsolete, [string]$Mode)
+  param([string]$ExtDir, [string]$Id, [string]$Ver, [string]$Mode)
   if (-not (Test-Path $ExtDir)) {
     New-Item -ItemType Directory -Force -Path $ExtDir | Out-Null
   }
@@ -65,9 +63,6 @@ function Sync-VscodeExtensionCatalog {
   Get-ChildItem -Path $ExtDir -Directory -ErrorAction SilentlyContinue | ForEach-Object {
     $name = $_.Name
     $drop = $false
-    foreach ($oid in $Obsolete) {
-      if ($name -eq $oid -or $name.StartsWith("$oid-")) { $drop = $true }
-    }
     if ($Mode -eq 'copy' -and $name.StartsWith("$Id-") -and $name -ne $destName) { $drop = $true }
     if ($drop) {
       Remove-Item -Recurse -Force $_.FullName
@@ -84,7 +79,7 @@ function Sync-VscodeExtensionCatalog {
       $entries = @()
     }
   }
-  $dropIds = @($Obsolete)
+  $dropIds = @()
   if ($Mode -eq 'copy') { $dropIds += $Id }
   $kept = @()
   foreach ($item in $entries) {
@@ -186,18 +181,13 @@ if (-not (Test-Path $VscodeSrc)) {
 if (-not (Test-Path $VscodeExtDir)) {
   New-Item -ItemType Directory -Force -Path $VscodeExtDir | Out-Null
 }
-if (Get-Command code -ErrorAction SilentlyContinue) {
-  foreach ($oid in $ExtObsolete) {
-    & code --uninstall-extension $oid 2>$null | Out-Null
-  }
-}
 $vsix = Get-ChildItem -Path $VscodeSrc -Filter '*.vsix' -File -ErrorAction SilentlyContinue | Select-Object -First 1
 if ($vsix) {
   if (-not (Get-Command code -ErrorAction SilentlyContinue)) {
     throw 'missing command: code (add VS Code to PATH)'
   }
   & code --install-extension $vsix.FullName --force
-  Sync-VscodeExtensionCatalog -ExtDir $VscodeExtDir -Id $ExtId -Ver $ExtVer -Obsolete $ExtObsolete -Mode 'vsix'
+  Sync-VscodeExtensionCatalog -ExtDir $VscodeExtDir -Id $ExtId -Ver $ExtVer -Mode 'vsix'
 } else {
   Write-Host "VSIX not found; copying source into $VscodeExtDir" -ForegroundColor Yellow
   $dest = Join-Path $VscodeExtDir "${ExtId}-${ExtVer}"
@@ -209,16 +199,16 @@ if ($vsix) {
   Copy-Item -Recurse (Join-Path $VscodeSrc 'media') $dest
   $scripts = Join-Path $VscodeSrc 'scripts'
   if (Test-Path $scripts) { Copy-Item -Recurse $scripts $dest }
-  Sync-VscodeExtensionCatalog -ExtDir $VscodeExtDir -Id $ExtId -Ver $ExtVer -Obsolete $ExtObsolete -Mode 'copy'
+  Sync-VscodeExtensionCatalog -ExtDir $VscodeExtDir -Id $ExtId -Ver $ExtVer -Mode 'copy'
 }
 
 Write-Host '=== [3/4] Enable editorInsets in VS Code argv.json ===' -ForegroundColor Cyan
 $appData = $env:APPDATA
 if (-not $appData) { $appData = Join-Path $env:USERPROFILE 'AppData\Roaming' }
-Merge-ArgvJson -File (Join-Path $appData 'Code\argv.json') -Id $ExtId -Obsolete $ExtObsolete
+Merge-ArgvJson -File (Join-Path $appData 'Code\argv.json') -Id $ExtId
 $insiders = Join-Path $appData 'Code - Insiders\argv.json'
 if (Test-Path (Split-Path $insiders)) {
-  Merge-ArgvJson -File $insiders -Id $ExtId -Obsolete $ExtObsolete
+  Merge-ArgvJson -File $insiders -Id $ExtId
 }
 
 Write-Host '=== [4/4] Reset dsh-review shadow git ===' -ForegroundColor Cyan

@@ -4,12 +4,11 @@
 set -euo pipefail
 
 EXT_ID="dsn.dsh-review-vscode"
-EXT_OBSOLETE="demo.my-vscode-plugin"
 VSCODE_EXT_DIR="${VSCODE_EXTENSIONS_DIR:-$HOME/.vscode/extensions}"
 
 die() { echo "ERROR: $*" >&2; exit 1; }
 
-# Remove EXT_ID (and obsolete ids) from enable-proposed-api. Leaves other ids.
+# Remove EXT_ID from enable-proposed-api. Leaves other ids.
 unmerge_argv() {
   local file="$1"
   if [ ! -f "$file" ]; then
@@ -18,10 +17,10 @@ unmerge_argv() {
   fi
   if command -v python3 >/dev/null 2>&1; then
     local st=0
-    python3 - "$file" "$EXT_ID" "$EXT_OBSOLETE" <<'PY' || st=$?
+    python3 - "$file" "$EXT_ID" <<'PY' || st=$?
 import pathlib, re, json, sys
 path = pathlib.Path(sys.argv[1])
-drop = set([sys.argv[2]] + [x for x in sys.argv[3].split(",") if x])
+drop = set([sys.argv[2]])
 text = path.read_text(encoding="utf-8")
 m = re.search(r'"enable-proposed-api"\s*:\s*(\[[^\]]*\])', text)
 if not m:
@@ -53,13 +52,12 @@ purge_vscode_extension() {
   local ext_dir="$1"
   mkdir -p "$ext_dir"
   if command -v python3 >/dev/null 2>&1; then
-    python3 - "$ext_dir" "$EXT_ID" "$EXT_OBSOLETE" <<'PY'
+    python3 - "$ext_dir" "$EXT_ID" <<'PY'
 import json, pathlib, shutil, sys
 
 ext_dir = pathlib.Path(sys.argv[1])
 ext_id = sys.argv[2]
-obsolete = [x for x in sys.argv[3].split(",") if x]
-drop_ids = set(obsolete + [ext_id])
+drop_ids = set([ext_id])
 removed = []
 for child in list(ext_dir.iterdir()):
     if not child.is_dir():
@@ -120,10 +118,6 @@ echo "cleared install-cache tarballs and leftover node_modules/dsh-review"
 echo "=== [2/4] Remove VS Code extension ==="
 if command -v code >/dev/null 2>&1; then
   code --uninstall-extension "$EXT_ID" >/dev/null 2>&1 || true
-  IFS=',' read -r -a _obsolete <<< "$EXT_OBSOLETE"
-  for oid in "${_obsolete[@]}"; do
-    code --uninstall-extension "$oid" >/dev/null 2>&1 || true
-  done
 else
   echo "code not on PATH; deleting extension folders only"
 fi

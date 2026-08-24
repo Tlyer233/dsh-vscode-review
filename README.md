@@ -27,6 +27,9 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1
 需要重启dsh和vscode
 
 ## UnInstall
+
+卸掉 dsh 插件 `dsh-review`、VS Code 扩展 `dsn.dsh-review-vscode`，并删除 shadow 目录。
+
 Mac:
 
 ```bash

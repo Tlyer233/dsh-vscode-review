@@ -3,11 +3,18 @@
 $ErrorActionPreference = 'Stop'
 
 $ExtId = 'dsn.dsh-review-vscode'
-$ExtObsolete = @('demo.my-vscode-plugin')
 $VscodeExtDir = if ($env:VSCODE_EXTENSIONS_DIR) { $env:VSCODE_EXTENSIONS_DIR } else { Join-Path $env:USERPROFILE '.vscode\extensions' }
 
+# Drop dsn.dsh-review-vscode. Missing id must not abort (code.cmd stderr + Stop).
+function Uninstall-CodeExtensionQuiet {
+  param([string]$Id)
+  if (-not (Get-Command code -ErrorAction SilentlyContinue)) { return }
+  # code.cmd prints "is not installed" on stderr; with Stop that becomes NativeCommandError.
+  cmd.exe /c "code --uninstall-extension `"$Id`" 1>nul 2>nul" | Out-Null
+}
+
 function Unmerge-ArgvJson {
-  param([string]$File, [string]$Id, [string[]]$Obsolete)
+  param([string]$File, [string]$Id)
   if (-not (Test-Path $File)) {
     Write-Host "no $File"
     return
@@ -19,11 +26,10 @@ function Unmerge-ArgvJson {
     Write-Host "already clean $File"
     return
   }
-  $drop = @($Id) + $Obsolete
   $ids = @()
   foreach ($m in [regex]::Matches($match.Groups[1].Value, '"([^"]+)"')) {
     $item = $m.Groups[1].Value
-    if ($drop -contains $item) { continue }
+    if ($item -eq $Id) { continue }
     if ($ids -notcontains $item) { $ids += $item }
   }
   $rendered = '[' + (($ids | ForEach-Object { '"' + $_ + '"' }) -join ', ') + ']'
@@ -37,19 +43,14 @@ function Unmerge-ArgvJson {
 }
 
 function Purge-VscodeExtension {
-  param([string]$ExtDir, [string]$Id, [string[]]$Obsolete)
+  param([string]$ExtDir, [string]$Id)
   if (-not (Test-Path $ExtDir)) {
     New-Item -ItemType Directory -Force -Path $ExtDir | Out-Null
   }
-  $dropIds = @($Obsolete) + $Id
   $removed = @()
   Get-ChildItem -Path $ExtDir -Directory -ErrorAction SilentlyContinue | ForEach-Object {
     $name = $_.Name
-    $drop = $false
-    foreach ($did in $dropIds) {
-      if ($name -eq $did -or $name.StartsWith("$did-")) { $drop = $true }
-    }
-    if ($drop) {
+    if ($name -eq $Id -or $name.StartsWith("$Id-")) {
       Remove-Item -Recurse -Force $_.FullName
       $removed += $name
     }
@@ -69,7 +70,7 @@ function Purge-VscodeExtension {
   foreach ($item in $entries) {
     $eid = $null
     try { $eid = $item.identifier.id } catch { $eid = $null }
-    if ($dropIds -contains $eid) { continue }
+    if ($eid -eq $Id) { continue }
     $path = $null
     try { $path = $item.location.path } catch { $path = $null }
     if ($path -and -not (Test-Path (Join-Path $path 'package.json'))) { continue }
@@ -101,22 +102,19 @@ Write-Host 'cleared install-cache tarballs and leftover node_modules\dsh-review'
 
 Write-Host '=== [2/4] Remove VS Code extension ===' -ForegroundColor Cyan
 if (Get-Command code -ErrorAction SilentlyContinue) {
-  & code --uninstall-extension $ExtId 2>$null | Out-Null
-  foreach ($oid in $ExtObsolete) {
-    & code --uninstall-extension $oid 2>$null | Out-Null
-  }
+  Uninstall-CodeExtensionQuiet -Id $ExtId
 } else {
   Write-Host 'code not on PATH; deleting extension folders only'
 }
-Purge-VscodeExtension -ExtDir $VscodeExtDir -Id $ExtId -Obsolete $ExtObsolete
+Purge-VscodeExtension -ExtDir $VscodeExtDir -Id $ExtId
 
 Write-Host '=== [3/4] Revert VS Code argv.json (enable-proposed-api) ===' -ForegroundColor Cyan
 $appData = $env:APPDATA
 if (-not $appData) { $appData = Join-Path $env:USERPROFILE 'AppData\Roaming' }
-Unmerge-ArgvJson -File (Join-Path $appData 'Code\argv.json') -Id $ExtId -Obsolete $ExtObsolete
+Unmerge-ArgvJson -File (Join-Path $appData 'Code\argv.json') -Id $ExtId
 $insiders = Join-Path $appData 'Code - Insiders\argv.json'
 if (Test-Path (Split-Path $insiders)) {
-  Unmerge-ArgvJson -File $insiders -Id $ExtId -Obsolete $ExtObsolete
+  Unmerge-ArgvJson -File $insiders -Id $ExtId
 }
 
 Write-Host '=== [4/4] Remove shadow store ===' -ForegroundColor Cyan
