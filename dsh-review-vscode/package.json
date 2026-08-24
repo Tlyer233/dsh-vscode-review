@@ -85,7 +85,7 @@
         "dshReview.dshCommand": {
           "type": "string",
           "default": "node ${env:HOME}/.local/bin/dsh --profile web --no-open",
-          "markdownDescription": "Shell command used by `dsh: Restart dsh`. `${env:HOME}` is replaced with the home directory. Default includes `--no-open` so restart does not launch a system browser."
+          "markdownDescription": "Shell command for `dsh: Restart dsh`. Leave the default to auto-find `dsh` (`~/.local/bin/dsh` on macOS, `%APPDATA%\\npm\\dsh.cmd` or PATH on Windows). `${env:HOME}` / `${env:USERPROFILE}` expand to the home directory. `--no-open` is always appended if missing."
         },
         "dshReview.dshPort": {
           "type": "number",
