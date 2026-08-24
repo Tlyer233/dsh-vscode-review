@@ -1,0 +1,7 @@
+- insert:
+    - id: dsh-review
+      name: dsh-review
+      config:
+        enabled: true
+        fileSend: path
+        snippetSend: fence

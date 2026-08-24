@@ -1,0 +1,216 @@
+{
+  "name": "dsh-review-vscode",
+  "displayName": "dsh review — inline diff + dsh sidebar",
+  "description": "Inline review (shadow/pending) + dsh webview sidebar",
+  "version": "0.1.0",
+  "publisher": "dsn",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "keywords": [
+    "dsh",
+    "review",
+    "diff",
+    "ai"
+  ],
+  "activationEvents": [
+    "onStartupFinished",
+    "onView:dshReview.dshWebview"
+  ],
+  "main": "./extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "dshReview.acceptAll",
+        "title": "全部接受",
+        "icon": {
+          "light": "media/dsh-accept.svg",
+          "dark": "media/dsh-accept.svg"
+        }
+      },
+      {
+        "command": "dshReview.rejectAll",
+        "title": "全部撤回",
+        "icon": {
+          "light": "media/dsh-reject.svg",
+          "dark": "media/dsh-reject.svg"
+        }
+      },
+      {
+        "command": "dshReview.openDshSidebar",
+        "title": "dsh: Toggle dsh panel"
+      },
+      {
+        "command": "dshReview.sendSelectionToDsh",
+        "title": "dsh: Send editor selection"
+      },
+      {
+        "command": "dshReview.sendTerminalSelectionToDsh",
+        "title": "dsh: Send terminal selection"
+      },
+      {
+        "command": "dshReview.reloadSidebar",
+        "title": "dsh: Reload sidebar"
+      },
+      {
+        "command": "dshReview.restartDsh",
+        "title": "dsh: Restart dsh",
+        "icon": "$(debug-restart)"
+      },
+      {
+        "command": "dshReview.stopDsh",
+        "title": "dsh: Stop dsh",
+        "icon": "$(debug-stop)"
+      },
+      {
+        "command": "dshReview.restartDshProxy",
+        "title": "dsh: Restart dsh (proxy)",
+        "icon": {
+          "light": "media/dsh-refresh-proxy.svg",
+          "dark": "media/dsh-refresh-proxy.svg"
+        }
+      }
+    ],
+    "configuration": {
+      "title": "dsh review",
+      "properties": {
+        "dshReview.webUrl": {
+          "type": "string",
+          "default": "http://127.0.0.1:3080",
+          "markdownDescription": "URL loaded inside the dsh sidebar webview."
+        },
+        "dshReview.dshCommand": {
+          "type": "string",
+          "default": "node ${env:HOME}/.local/bin/dsh --profile web --no-open",
+          "markdownDescription": "Shell command used by `dsh: Restart dsh`. `${env:HOME}` is replaced with the home directory. Default includes `--no-open` so restart does not launch a system browser."
+        },
+        "dshReview.dshPort": {
+          "type": "number",
+          "default": 3080,
+          "markdownDescription": "TCP port used to detect/stop the dsh web process."
+        },
+        "dshReview.proxyPort": {
+          "type": "number",
+          "default": 7897,
+          "markdownDescription": "Local proxy port for `dsh: Restart dsh (proxy)` (HTTP 127.0.0.1)."
+        }
+      }
+    },
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "dshReview.acceptAll",
+          "when": "false"
+        },
+        {
+          "command": "dshReview.rejectAll",
+          "when": "false"
+        },
+        {
+          "command": "dshReview.reloadSidebar",
+          "when": "false"
+        },
+        {
+          "command": "dshReview.sendSelectionToDsh",
+          "when": "editorHasSelection"
+        },
+        {
+          "command": "dshReview.sendTerminalSelectionToDsh",
+          "when": "terminalTextSelected"
+        }
+      ],
+      "editor/title": [
+        {
+          "command": "dshReview.acceptAll",
+          "when": "dshReview.hasPendingFile",
+          "group": "navigation@1"
+        },
+        {
+          "command": "dshReview.rejectAll",
+          "when": "dshReview.hasPendingFile",
+          "group": "navigation@2"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "dshReview.sendSelectionToDsh",
+          "when": "editorHasSelection",
+          "group": "9_cutcopypaste@1"
+        }
+      ],
+      "terminal/context": [
+        {
+          "command": "dshReview.sendTerminalSelectionToDsh",
+          "when": "terminalTextSelected",
+          "group": "9_cutcopypaste@1"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "dshReview.restartDsh",
+          "when": "view == dshReview.dshWebview",
+          "group": "navigation@1"
+        },
+        {
+          "command": "dshReview.stopDsh",
+          "when": "view == dshReview.dshWebview",
+          "group": "navigation@2"
+        },
+        {
+          "command": "dshReview.restartDshProxy",
+          "when": "view == dshReview.dshWebview",
+          "group": "navigation@3"
+        }
+      ]
+    },
+    "viewsContainers": {
+      "secondarySidebar": [
+        {
+          "id": "dsh",
+          "title": "dsh",
+          "icon": "media/dsh.svg"
+        }
+      ]
+    },
+    "views": {
+      "dsh": [
+        {
+          "type": "webview",
+          "id": "dshReview.dshWebview",
+          "name": "dsh"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "dshReview.openDshSidebar",
+        "key": "cmd+alt+d",
+        "mac": "cmd+alt+d",
+        "win": "ctrl+alt+d",
+        "linux": "ctrl+alt+d"
+      },
+      {
+        "command": "dshReview.sendSelectionToDsh",
+        "key": "cmd+u",
+        "mac": "cmd+u",
+        "win": "ctrl+alt+u",
+        "linux": "ctrl+alt+u",
+        "when": "editorTextFocus && editorHasSelection && !terminalFocus && !terminalEditorFocus"
+      },
+      {
+        "command": "dshReview.sendTerminalSelectionToDsh",
+        "key": "cmd+u cmd+u",
+        "mac": "cmd+u cmd+u",
+        "win": "ctrl+alt+u ctrl+alt+u",
+        "linux": "ctrl+alt+u ctrl+alt+u",
+        "when": "terminalFocus || terminalEditorFocus"
+      }
+    ]
+  },
+  "enabledApiProposals": [
+    "editorInsets"
+  ]
+}
