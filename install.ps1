@@ -29,6 +29,26 @@ function Write-Utf8JsonArray {
   [System.IO.File]::WriteAllText($Path, $text + "`n", $utf8)
 }
 
+# UTF-8 without BOM. PS 5.1 Set-Content -Encoding UTF8 writes a BOM that VS Code argv.json may ignore.
+function Write-Utf8NoBom {
+  param([Parameter(Mandatory = $true)][string]$Path, [Parameter(Mandatory = $true)][string]$Text)
+  $utf8 = New-Object System.Text.UTF8Encoding $false
+  [System.IO.File]::WriteAllText($Path, $Text, $utf8)
+}
+
+# Read argv.json as UTF-8 (strip BOM) or UTF-16 LE if that is what is on disk.
+function Read-TextBestEffort {
+  param([Parameter(Mandatory = $true)][string]$Path)
+  $bytes = [System.IO.File]::ReadAllBytes($Path)
+  if ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) {
+    return [System.Text.UTF8Encoding]::new($false).GetString($bytes, 3, $bytes.Length - 3)
+  }
+  if ($bytes.Length -ge 2 -and $bytes[0] -eq 0xFF -and $bytes[1] -eq 0xFE) {
+    return [System.Text.Encoding]::Unicode.GetString($bytes, 2, $bytes.Length - 2)
+  }
+  return [System.Text.UTF8Encoding]::new($false).GetString($bytes)
+}
+
 # Register an unpacked folder or .vsix with the VS Code CLI. Returns $true on exit 0.
 function Install-VscodeExtensionCli {
   param([Parameter(Mandatory = $true)][string]$Target)
@@ -45,12 +65,13 @@ function Merge-ArgvJson {
   if (-not (Test-Path $dir)) {
     New-Item -ItemType Directory -Force -Path $dir | Out-Null
   }
+  $fresh = "{`n`t`"enable-proposed-api`": [`"$Id`"]`n}`n"
   if (-not (Test-Path $File)) {
-    Set-Content -Path $File -Encoding UTF8 -Value "{`n`t`"enable-proposed-api`": [`"$Id`"]`n}`n"
+    Write-Utf8NoBom -Path $File -Text $fresh
     Write-Host "created $File"
     return
   }
-  $text = Get-Content -Raw -Encoding UTF8 $File
+  $text = Read-TextBestEffort -Path $File
   $pattern = '"enable-proposed-api"\s*:\s*\[([^\]]*)\]'
   $match = [regex]::Match($text, $pattern)
   if ($match.Success) {
@@ -67,17 +88,19 @@ function Merge-ArgvJson {
       Write-Host "already listed in $File"
       return
     }
-    Set-Content -Path $File -Encoding UTF8 -Value ($newText.TrimEnd() + "`n")
+    Write-Utf8NoBom -Path $File -Text ($newText.TrimEnd() + "`n")
     Write-Host "updated $File"
     return
   }
-  $idx = $text.IndexOf('{')
-  if ($idx -ge 0) {
-    $text = $text.Insert($idx + 1, "`n`t`"enable-proposed-api`": [`"$Id`"],")
+  # Insert after the root `{` on its own line so comment headers with `{` are not used.
+  $brace = [regex]::Match($text, '(?m)^[ \t]*\{')
+  if ($brace.Success) {
+    $at = $brace.Index + $brace.Length
+    $text = $text.Insert($at, "`n`t`"enable-proposed-api`": [`"$Id`"],")
   } else {
-    $text = "{`n`t`"enable-proposed-api`": [`"$Id`"]`n}`n"
+    $text = $fresh
   }
-  Set-Content -Path $File -Encoding UTF8 -Value ($text.TrimEnd() + "`n")
+  Write-Utf8NoBom -Path $File -Text ($text.TrimEnd() + "`n")
   Write-Host "updated $File"
 }
 
@@ -241,7 +264,12 @@ if ($vsix) {
 Write-Host '=== [3/4] Enable editorInsets in VS Code argv.json ===' -ForegroundColor Cyan
 $appData = $env:APPDATA
 if (-not $appData) { $appData = Join-Path $env:USERPROFILE 'AppData\Roaming' }
-Merge-ArgvJson -File (Join-Path $appData 'Code\argv.json') -Id $ExtId
+$argvFile = Join-Path $appData 'Code\argv.json'
+Merge-ArgvJson -File $argvFile -Id $ExtId
+if (-not (Select-String -LiteralPath $argvFile -Pattern ([regex]::Escape($ExtId)) -Quiet -ErrorAction SilentlyContinue)) {
+  throw "argv.json missing $ExtId (editorInsets will not work): $argvFile"
+}
+Write-Host "argv.json = $argvFile" -ForegroundColor Yellow
 $insiders = Join-Path $appData 'Code - Insiders\argv.json'
 if (Test-Path (Split-Path $insiders)) {
   Merge-ArgvJson -File $insiders -Id $ExtId
@@ -251,7 +279,7 @@ Write-Host '=== [4/4] Reset dsh-review shadow git ===' -ForegroundColor Cyan
 Reset-ShadowStore
 
 Write-Host '=== Done ===' -ForegroundColor Cyan
-Write-Host '1. Completely quit VS Code, then reopen.' -ForegroundColor Yellow
+Write-Host '1. Completely quit VS Code (File > Exit, not just close the window), then reopen. argv.json is only read at startup.' -ForegroundColor Yellow
 Write-Host '2. Restart dsh web (or use the sidebar Restart button).' -ForegroundColor Yellow
 Write-Host '3. Shadow store was wiped (repo.git + pending/*.json). Unreviewed diffs are gone.' -ForegroundColor Yellow
 Write-Host "editorInsets argv.json id: $ExtId" -ForegroundColor Yellow

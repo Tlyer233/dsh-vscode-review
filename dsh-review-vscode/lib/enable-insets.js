@@ -66,11 +66,12 @@ function mergeProposedApi(text, extensionId) {
     return { text: next, changed: true }
   }
   const insert = '\t"enable-proposed-api": [' + idJson + '],\n'
-  const brace = text.lastIndexOf('{')
-  if (brace < 0) {
+  const brace = text.match(/^[ \t]*\{/m)
+  if (!brace || brace.index == null) {
     return { text: '{\n' + insert + '}\n', changed: true }
   }
-  const next = text.slice(0, brace + 1) + '\n' + insert + text.slice(brace + 1)
+  const at = brace.index + brace[0].length
+  const next = text.slice(0, at) + '\n' + insert + text.slice(at)
   return { text: next, changed: true }
 }
 
@@ -84,13 +85,13 @@ function ensureProposedApi(extensionId) {
   try {
     let raw = '{\n}\n'
     if (fs.existsSync(file)) {
-      raw = fs.readFileSync(file, 'utf8')
+      raw = fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, '') // strip BOM; VS Code argv parser is picky on Windows
     } else {
       fs.mkdirSync(path.dirname(file), { recursive: true })
     }
     const merged = mergeProposedApi(raw, extensionId)
     if (merged.changed) {
-      fs.writeFileSync(file, merged.text, 'utf8')
+      fs.writeFileSync(file, merged.text, 'utf8') // Node utf8 has no BOM
     }
     return { ok: true, changed: merged.changed, path: file }
   } catch (e) {

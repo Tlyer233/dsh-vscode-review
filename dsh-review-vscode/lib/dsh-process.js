@@ -282,25 +282,142 @@ async function waitUntil(check, timeoutMs, intervalMs, stillCurrent) {
 let restartToken = 0
 
 /**
+ * @returns {string | null}
+ * @description System node.exe/node, never Electron's process.execPath.
+ */
+function findNodeBin() {
+  const names = process.platform === 'win32' ? ['node.exe'] : ['node']
+  for (const dir of (process.env.PATH || '').split(path.delimiter)) {
+    if (!dir) continue
+    for (const name of names) {
+      const p = path.join(dir, name)
+      if (fileExists(p) && !/electron/i.test(p)) return p
+    }
+  }
+  return null
+}
+
+/**
+ * @param {string} cmdPath
+ * @returns {string | null}
+ * @description Resolve the JS CLI that npm's dsh.cmd forwards to.
+ */
+function dshScriptFromCmd(cmdPath) {
+  let text = ''
+  try { text = fs.readFileSync(cmdPath, 'utf8') } catch { return null }
+  const dir = path.dirname(cmdPath)
+  const rel = text.match(/%~dp0%?\\([^"\r\n]+)/i) || text.match(/%dp0%\\([^"\r\n]+)/i)
+  if (rel) {
+    const p = path.join(dir, rel[1].replace(/\\/g, path.sep))
+    if (fileExists(p)) return p
+  }
+  const candidates = [
+    path.join(dir, 'node_modules', 'dsh', 'bin', 'dsh.js'),
+    path.join(dir, 'node_modules', 'dsh', 'bin', 'dsh'),
+    path.join(dir, 'node_modules', '@deepseek-ai', 'dsh', 'bin', 'dsh.js'),
+    path.join(dir, 'node_modules', '@deepseek-ai', 'dsh', 'bin', 'dsh'),
+  ]
+  for (const p of candidates) {
+    if (fileExists(p)) return p
+  }
+  return null
+}
+
+/**
+ * @returns {{ file: string, args: string[] } | null}
+ * @description Direct argv spawn so Windows does not allocate a console for cmd.exe → node.exe.
+ */
+function resolveDirectSpawn() {
+  const raw = String(cfg().get('dshCommand') || STOCK_DSH_COMMAND)
+  const extra = ['--profile', 'web', '--no-open']
+  if (isStockDshCommand(raw)) {
+    const bin = findDshBin()
+    const node = findNodeBin()
+    if (bin && /\.(cmd|bat)$/i.test(bin) && node) {
+      const script = dshScriptFromCmd(bin)
+      if (script) return { file: node, args: [script].concat(extra) }
+    }
+    if (bin && !/\.(cmd|bat)$/i.test(bin)) return { file: bin, args: extra }
+    if (node && bin && !/\.(cmd|bat)$/i.test(bin)) return { file: node, args: [bin].concat(extra) }
+    return null
+  }
+  const expanded = expandDshCommand(raw)
+  const m = expanded.match(/^\s*(?:"([^"]+)"|(\S+))\s+(?:"([^"]+)"|(\S+))(.*)$/)
+  if (m && /node(\.exe)?$/i.test(m[1] || m[2] || '')) {
+    const node = m[1] || m[2]
+    const script = m[3] || m[4]
+    const rest = String(m[5] || '').trim().split(/\s+/).filter(Boolean)
+    if (!rest.includes('--no-open')) rest.push('--no-open')
+    return { file: node, args: [script].concat(rest) }
+  }
+  return null
+}
+
+/**
+ * @param {string} command
+ * @param {NodeJS.ProcessEnv | undefined} extraEnv
+ * @param {string} logPath
+ * @returns {number | undefined}
+ * @description Windows nohup: WScript.Run window style 0 (hidden, do not wait).
+ */
+function startWinHiddenCmd(command, extraEnv, logPath) {
+  const dir = path.dirname(logPath)
+  const batPath = path.join(dir, 'restart-hidden.cmd')
+  const vbsPath = path.join(dir, 'restart-hidden.vbs')
+  const lines = []
+  if (extraEnv) {
+    for (const key of Object.keys(extraEnv)) {
+      lines.push('set "' + key + '=' + String(extraEnv[key]).replace(/[\r\n"]/g, '') + '"')
+    }
+  }
+  lines.push(command + ' >> "' + logPath + '" 2>&1')
+  fs.writeFileSync(batPath, lines.join('\r\n') + '\r\n', 'utf8')
+  const vbs = 'Set sh = CreateObject("WScript.Shell")\r\n'
+    + 'sh.Run "cmd.exe /c ""' + batPath.replace(/"/g, '') + '""", 0, False\r\n'
+  fs.writeFileSync(vbsPath, vbs, 'utf8')
+  const child = spawn('wscript.exe', ['//nologo', '//B', vbsPath], {
+    detached: true,
+    stdio: 'ignore',
+    windowsHide: true,
+  })
+  child.unref()
+  return child.pid
+}
+
+/**
  * @param {NodeJS.ProcessEnv} [extraEnv]
  * @returns {number | undefined}
- * @description Spawn via cmd.exe on Windows and /bin/sh on macOS/Linux. Log to ~/.dsh/review/dsh-restart.log.
+ * @description Spawn via /bin/sh on macOS/Linux; on Windows hide the console (no cmd window).
  */
 function startDshProcess(extraEnv) {
   const logPath = path.join(os.homedir(), '.dsh', 'review', 'dsh-restart.log')
   try {
     fs.mkdirSync(path.dirname(logPath), { recursive: true })
   } catch { /* noop */ }
+  if (process.platform === 'win32') {
+    const direct = resolveDirectSpawn()
+    if (direct) {
+      const out = fs.openSync(logPath, 'a')
+      const child = spawn(direct.file, direct.args, {
+        cwd: os.homedir(),
+        detached: true,
+        stdio: ['ignore', out, out],
+        env: Object.assign({}, process.env, extraEnv || {}),
+        windowsHide: true,
+        shell: false,
+      })
+      child.unref()
+      try { fs.closeSync(out) } catch { /* child keeps the inherited fd */ }
+      return child.pid
+    }
+    return startWinHiddenCmd(dshCommand(), extraEnv, logPath)
+  }
   const out = fs.openSync(logPath, 'a')
-  const win = process.platform === 'win32'
-  const file = win ? (process.env.ComSpec || 'cmd.exe') : '/bin/sh'
-  const args = win ? ['/d', '/s', '/c', dshCommand()] : ['-c', dshCommand()]
-  const child = spawn(file, args, {
+  const child = spawn('/bin/sh', ['-c', dshCommand()], {
     cwd: os.homedir(),
     detached: true,
     stdio: ['ignore', out, out],
     env: Object.assign({}, process.env, extraEnv || {}),
-    windowsHide: true,
   })
   child.unref()
   try { fs.closeSync(out) } catch { /* child keeps the inherited fd */ }

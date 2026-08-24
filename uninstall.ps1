@@ -24,6 +24,24 @@ function Write-Utf8JsonArray {
   [System.IO.File]::WriteAllText($Path, $text + "`n", $utf8)
 }
 
+function Write-Utf8NoBom {
+  param([Parameter(Mandatory = $true)][string]$Path, [Parameter(Mandatory = $true)][string]$Text)
+  $utf8 = New-Object System.Text.UTF8Encoding $false
+  [System.IO.File]::WriteAllText($Path, $Text, $utf8)
+}
+
+function Read-TextBestEffort {
+  param([Parameter(Mandatory = $true)][string]$Path)
+  $bytes = [System.IO.File]::ReadAllBytes($Path)
+  if ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) {
+    return [System.Text.UTF8Encoding]::new($false).GetString($bytes, 3, $bytes.Length - 3)
+  }
+  if ($bytes.Length -ge 2 -and $bytes[0] -eq 0xFF -and $bytes[1] -eq 0xFE) {
+    return [System.Text.Encoding]::Unicode.GetString($bytes, 2, $bytes.Length - 2)
+  }
+  return [System.Text.UTF8Encoding]::new($false).GetString($bytes)
+}
+
 # Drop dsn.dsh-review-vscode. Missing id must not abort (code.cmd stderr + Stop).
 function Uninstall-CodeExtensionQuiet {
   param([string]$Id)
@@ -38,7 +56,7 @@ function Unmerge-ArgvJson {
     Write-Host "no $File"
     return
   }
-  $text = Get-Content -Raw -Encoding UTF8 $File
+  $text = Read-TextBestEffort -Path $File
   $pattern = '"enable-proposed-api"\s*:\s*\[([^\]]*)\]'
   $match = [regex]::Match($text, $pattern)
   if (-not $match.Success) {
@@ -57,7 +75,7 @@ function Unmerge-ArgvJson {
     Write-Host "already clean $File"
     return
   }
-  Set-Content -Path $File -Encoding UTF8 -Value ($newText.TrimEnd() + "`n")
+  Write-Utf8NoBom -Path $File -Text ($newText.TrimEnd() + "`n")
   Write-Host "updated $File"
 }
 
