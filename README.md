@@ -21,6 +21,9 @@ Windows：
 ```powershell
 .\install.ps1
 ```
+```cmd
+powershell -ExecutionPolicy Bypass -File .\install.ps1
+```
 需要重启dsh和vscode
 
 ## UnInstall
@@ -34,6 +37,9 @@ Windows：
 
 ```powershell
 .\uninstall.ps1
+```
+```cmd
+powershell -ExecutionPolicy Bypass -File .\uninstall.ps1
 ```
 
 ## Storage
