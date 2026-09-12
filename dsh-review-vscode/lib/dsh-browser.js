@@ -92,8 +92,18 @@ function cfg() {
   return vscode.workspace.getConfiguration('dshReview')
 }
 
+/** Sidebar frame origin override (the local authenticating proxy), when active. */
+let frameBaseUrl = ''
+
+/**
+ * @param {string} url Local origin the sidebar iframe should load; '' restores the raw dsh URL.
+ */
+function setFrameBaseUrl(url) {
+  frameBaseUrl = String(url || '')
+}
+
 function configuredWebUrl() {
-  return String(cfg().get('webUrl') || 'http://127.0.0.1:3080')
+  return frameBaseUrl || String(cfg().get('webUrl') || 'http://127.0.0.1:3080')
 }
 
 /**
@@ -803,6 +813,7 @@ function setupDshBrowser(context) {
 module.exports = {
   state,
   setLog,
+  setFrameBaseUrl,
   setupDshBrowser,
   sendRefsToDsh,
   reloadDshWebview,

@@ -5,6 +5,7 @@
  * Persists mid-review state via setPersistence hooks (pending.json).
  */
 
+const fs = require('node:fs')
 const vscode = require('vscode')
 const { ReviewCore } = require('./review-core.js')
 const { createHunkInsets } = require('./ui/hunk-inset.js')
@@ -286,6 +287,12 @@ function createReviewHost(context) {
     }
     const applied = await applyDocText(uri, newText, { reveal })
     if (!applied) {
+      // Race guard: pending-sync clears vanished files up front; if the file
+      // disappeared between that check and the open, skip quietly (no toast).
+      if (!fs.existsSync(uri.fsPath)) {
+        log.appendLine('startReview skipped: file vanished ' + uri.fsPath)
+        return
+      }
       vscode.window.showErrorMessage('my-review: 无法写入当前文件')
       return
     }

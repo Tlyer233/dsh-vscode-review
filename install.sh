@@ -186,6 +186,7 @@ install_vscode_extension() {
     cp "$VSCODE_SRC/extension.js" "$VSCODE_SRC/package.json" "$DEST/"
     cp -R "$VSCODE_SRC/lib" "$VSCODE_SRC/media" "$DEST/"
     [ -d "$VSCODE_SRC/scripts" ] && cp -R "$VSCODE_SRC/scripts" "$DEST/"
+    [ -d "$VSCODE_SRC/node_modules" ] && cp -R "$VSCODE_SRC/node_modules" "$DEST/"
     sync_vscode_extension_catalog "$VSCODE_EXT_DIR" copy
   fi
 }

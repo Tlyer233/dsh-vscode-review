@@ -15,4 +15,8 @@ if [[ -z "$CODE_BIN" ]]; then
     exit 1
   fi
 fi
-exec "$CODE_BIN" --enable-proposed-api="$EXT_ID" "$@"
+# --remote-debugging-port lets the extension's CDP element-source read the
+# chat input model in real time (sub-second, zero-click element interception).
+# Port overridable: DSH_CDP_PORT=9224 ./open-vscode-with-insets.sh
+CDP_PORT="${DSH_CDP_PORT:-9223}"
+exec "$CODE_BIN" --enable-proposed-api="$EXT_ID" --remote-debugging-port="$CDP_PORT" "$@"

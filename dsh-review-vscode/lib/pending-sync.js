@@ -152,6 +152,22 @@ function startPendingSync(context, host) {
     }
     const filePath = entry.filePath
     const wb = entry.workbench
+    // File vanished while its workbench volume is still mounted: the review can
+    // never mount in an editor. Clear it (same as identical texts) instead of
+    // retrying — and popping '无法写入' — on every watcher tick.
+    if (!fs.existsSync(filePath)) {
+      const wbRoot = wbPaths.canonicalWorkbench(wb)
+      if (wbRoot && fs.existsSync(wbRoot)) {
+        log.appendLine(
+          'skip vanished ' + path.basename(filePath)
+          + ' before=' + String(entry.before || '').slice(0, 8)
+          + ' after=' + String(entry.after || '').slice(0, 8)
+          + ' (file missing on disk; clear pending)',
+        )
+        await clearPending(filePath, wb)
+      }
+      return
+    }
     const uri = vscode.Uri.file(filePath)
     const key = filePath
     const prev = applied.get(key)

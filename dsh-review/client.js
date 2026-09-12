@@ -1,11 +1,11 @@
 // dsh-review client (bridge + chips; dock UI kept for chip pipeline parity)
 
 window.__ModuleLoader__.load({
-  id: "dsh-review", 
+  id: "dsh-review",
   factory: (require) => {
     var module = { exports: {} };
     var exports = module.exports;
-    Object.defineProperty(exports, Symbol.toStringTag, { value: "Module" }); 
+    Object.defineProperty(exports, Symbol.toStringTag, { value: "Module" });
     const React = require("react");
     const { createElement: h, useState, useEffect, useCallback, useRef, useSyncExternalStore } = React;
 
@@ -343,14 +343,16 @@ window.__ModuleLoader__.load({
       try { document.documentElement.classList.add("dsh-vscode-iframe"); } catch (err) { /* noop */ }
       const css = [
         // Hide the 56px rail without fighting dsh React state.
-        "html.dsh-vscode-iframe.dsh-rail-hidden [data-details-collapsed] {",
+        // Newer dsh marks the frame grid data-sidebar-collapsed; older builds
+        // used data-details-collapsed, so match either.
+        "html.dsh-vscode-iframe.dsh-rail-hidden [data-sidebar-collapsed], html.dsh-vscode-iframe.dsh-rail-hidden [data-details-collapsed] {",
         "  grid-template-columns: 0px minmax(0, 1fr) 0px !important;",
         "}",
         // Right dock: RTL flips the first (sidebar) track to the right edge.
-        "html.dsh-vscode-iframe.dsh-rail-right [data-details-collapsed] {",
+        "html.dsh-vscode-iframe.dsh-rail-right [data-sidebar-collapsed], html.dsh-vscode-iframe.dsh-rail-right [data-details-collapsed] {",
         "  direction: rtl;",
         "}",
-        "html.dsh-vscode-iframe.dsh-rail-right [data-details-collapsed] > * {",
+        "html.dsh-vscode-iframe.dsh-rail-right [data-sidebar-collapsed] > *, html.dsh-vscode-iframe.dsh-rail-right [data-details-collapsed] > * {",
         "  direction: ltr;",
         "}",
         "html.dsh-vscode-iframe:not(.dsh-header-open) [data-slot=\"conversation.session.header\"],",
@@ -676,10 +678,37 @@ window.__ModuleLoader__.load({
           .filter(function (e) { return e && Number.isFinite(e.id); })
           .map(function (e) {
             const color = CHIP_COLORS[e.kind] || CHIP_COLORS.file;
-            return '[data-decoration="chip"][data-occurrence="' + e.id + '"]{background:' + color + ' !important;}';
+            // Legacy scan-derived chips carry the occurrence id in the DOM; the
+            // current composer renders real chip nodes, tagged by tagChipKinds.
+            return '[data-decoration="chip"][data-occurrence="' + e.id + '"]{background:' + color + ' !important;}'
+              + '\n[data-composer-chip="' + REF_SOURCE + '"][data-dsh-review-kind="' + (e.kind || "file") + '"] > span{background:' + color + ' !important;}';
           })
           .join("\n");
         if (css) chipStyleTag.textContent += "\n" + css;
+      } catch (err) { /* styling is cosmetic */ }
+    }
+
+    /**
+     * Tag this plugin's composer chips with their kind. The current composer DOM
+     * exposes no occurrence id, but occurrence order and chip host order are both
+     * editor order, so the two lists line up.
+     * @param {object} shell
+     * @param {object[]} references minted refs, in insertion order
+     * @param {object[]} list formatted refs carrying `kind`
+     */
+    function tagChipKinds(shell, references, list) {
+      try {
+        const kindByRef = {};
+        for (let i = 0; i < references.length; i++) {
+          kindByRef[references[i].ref] = (list[i] && list[i].kind) || "file";
+        }
+        const occurrences = (shell && shell.snapshot && shell.snapshot.occurrences) || [];
+        const ours = occurrences.filter(function (o) { return o.source === REF_SOURCE; });
+        const chips = document.querySelectorAll('[data-composer-chip="' + REF_SOURCE + '"]');
+        for (let i = 0; i < ours.length && i < chips.length; i++) {
+          const kind = kindByRef[ours[i].ref];
+          if (kind) chips[i].setAttribute("data-dsh-review-kind", kind);
+        }
       } catch (err) { /* styling is cosmetic */ }
     }
 
@@ -693,7 +722,7 @@ window.__ModuleLoader__.load({
       } catch (err) { /* noop */ }
     }
 
-    function ReviewChangesDock(props) { 
+    function ReviewChangesDock(props) {
       const [entries, setEntries] = useState([]);
       const [collapsed, setCollapsed] = useState(true);
       const [inVSCodeIframe, setInVSCodeIframe] = useState(false);
@@ -710,13 +739,13 @@ window.__ModuleLoader__.load({
         : undefined;
       const workspacePath = props && props.useWorkspaces
         ? props.useWorkspaces(function (s) {
-            var items = s && s.items ? s.items : [];
-            for (var i = 0; i < items.length; i++) {
-              var ids = items[i].sessionIds || [];
-              if (ids.indexOf(sessionId) >= 0) return items[i].path;
-            }
-            return undefined;
-          })
+          var items = s && s.items ? s.items : [];
+          for (var i = 0; i < items.length; i++) {
+            var ids = items[i].sessionIds || [];
+            if (ids.indexOf(sessionId) >= 0) return items[i].path;
+          }
+          return undefined;
+        })
         : undefined;
       const workbench = workspacePath || sessionCwd || "";
 
@@ -931,13 +960,27 @@ window.__ModuleLoader__.load({
         }
 
         function insertComposerText(text) {
+          const value = String(text === null || text === undefined ? "" : text);
+          if (!value) return false;
+          // Current dsh: splice at the live caret through the input shell. The
+          // composer is a contenteditable editor now, so the DOM fallbacks below
+          // can only append.
+          if (sessionId && inputHub) {
+            try {
+              const shell = inputHub.shell(sessionId);
+              if (shell && typeof shell.insertText === "function" && shell.insertText(value, referenceSpan(shell))) {
+                setTimeout(function () { focusComposer(); }, 0);
+                return true;
+              }
+            } catch (err) { /* fall through to the DOM paths */ }
+          }
           const target = preferredComposer(null);
-          if (target && insertAtCaret(target, text)) {
+          if (target && insertAtCaret(target, value)) {
             focusComposer();
             return true;
           }
           const actions = inputActionsRef.current;
-          if (actions) actions.setDraft(draftRef.current + text);
+          if (actions) actions.setDraft(draftRef.current + value);
           setTimeout(function () { focusComposer(); }, 0);
           return false;
         }
@@ -957,6 +1000,64 @@ window.__ModuleLoader__.load({
           return { start: len, end: len };
         }
 
+        /**
+         * Live insertion span for the current dsh composer: detect-coordinate
+         * caret/selection plus the revision the insertion CASes against.
+         * @param {object} shell conversation.input.shell(sessionId)
+         * @returns {{ start: number, end: number, draftRev: number }}
+         */
+        function referenceSpan(shell) {
+          const proj = (shell && shell.projection) || {};
+          const snap = (shell && shell.snapshot) || {};
+          const text = typeof proj.detectText === "string" ? proj.detectText
+            : (typeof snap.draft === "string" ? snap.draft : "");
+          const sel = proj.selection;
+          const fallback = Number.isFinite(proj.caret) ? proj.caret : text.length;
+          const start = sel && Number.isFinite(sel.start) ? sel.start : fallback;
+          const end = sel && Number.isFinite(sel.end) ? sel.end : fallback;
+          return { start: start, end: end, draftRev: liveRev(shell) };
+        }
+
+        /**
+         * Newest draft revision. The shell increments it inside the editor commit,
+         * while the published snapshot may still carry the previous one.
+         * @param {object} shell
+         * @returns {number}
+         */
+        function liveRev(shell) {
+          if (shell && Number.isFinite(shell.rev)) return shell.rev;
+          return (shell && shell.snapshot && shell.snapshot.draftRev) || 0;
+        }
+
+        /**
+         * Detect-coordinate insertion point for the chip after the one just added:
+         * the live caret when the editor advanced it, else the end of the draft.
+         * @param {object} shell
+         * @param {number} previous start offset of the insertion just applied
+         * @returns {{ start: number, end: number, draftRev: number }}
+         */
+        function spanAfterInsert(shell, previous) {
+          const proj = (shell && shell.projection) || {};
+          const detect = typeof proj.detectText === "string" ? proj.detectText : "";
+          const caret = Number.isFinite(proj.caret) ? proj.caret : detect.length;
+          const at = caret > previous ? caret : detect.length;
+          return { start: at, end: at, draftRev: liveRev(shell) };
+        }
+
+        /**
+         * Occurrence of one of our refs in the live composer projection.
+         * @param {object} shell
+         * @param {string} ref
+         * @returns {object|null}
+         */
+        function findRefOccurrence(shell, ref) {
+          const occurrences = (shell && shell.snapshot && shell.snapshot.occurrences) || [];
+          for (let i = 0; i < occurrences.length; i++) {
+            if (occurrences[i].source === REF_SOURCE && occurrences[i].ref === ref) return occurrences[i];
+          }
+          return null;
+        }
+
         // Try the dsh native occurrence chip path; fall back to plain text.
         function insertRefsAtCaret(refs, fallbackText, preferred) {
           const list = (Array.isArray(refs) ? refs : []).map(formatRefForSend);
@@ -971,11 +1072,43 @@ window.__ModuleLoader__.load({
           }
           try {
             const shell = inputHub.shell(sessionId);
-            if (!shell || typeof shell.pasteBegin !== "function") {
-              throw new Error("conversation.input.shell().pasteBegin unavailable");
+            if (!shell) throw new Error("conversation.input.shell unavailable");
+            const references = mintRefs(list);
+
+            // Current dsh: one reference chip per call. The insertion replaces the
+            // span at the live caret and appends a separating space; every later
+            // chip is chained right after the previous one so the block stays in
+            // order even when the caret cannot be re-read.
+            if (typeof shell.insertReference === "function") {
+              const byRef = {};
+              let span = referenceSpan(shell);
+              for (let i = 0; i < references.length; i++) {
+                const at = span.start;
+                if (!shell.insertReference(references[i], span)) {
+                  const p = shell.projection || {};
+                  throw new Error("insertReference rejected ref " + references[i].ref
+                    + " span=" + JSON.stringify(span)
+                    + " detect=" + JSON.stringify(String(p.detectText || "").slice(0, 60)));
+                }
+                const occ = findRefOccurrence(shell, references[i].ref);
+                if (!occ) throw new Error("insertReference left no occurrence for " + references[i].ref);
+                byRef[references[i].ref] = occ.occurrenceId;
+                span = spanAfterInsert(shell, at);
+              }
+              tagChipKinds(shell, references, list);
+              injectChipStyles(references.map(function (r, i) {
+                return { id: byRef[r.ref], kind: list[i] && list[i].kind, ref: r.ref };
+              }));
+              const caretAt = caretAfterRefs(shell, references);
+              setTimeout(function () { focusComposer(caretAt); }, 0);
+              setTimeout(function () { focusComposer(caretAt); }, 50);
+              return { mode: "chip", count: references.length, reason: "" };
+            }
+
+            if (typeof shell.pasteBegin !== "function") {
+              throw new Error("conversation.input.shell() has no chip insertion API");
             }
             const sel = currentSelection(preferred);
-            const references = mintRefs(list);
             let raw = "";
             const components = [];
             for (let i = 0; i < references.length; i++) {
@@ -1017,6 +1150,26 @@ window.__ModuleLoader__.load({
             if (formattedFallback) insertComposerText(formattedFallback);
             return { mode: "text", count: list.length, reason: err && err.message || String(err) };
           }
+        }
+
+        /**
+         * Caret offset just past the last inserted chip (and its separating space).
+         * @param {object} shell
+         * @param {object[]} references
+         * @returns {number}
+         */
+        function caretAfterRefs(shell, references) {
+          const snap = (shell && shell.snapshot) || {};
+          const text = typeof snap.draft === "string" ? snap.draft : "";
+          let caret = 0;
+          for (let i = 0; i < references.length; i++) {
+            const o = findRefOccurrence(shell, references[i].ref);
+            if (!o) continue;
+            let end = o.offset + o.length;
+            if (end < text.length && text.charAt(end) === " ") end += 1;
+            caret = end;
+          }
+          return caret;
         }
 
         function applyZoom() {
@@ -1332,14 +1485,27 @@ window.__ModuleLoader__.load({
           const sid = sessionIdRef.current;
           if (!sid) { pasteLog("attach fail: no sessionId"); return false; }
           if (!conversationApi || !inputHub) { pasteLog("attach fail: no conversation/inputHub"); return false; }
-          if (typeof conversationApi.createDraftImages !== "function") {
-            pasteLog("attach fail: no createDraftImages");
-            return false;
-          }
+          const shell = inputHub.shell(sid);
+          if (!shell) { pasteLog("attach fail: no input shell"); return false; }
           try {
+            // Current dsh: runtime draft attachments + shell.addAttachments.
+            if (typeof conversationApi.createDrafts === "function" && typeof shell.addAttachments === "function") {
+              const drafts = conversationApi.createDrafts(sid, files);
+              if (!shell.addAttachments(drafts.map(function (draft) { return draft.id; }))) {
+                if (typeof conversationApi.releaseDraftAttachments === "function") conversationApi.releaseDraftAttachments(drafts);
+                pasteLog("attach fail: addAttachments rejected n=" + drafts.length);
+                return false;
+              }
+              pasteLog("attach ok n=" + drafts.length + " session=" + String(sid));
+              return true;
+            }
+            // Older dsh: createDraftImages + shell.addImages.
+            if (typeof conversationApi.createDraftImages !== "function") {
+              pasteLog("attach fail: no createDrafts/createDraftImages");
+              return false;
+            }
             const images = conversationApi.createDraftImages(files);
-            const shell = inputHub.shell(sid);
-            if (!shell || typeof shell.addImages !== "function") {
+            if (typeof shell.addImages !== "function") {
               if (typeof conversationApi.releaseDraftImages === "function") conversationApi.releaseDraftImages(images);
               pasteLog("attach fail: no shell.addImages");
               return false;
@@ -2373,7 +2539,7 @@ window.__ModuleLoader__.load({
         };
       }, "dsh-review: workbench scope watchdog");
 
-      ctx.inject(["slots", "conversation", "inputTriggers"], function(scope) {
+      ctx.inject(["slots", "conversation", "inputTriggers"], function (scope) {
         try {
           const conversation = scope.conversation;
           if (conversation && conversation.input && typeof conversation.input.shell === "function") {
@@ -2385,8 +2551,8 @@ window.__ModuleLoader__.load({
         } catch (err) {
           console.warn("[dsh-review] native chip pipeline failed:", err && err.message || err);
         }
-        scope.effect(function() {
-          let unregisterRefSource = function () {};
+        scope.effect(function () {
+          let unregisterRefSource = function () { };
           try {
             if (scope.inputTriggers && typeof scope.inputTriggers.registerSource === "function") {
               unregisterRefSource = scope.inputTriggers.registerSource({

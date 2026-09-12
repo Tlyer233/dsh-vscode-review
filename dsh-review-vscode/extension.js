@@ -5,9 +5,12 @@ const path = require('node:path')
 const { createReviewHost } = require('./lib/session.js')
 const { startPendingSync } = require('./lib/pending-sync.js')
 const {
-  setLog, setupDshBrowser, sendRefsToDsh, state: dshState,
+  setLog, setupDshBrowser, sendRefsToDsh, state: dshState, setFrameBaseUrl, reloadDshWebview,
 } = require('./lib/dsh-browser.js')
-const { restartDsh, restartDshProxy, stopDsh } = require('./lib/dsh-process.js')
+const { restartDsh, restartDshProxy, restartDshBili, stopDsh, dshPort } = require('./lib/dsh-process.js')
+const { startAuthProxy } = require('./lib/dsh-auth-proxy.js')
+const { startElementContextWatcher } = require('./lib/element-context-watcher.js')
+const { startCdpProbe } = require('./lib/cdp-element-source.js')
 const { ensureProposedApi } = require('./lib/enable-insets.js')
 
 function activate(context) {
@@ -16,9 +19,43 @@ function activate(context) {
   setLog((msg) => log.appendLine(String(msg)))
   log.appendLine('activate dsh-review-vscode')
 
+  // Surface async pipeline failures (e.g. unhandled promise rejections) in this channel.
+  try {
+    process.on('unhandledRejection', (reason) => {
+      log.appendLine('[dsh] unhandledRejection: ' + String((reason && reason.stack) || reason).slice(0, 300))
+    })
+  } catch { /* non-node host */ }
+
   const host = createReviewHost(context)
   startPendingSync(context, host)
+
+  // dsh web now requires a browser session, and the sidebar iframe cannot carry
+  // its SameSite=Strict cookie (cross-site vscode-webview parent). Serve the
+  // sidebar through a local cookie-injecting proxy instead.
+  try {
+    const authProxyPort = Number(vscode.workspace.getConfiguration('dshReview').get('authProxyPort')) || 3081
+    const authProxy = startAuthProxy({
+      listenPort: authProxyPort,
+      targetPort: dshPort(),
+      log: (msg) => {
+        log.appendLine('[auth-proxy] ' + msg)
+        if (/^listen failed/.test(msg)) setFrameBaseUrl('')
+        if (/^listening on/.test(msg)) {
+          setFrameBaseUrl(authProxy.url)
+          reloadDshWebview(true)
+        }
+      },
+    })
+    context.subscriptions.push({ dispose: () => authProxy.close() })
+  } catch (e) {
+    log.appendLine('[auth-proxy] start failed: ' + String((e && e.message) || e))
+  }
+
   setupDshBrowser(context)
+
+  // TEST: watch Integrated Browser "Add Element to Chat" output file; print location only.
+  startElementContextWatcher(context, log)
+  startCdpProbe(context, log)
 
   // Persist enable-proposed-api in user-data argv.json so Dock launches get editorInsets.
   const argvResult = ensureProposedApi(context.extension.id)
@@ -60,6 +97,7 @@ function activate(context) {
   context.subscriptions.push(vscode.commands.registerCommand('dshReview.restartDsh', () => restartDsh()))
   context.subscriptions.push(vscode.commands.registerCommand('dshReview.stopDsh', () => stopDsh()))
   context.subscriptions.push(vscode.commands.registerCommand('dshReview.restartDshProxy', () => restartDshProxy()))
+  context.subscriptions.push(vscode.commands.registerCommand('dshReview.restartDshBili', () => restartDshBili()))
 
   context.subscriptions.push(vscode.commands.registerCommand('dshReview.sendSelectionToDsh', () => sendEditorSelectionToDsh(log)))
   context.subscriptions.push(vscode.commands.registerCommand('dshReview.sendTerminalSelectionToDsh', () => sendTerminalSelectionToDsh(log)))

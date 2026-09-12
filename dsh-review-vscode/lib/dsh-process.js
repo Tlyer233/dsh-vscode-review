@@ -128,6 +128,65 @@ function proxyPort() {
   return Number.isFinite(p) && p > 0 ? p : 7897
 }
 
+function biliPort() {
+  const p = Number(cfg().get('biliPort'))
+  return Number.isFinite(p) && p > 0 ? p : 8787
+}
+
+/**
+ * @returns {string | null}
+ * @description Locate the bili launcher in ~/.local/bin or on PATH.
+ */
+function findBiliBin() {
+  const home = os.homedir()
+  const names = process.platform === 'win32' ? ['bili.cmd', 'bili.exe', 'bili.bat', 'bili'] : ['bili']
+  const dirs = [path.join(home, '.local', 'bin')]
+  for (const dir of (process.env.PATH || '').split(path.delimiter)) {
+    if (dir) dirs.push(dir)
+  }
+  for (const dir of dirs) {
+    for (const name of names) {
+      if (fileExists(path.join(dir, name))) return path.join(dir, name)
+    }
+  }
+  return null
+}
+
+/**
+ * @param {number} port
+ * @returns {Promise<boolean>}
+ * @description True when the bili proxy answers /__bili/health with ok:true.
+ */
+function biliHealthUp(port) {
+  return new Promise((resolve) => {
+    const req = http.get('http://127.0.0.1:' + String(port) + '/__bili/health', { timeout: 1000 }, (res) => {
+      let body = ''
+      res.on('data', (c) => { body += c })
+      res.on('end', () => {
+        let ok = false
+        try { ok = !!res.statusCode && res.statusCode < 500 && /"ok"\s*:\s*true/.test(body) } catch { ok = false }
+        resolve(ok)
+      })
+    })
+    req.on('error', () => resolve(false))
+    req.on('timeout', () => { req.destroy(); resolve(false) })
+  })
+}
+
+/**
+ * @returns {string[]}
+ * @description NO_PROXY entries: built-in loopback set plus the user whitelist from
+ * `dshReview.noProxyExtra` (comma/whitespace-separated, e.g. a Tailscale IP).
+ */
+function noProxyList() {
+  const base = ['localhost', '127.0.0.1', '::1']
+  const extra = String(cfg().get('noProxyExtra') || '')
+    .split(/[,\s;]+/)
+    .map((s) => s.trim())
+    .filter((s) => s && !base.includes(s))
+  return [...base, ...extra]
+}
+
 /**
  * @returns {NodeJS.ProcessEnv}
  * @description Proxy vars for spawn env (do not prefix Unix `env` — that is not a Win command).
@@ -138,7 +197,7 @@ function proxyEnv() {
     NODE_USE_ENV_PROXY: '1',
     HTTPS_PROXY: 'http://127.0.0.1:' + p,
     HTTP_PROXY: 'http://127.0.0.1:' + p,
-    NO_PROXY: 'localhost,127.0.0.1,::1',
+    NO_PROXY: noProxyList().join(','),
   }
 }
 
@@ -298,6 +357,28 @@ function findNodeBin() {
 }
 
 /**
+ * @returns {string | null}
+ * @description System node from PATH, falling back to common install locations
+ * (a Dock-launched VS Code may have a minimal PATH).
+ */
+function findNodeBinStrict() {
+  const node = findNodeBin()
+  if (node) return node
+  const home = os.homedir()
+  const candidates = [
+    path.join(home, '.local', 'bin', 'node'),
+    path.join(home, '.hermes', 'node', 'bin', 'node'),
+    '/opt/homebrew/bin/node',
+    '/usr/local/bin/node',
+    '/usr/bin/node',
+  ]
+  for (const p of candidates) {
+    if (fileExists(p)) return p
+  }
+  return null
+}
+
+/**
  * @param {string} cmdPath
  * @returns {string | null}
  * @description Resolve the JS CLI that npm's dsh.cmd forwards to.
@@ -425,6 +506,33 @@ function startDshProcess(extraEnv) {
 }
 
 /**
+ * @param {string} command
+ * @param {NodeJS.ProcessEnv} [extraEnv]
+ * @returns {number | undefined}
+ * @description Spawn an explicit launch command (used by the bili restart),
+ * logging to the same dsh-restart.log.
+ */
+function startDshProcessWith(command, extraEnv) {
+  const logPath = path.join(os.homedir(), '.dsh', 'review', 'dsh-restart.log')
+  try {
+    fs.mkdirSync(path.dirname(logPath), { recursive: true })
+  } catch { /* noop */ }
+  if (process.platform === 'win32') {
+    return startWinHiddenCmd(command, extraEnv || {}, logPath)
+  }
+  const out = fs.openSync(logPath, 'a')
+  const child = spawn('/bin/sh', ['-c', command], {
+    cwd: os.homedir(),
+    detached: true,
+    stdio: ['ignore', out, out],
+    env: Object.assign({}, process.env, extraEnv || {}),
+  })
+  child.unref()
+  try { fs.closeSync(out) } catch { /* child keeps the inherited fd */ }
+  return child.pid
+}
+
+/**
  * Blank the iframe, kill+start dsh, wait until HTTP is up, then load the
  * sidebar once. The old 1.2/3/6s triple html rewrite flashed and remounted
  * the conversation (which retried the last send).
@@ -442,6 +550,8 @@ async function restartDshCore(extraEnv, doneMsg) {
   await waitUntil(async () => !(await portHasProcess(port)), 4000, 100, stillCurrent)
   if (!stillCurrent()) return
 
+  let logMark = 0
+  try { logMark = fs.statSync(path.join(os.homedir(), '.dsh', 'review', 'dsh-restart.log')).size } catch { logMark = 0 }
   startDshProcess(extraEnv)
   const up = await waitUntil(() => httpIsUp(url), 20000, 250, stillCurrent)
   if (!stillCurrent()) return
@@ -473,6 +583,81 @@ async function restartDshProxy() {
   )
 }
 
+/**
+ * Restart dsh through the bili (billion-context) proxy: the bili launcher
+ * starts a fresh proxy (bound to dshReview.biliPort) and launches dsh against
+ * it with the ACP compression plugin. A stale bili proxy on that port is
+ * replaced; a non-bili occupant aborts the restart.
+ */
+async function restartDshBili() {
+  const biliBin = findBiliBin()
+  const nodeBin = findNodeBinStrict()
+  if (!biliBin) {
+    vscode.window.showErrorMessage('dshReview: bili not found (looked in ~/.local/bin and PATH)')
+    return
+  }
+  if (!nodeBin) {
+    vscode.window.showErrorMessage('dshReview: node not found (PATH or common install locations)')
+    return
+  }
+  const port = dshPort()
+  const bport = biliPort()
+  const url = String(cfg().get('webUrl') || 'http://127.0.0.1:3080')
+  const token = ++restartToken
+  const stillCurrent = () => token === restartToken
+
+  showDshRestartingOverlay()
+
+  // The bili launcher always spawns its own proxy and falls back to a random
+  // port when the preferred one is taken. Replace a stale bili proxy so the
+  // port stays deterministic (refuse to kill a non-bili process).
+  let replaced = 0
+  if (await portHasProcess(bport)) {
+    if (await biliHealthUp(bport)) {
+      replaced = await stopDshProcess(bport)
+    } else {
+      vscode.window.showErrorMessage(
+        'dshReview: port ' + bport + ' is occupied by a non-bili process — free it manually, then retry.',
+      )
+      showDshOfflineOverlay()
+      return
+    }
+  }
+  if (!stillCurrent()) return
+  await waitUntil(async () => !(await portHasProcess(bport)), 4000, 100, stillCurrent)
+  if (!stillCurrent()) return
+
+  const killed = await stopDshProcess(port)
+  await waitUntil(async () => !(await portHasProcess(port)), 4000, 100, stillCurrent)
+  if (!stillCurrent()) return
+
+  const command = quoteShellArg(nodeBin) + ' ' + quoteShellArg(biliBin) + ' dsh -- --profile web --no-open'
+  const extraEnv = {
+    PATH: path.join(os.homedir(), '.local', 'bin') + path.delimiter + (process.env.PATH || ''),
+    ACP_PORT: String(bport),
+    ACP_DEBUG: '1',
+    ACP_RENDER_NONE: '1',
+  }
+  let logMark = 0
+  try { logMark = fs.statSync(path.join(os.homedir(), '.dsh', 'review', 'dsh-restart.log')).size } catch { logMark = 0 }
+  startDshProcessWith(command, extraEnv)
+  const up = await waitUntil(() => httpIsUp(url), 25000, 250, stillCurrent)
+  if (!stillCurrent()) return
+
+  if (up) {
+    await new Promise((resolve) => setTimeout(resolve, 150))
+    if (!stillCurrent()) return
+    reloadDshWebview(true)
+  } else {
+    showDshOfflineOverlay()
+  }
+  const bits = ['dsh restarted via bili (proxy http://127.0.0.1:' + bport + ')']
+  if (killed > 0) bits.push('killed ' + killed + ' old dsh')
+  if (replaced > 0) bits.push('replaced stale bili proxy')
+  if (!up) bits.push('server did not come up')
+  vscode.window.showInformationMessage(bits.join(' — '))
+}
+
 async function stopDsh() {
   const port = dshPort()
   const killed = await stopDshProcess(port)
@@ -487,6 +672,7 @@ async function stopDsh() {
 module.exports = {
   restartDsh,
   restartDshProxy,
+  restartDshBili,
   stopDsh,
   dshPort,
   dshCommand,

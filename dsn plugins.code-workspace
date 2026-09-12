@@ -1,0 +1,13 @@
+{
+	"folders": [
+		{
+			"path": "../dsn plugins"
+		},
+		{
+			"path": "."
+		}
+	],
+	"settings": {
+		"python.languageServer": "None"
+	}
+}

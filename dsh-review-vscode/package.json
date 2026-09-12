@@ -24,6 +24,42 @@
   "contributes": {
     "commands": [
       {
+        "command": "dshReview.elementWatcherPing",
+        "title": "dsh: element watcher ping (test)"
+      },
+      {
+        "command": "dshReview.dumpDocs",
+        "title": "dsh: dump open documents (test)"
+      },
+      {
+        "command": "dshReview.elementStorageProbe",
+        "title": "dsh: element storage probe (test)"
+      },
+      {
+        "command": "dshReview.cdpChipDump",
+        "title": "dsh: CDP chip dump (test)"
+      },
+      {
+        "command": "dshReview.testAutoClose",
+        "title": "dsh: test auto-close untitled tab"
+      },
+      {
+        "command": "dshReview.testAutoClose2",
+        "title": "dsh: test revert-then-close untitled tab"
+      },
+      {
+        "command": "dshReview.testAutoClose3",
+        "title": "dsh: test save-to-tmp-close-untitled tab"
+      },
+      {
+        "command": "dshReview.testAutoClose4",
+        "title": "dsh: test preview-mode-close-untitled tab"
+      },
+      {
+        "command": "dshReview.cdpPing",
+        "title": "dsh: CDP ping (liveness check)"
+      },
+      {
         "command": "dshReview.acceptAll",
         "title": "全部接受",
         "icon": {
@@ -72,6 +108,11 @@
           "light": "media/dsh-refresh-proxy.svg",
           "dark": "media/dsh-refresh-proxy.svg"
         }
+      },
+      {
+        "command": "dshReview.restartDshBili",
+        "title": "dsh: Restart dsh (bili)",
+        "icon": "$(zap)"
       }
     ],
     "configuration": {
@@ -92,10 +133,45 @@
           "default": 3080,
           "markdownDescription": "TCP port used to detect/stop the dsh web process."
         },
+        "dshReview.authProxyPort": {
+          "type": "number",
+          "default": 3081,
+          "markdownDescription": "Loopback port of the sidebar auth proxy. `dsh web` requires a browser session cookie the sidebar iframe cannot carry, so the sidebar loads `http://127.0.0.1:<this port>` and the extension injects the cookie while forwarding to `dshReview.webUrl`."
+        },
         "dshReview.proxyPort": {
           "type": "number",
           "default": 7897,
           "markdownDescription": "Local proxy port for `dsh: Restart dsh (proxy)` (HTTP 127.0.0.1)."
+        },
+        "dshReview.noProxyExtra": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "`dsh: Restart dsh (proxy)` 的额外 NO_PROXY 白名单（逗号分隔）：列出的地址绕过本地代理、直连，例如 Tailscale 本机模型地址 `100.97.111.122`。Extra NO_PROXY entries (comma-separated) that bypass the proxy for the proxy restart."
+        },
+        "dshReview.biliPort": {
+          "type": "number",
+          "default": 8787,
+          "markdownDescription": "`dsh: Restart dsh (bili)` 使用的 bili 代理端口（HTTP 127.0.0.1）。The bili proxy port used by the bili restart (HTTP 127.0.0.1)."
+        },
+        "dshReview.elementContext.autoCloseTab": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "自动关闭 chip 点击打开的临时 tab(untitled 文档直接丢弃, 不弹保存框). Auto-close the temp tab opened by the element chip after capture."
+        },
+        "dshReview.elementContext.focusDshAfterCapture": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "捕获元素上下文后把焦点拉回 dsh 侧栏(选元素可能先跳转到了 Copilot). Pull focus back to the dsh sidebar after capturing an element context."
+        },
+        "dshReview.elementContext.cleanChip": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "自动捕获后把元素 chip 从 Copilot 输入框移除. Remove the element chip from the Copilot input after auto-capture."
+        },
+        "dshReview.elementContext.image": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "发送时附带元素截图 base64(尽力而为, 取决于 VS Code 是否已落盘, 通常需 ~30s). Best-effort element screenshot (base64) attached when sending to dsh."
         }
       }
     },
@@ -163,6 +239,11 @@
           "command": "dshReview.restartDshProxy",
           "when": "view == dshReview.dshWebview",
           "group": "navigation@3"
+        },
+        {
+          "command": "dshReview.restartDshBili",
+          "when": "view == dshReview.dshWebview",
+          "group": "navigation@4"
         }
       ]
     },
@@ -212,5 +293,8 @@
   },
   "enabledApiProposals": [
     "editorInsets"
-  ]
+  ],
+  "dependencies": {
+    "ws": "^8.21.3"
+  }
 }
