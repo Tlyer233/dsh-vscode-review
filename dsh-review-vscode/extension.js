@@ -9,6 +9,7 @@ const {
 } = require('./lib/dsh-browser.js')
 const { restartDsh, restartDshProxy, restartDshBili, stopDsh, dshPort } = require('./lib/dsh-process.js')
 const { startAuthProxy } = require('./lib/dsh-auth-proxy.js')
+const { connectDshJobs } = require('./lib/dsh-jobs.js')
 const { startElementContextWatcher } = require('./lib/element-context-watcher.js')
 const { startCdpProbe } = require('./lib/cdp-element-source.js')
 const { ensureProposedApi } = require('./lib/enable-insets.js')
@@ -49,6 +50,20 @@ function activate(context) {
     context.subscriptions.push({ dispose: () => authProxy.close() })
   } catch (e) {
     log.appendLine('[auth-proxy] start failed: ' + String((e && e.message) || e))
+  }
+
+  // Background dsh jobs → read-only VSCode terminals (SSE) + kill by id.
+  try {
+    const jobsBridge = connectDshJobs({ log: (msg) => log.appendLine('[dsh-jobs] ' + msg) })
+    context.subscriptions.push({ dispose: () => jobsBridge.disconnect() })
+    context.subscriptions.push(vscode.commands.registerCommand('dshReview.killDshJob', async (idArg) => {
+      let id = typeof idArg === 'string' && idArg ? idArg : null
+      if (!id) id = jobsBridge.killActive()
+      if (!id) id = await vscode.window.showInputBox({ prompt: 'dsh job id to kill', placeHolder: 'e.g. bash-1' })
+      if (id) jobsBridge.kill(id)
+    }))
+  } catch (e) {
+    log.appendLine('[dsh-jobs] start failed: ' + String((e && e.message) || e))
   }
 
   setupDshBrowser(context)
@@ -113,25 +128,51 @@ async function sendEditorSelectionToDsh(log) {
     vscode.window.showWarningMessage('dsh: select some text in the editor first')
     return
   }
+  const fsPath = editor.document.uri.fsPath
+  // A notebook cell is its OWN text document (scheme vscode-notebook-cell,
+  // URI = notebookUri#<handle>), so selection lines are already in-cell.
+  // TextDocument.notebook is NOT populated by the extension host (API gap),
+  // so resolve the cell via the active notebook editor and match by the
+  // exact cell document URI.
+  const nbEditor = vscode.window.activeNotebookEditor
+  const nb = nbEditor ? nbEditor.notebook : undefined
   const startLine = editor.selection.start.line + 1
   const endLine = editor.selection.end.line + 1
-  const range = startLine === endLine ? 'L' + startLine : 'L' + startLine + '~L' + endLine
-  const fsPath = editor.document.uri.fsPath
+  let notebook = false
+  let cellStart = 0
+  if (nb) {
+    const docUri = editor.document.uri.toString()
+    const cell = nb.getCells().find((c) => c.document.uri.toString() === docUri)
+    if (cell) {
+      notebook = true
+      cellStart = cell.index + 1
+    }
+  }
+  const lineRange = startLine === endLine ? 'L' + startLine : 'L' + startLine + '~L' + endLine
+  const range = notebook ? 'C' + cellStart + ' ' + lineRange : lineRange
   const label = path.basename(fsPath) + ' ' + range
-  const start = new vscode.Position(startLine - 1, 0)
-  const end = editor.document.lineAt(endLine - 1).range.end
+  const start = new vscode.Position(editor.selection.start.line, 0)
+  const end = editor.document.lineAt(editor.selection.end.line).range.end
   const content = editor.document.getText(new vscode.Range(start, end))
-  const pointer = '`' + fsPath.replace(/`/g, '') + '` ' + range
+  // Extension owns the send mode (dsh client-side settings mirror is not
+  // reliable for plugin namespaces): pointer = backticked `path L1~L2`.
+  const sendMode = String(vscode.workspace.getConfiguration('dshReview').get('snippetSend') || 'pointer')
+  const pointer = '`' + fsPath.replace(/`/g, '') + ' ' + range + '`'
   const ref = {
     kind: 'selection',
     path: fsPath,
+    notebook,
+    cellStart,
+    cellEnd: cellStart,
     startLine,
     endLine,
     content,
     label,
+    sendMode,
     clipboardText: pointer,
     modelText: pointer,
   }
+  log.appendLine('sendSelection: notebook=' + notebook + ' docUri=' + editor.document.uri.toString() + ' cells=' + (nb ? nb.cellCount : 0) + ' range=' + range + ' path=' + fsPath)
   const sent = await sendRefsToDsh([ref], pointer)
   if (!sent) log.appendLine('sendSelection: postMessage failed')
 }

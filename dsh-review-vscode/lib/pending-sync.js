@@ -132,6 +132,23 @@ function startPendingSync(context, host) {
       }
       await clearPending(session.meta.filePath, session.meta.workbench)
     },
+    onAllRuled: async () => {
+      // Bulk ruling finished: drop every owned entry (per-hunk onRuling may
+      // have only persisted blobs without clearing, and delete entries never
+      // had a session at all), then push the converged list to the dock.
+      for (const t of persistTimers.values()) clearTimeout(t) // no stale upsert after the wipe
+      persistTimers.clear()
+      writing = true
+      try {
+        const entries = readOwnedPending()
+        for (const e of entries) {
+          if (e && e.filePath) removeEntry(e.filePath, e.workbench)
+        }
+        pushDock()
+      } finally {
+        setTimeout(() => { writing = false }, 80)
+      }
+    },
   })
 
   /**

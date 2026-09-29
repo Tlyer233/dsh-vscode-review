@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs'
 import { commitFileSnapshot, ensureShadowRepo, relPath } from './shadow.js'
 import { readPending, upsertPending } from './pending.js'
 import { shadowRoot } from './workbench.js'
+import { installJobsBridge } from './jobs.js'
 
 export const name = 'dsh-review'
 export const inject = []
@@ -262,6 +263,20 @@ export function apply(ctx, config) {
   console.info('[dsh-review] layout = global repo.git + pending/<wbHash>.json')
   console.info('[dsh-review] pending owner = session.header.cwd; filePath may be outside that cwd')
   console.info('[dsh-review] TRACK tools =', [...TRACK].join(','), '+ shell rm→delete')
+
+  // Expose background jobs to the VSCode extension (SSE + kill by id).
+  // `jobs`/`webServer` are cordis services: only reachable inside an injected
+  // sub-context (bare ctx.jobs throws "cannot get property ... without inject").
+  // installJobsBridge is idempotent (symbol flags), so the inject callback
+  // re-running on service changes is safe. A failure here must not break the
+  // review tool hooks below.
+  try {
+    ctx.inject(['jobs', 'webServer'], (sctx) => {
+      installJobsBridge(sctx)
+    })
+  } catch (e) {
+    console.warn('[dsh-review] jobs bridge failed:', e && e.message || e)
+  }
 
   ctx.on('tools/pre-execute', async (exec, next) => {
     try {

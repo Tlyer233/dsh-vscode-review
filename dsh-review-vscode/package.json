@@ -2,7 +2,7 @@
   "name": "dsh-review-vscode",
   "displayName": "dsh review — inline diff + dsh sidebar",
   "description": "Inline review (shadow/pending) + dsh webview sidebar",
-  "version": "0.1.0",
+  "version": "0.1.9",
   "publisher": "dsn",
   "engines": {
     "vscode": "^1.85.0"
@@ -113,6 +113,10 @@
         "command": "dshReview.restartDshBili",
         "title": "dsh: Restart dsh (bili)",
         "icon": "$(zap)"
+      },
+      {
+        "command": "dshReview.killDshJob",
+        "title": "dsh: Kill dsh job"
       }
     ],
     "configuration": {
@@ -122,6 +126,12 @@
           "type": "string",
           "default": "http://127.0.0.1:3080",
           "markdownDescription": "URL loaded inside the dsh sidebar webview."
+        },
+        "dshReview.snippetSend": {
+          "type": "string",
+          "enum": ["pointer", "fence"],
+          "default": "pointer",
+          "markdownDescription": "代码选区 chip 发送模式: pointer = 发送 路径+行号 指针(反引号包裹); fence = 发送整段围栏代码。"
         },
         "dshReview.dshCommand": {
           "type": "string",

@@ -345,14 +345,17 @@ window.__ModuleLoader__.load({
         // Hide the 56px rail without fighting dsh React state.
         // Newer dsh marks the frame grid data-sidebar-collapsed; older builds
         // used data-details-collapsed, so match either.
-        "html.dsh-vscode-iframe.dsh-rail-hidden [data-sidebar-collapsed], html.dsh-vscode-iframe.dsh-rail-hidden [data-details-collapsed] {",
+        "html.dsh-vscode-iframe.dsh-rail-hidden [data-sidebar-collapsed], html.dsh-vscode-iframe.dsh-rail-hidden [data-details-collapsed], html.dsh-vscode-iframe.dsh-rail-hidden [data-slot=\"root\"] > * {",
         "  grid-template-columns: 0px minmax(0, 1fr) 0px !important;",
         "}",
         // Right dock: RTL flips the first (sidebar) track to the right edge.
-        "html.dsh-vscode-iframe.dsh-rail-right [data-sidebar-collapsed], html.dsh-vscode-iframe.dsh-rail-right [data-details-collapsed] {",
+        // dsh drops data-sidebar-collapsed once the sidebar expands, so the
+        // frame is also hooked through its stable root slot — otherwise the
+        // expanded panel snaps back to the left.
+        "html.dsh-vscode-iframe.dsh-rail-right [data-sidebar-collapsed], html.dsh-vscode-iframe.dsh-rail-right [data-details-collapsed], html.dsh-vscode-iframe.dsh-rail-right [data-slot=\"root\"] > * {",
         "  direction: rtl;",
         "}",
-        "html.dsh-vscode-iframe.dsh-rail-right [data-sidebar-collapsed] > *, html.dsh-vscode-iframe.dsh-rail-right [data-details-collapsed] > * {",
+        "html.dsh-vscode-iframe.dsh-rail-right [data-sidebar-collapsed] > *, html.dsh-vscode-iframe.dsh-rail-right [data-details-collapsed] > *, html.dsh-vscode-iframe.dsh-rail-right [data-slot=\"root\"] > * > * {",
         "  direction: ltr;",
         "}",
         "html.dsh-vscode-iframe:not(.dsh-header-open) [data-slot=\"conversation.session.header\"],",
@@ -446,6 +449,89 @@ window.__ModuleLoader__.load({
       compactNativeStatsLine();
     }
 
+    // Auto-hide the docked rail: edge hover reveals it, mouse leave collapses
+    // it after a short delay. Drives the same dsh-rail-hidden class (and the
+    // same expand-button state) as the manual toggle, so no parallel state.
+    //
+    // The dsh sidebar has TWO visible states, both living in the frame's
+    // FIRST grid track: the ~56px icon rail (the track itself) and the
+    // expanded ~200px panel (an overflow panel mounted inside the same
+    // track; the track width stays 56px). No DOM attribute survives across
+    // dsh builds, so the visible rail area is computed as the union of the
+    // track's rect and all its visible descendants — exactly the visible
+    // rail in both states — with no elementFromPoint, no climbing, no
+    // cached root.
+    let railAutoHideInstalled = false;
+    function installIframeRailAutoHide() {
+      if (typeof document === "undefined") return;
+      if (!bridgeActive && !vscodeIframeHint()) return;
+      if (railAutoHideInstalled) return;
+      railAutoHideInstalled = true;
+      let hideTimer = null;
+      const html = document.documentElement;
+      const isHidden = () => html.classList.contains("dsh-rail-hidden");
+      const show = () => {
+        if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; }
+        if (isHidden()) setIframeRailHidden(false);
+      };
+      // Visible rail area = sidebar track rect UNION all visible descendants
+      // (depth-capped walk; the sidebar subtree is small). Icon-rail state:
+      // the 56px track. Expanded state: track ∪ overflow panel = full panel.
+      function railAreaRect() {
+        const frame = document.querySelector('[data-slot="root"] > *');
+        const col = frame && frame.children[0];
+        if (!col) return null;
+        const base = col.getBoundingClientRect();
+        let left = base.left, top = base.top, right = base.right, bottom = base.bottom;
+        const walk = (el, depth) => {
+          if (depth > 6) return;
+          const kids = el.children;
+          for (let i = 0; i < kids.length; i++) {
+            const cr = kids[i].getBoundingClientRect();
+            if (cr.width > 0 && cr.height > 0) {
+              if (cr.left < left) left = cr.left;
+              if (cr.right > right) right = cr.right;
+              if (cr.top < top) top = cr.top;
+              if (cr.bottom > bottom) bottom = cr.bottom;
+            }
+            walk(kids[i], depth + 1);
+          }
+        };
+        walk(col, 0);
+        return { left: left, top: top, right: right, bottom: bottom };
+      }
+      document.addEventListener("mousemove", (event) => {
+        const w = window.innerWidth;
+        // dsh-rail-right (RTL) docks the rail on the RIGHT edge; without it
+        // the rail sits on the left. children[0] of the frame grid is the
+        // sidebar track in both dockings.
+        const railEdgeRight = html.classList.contains("dsh-rail-right");
+        // Summon zone: only the rail's own edge, 14px.
+        const nearRailEdge = railEdgeRight
+          ? event.clientX >= w - 14
+          : event.clientX <= 14;
+        if (nearRailEdge) {
+          show();
+          return;
+        }
+        if (isHidden()) return;
+        // Keep zone: the full visible rail area (union rect), 4px tolerance.
+        const area = railAreaRect();
+        let over = false;
+        if (area) {
+          over = event.clientX >= area.left - 4 && event.clientX <= area.right + 4
+            && event.clientY >= area.top - 4 && event.clientY <= area.bottom + 4;
+        }
+        if (over) { show(); return; }
+        if (!hideTimer) {
+          hideTimer = setTimeout(function () {
+            hideTimer = null;
+            if (!isHidden()) setIframeRailHidden(true);
+          }, 350);
+        }
+      }, { passive: true });
+    }
+
     const STATS_COMPACT_STYLE_ID = "dsh-review-compact-statsline";
 
     /**
@@ -537,10 +623,17 @@ window.__ModuleLoader__.load({
      * @description Live 设置 → 代码审查 values; defaults if the scope is not ready.
      */
     function getReviewSettings() {
-      const d = { enabled: true, fileSend: "path", snippetSend: "fence" };
+      // Default to pointer: matches the user's persisted yaml choice; fence
+      // is only used when the live scope explicitly says fence.
+      const d = { enabled: true, fileSend: "path", snippetSend: "pointer" };
       if (!reviewSettingsScope || typeof reviewSettingsScope.getSnapshot !== "function") return d;
       const snap = reviewSettingsScope.getSnapshot();
-      const v = snap && snap.value && typeof snap.value === "object" ? snap.value : {};
+      const val = snap && snap.value;
+      // Namespace absent from the client describe mirror (late host
+      // registration): fall back to the defaults above instead of coercing
+      // an undefined section into fence.
+      if (!val || typeof val !== "object") return d;
+      const v = val;
       return {
         enabled: v.enabled !== false,
         fileSend: v.fileSend === "prefixed" ? "prefixed" : "path",
@@ -558,6 +651,20 @@ window.__ModuleLoader__.load({
       if (!Number.isFinite(a) || a < 1) return "";
       if (!Number.isFinite(b) || b <= a) return "L" + a;
       return "L" + a + "~L" + b;
+    }
+
+    /**
+     * @param {object} r
+     * @returns {string}
+     * @description Cell span for notebook selections: "C3" or "C2~C4" (1-based cell index).
+     */
+    function notebookCellRange(r) {
+      if (!r || !r.notebook) return "";
+      const a = Number(r.cellStart);
+      const b = Number(r.cellEnd);
+      if (!Number.isFinite(a) || a < 1) return "";
+      if (!Number.isFinite(b) || b <= a) return "C" + a;
+      return "C" + a + "~C" + b;
     }
 
     /**
@@ -603,22 +710,34 @@ window.__ModuleLoader__.load({
         });
       }
       if (kind === "selection") {
-        const range = snippetRangeLabel(src);
-        const pointer = quoted + (range ? " " + range : "");
-        const base = filePath.split("/").pop() || filePath;
-        const label = src.label || (base + (range ? " " + range : ""));
+        // Notebook selections prepend the cell span: "C3 L1~L5" / "C2~C4".
+        const range = (function () {
+          const cellPart = notebookCellRange(src);
+          const linePart = snippetRangeLabel(src);
+          return cellPart ? (linePart ? cellPart + " " + linePart : cellPart) : linePart;
+        })();
+        const plainPointer = filePath + (range ? " " + range : "");
+        // User-confirmed format: the WHOLE pointer backticked as one unit.
+        const allQuoted = "`" + filePath.replace(/`/g, "") + (range ? " " + range : "") + "`";
+        const label = plainPointer;
         const content = typeof src.content === "string" ? src.content : "";
-        if (s.snippetSend === "fence" && content) {
+        // Explicit mode from the VS Code extension wins; plugin settings
+        // decide only for flows without one (drag-drop).
+        const mode = src.sendMode === "fence" || src.sendMode === "pointer"
+          ? src.sendMode
+          : s.snippetSend;
+        if (mode === "fence" && content) {
           return Object.assign({}, src, {
             label: label,
-            clipboardText: pointer,
+            clipboardText: allQuoted,
             modelText: fenceSnippet(content),
           });
         }
         return Object.assign({}, src, {
           label: label,
-          clipboardText: pointer,
-          modelText: pointer,
+          clipboardText: allQuoted,
+          modelText: allQuoted,
+          textFallback: allQuoted,
         });
       }
       const prefix = kind === "folder" ? "目录: " : "文件: ";
@@ -629,8 +748,31 @@ window.__ModuleLoader__.load({
       });
     }
 
+    /**
+     * @param {string} path
+     * @returns {string}
+     * @description dsh 0.1.6 native file mention: @/path, quoted when it has spaces.
+     */
+    function fileMention(path) {
+      const p = String(path || "");
+      return p.indexOf(" ") >= 0 ? '@"' + p + '"' : "@" + p;
+    }
+
     function mintRefs(refs) {
       return refs.map(function (r) {
+        // File/folder chips ride dsh's native "reference" source: native icon,
+        // openable in the right sidebar, native serialize/persistence.
+        if (r.kind === "file" || r.kind === "folder") {
+          const mention = fileMention(r.path);
+          const label = String(r.label || String(r.path || "").split("/").pop() || r.path);
+          return {
+            source: "reference",
+            ref: mention,
+            label: r.kind === "folder" && !/\/$/.test(label) ? label + "/" : label,
+            appearance: r.kind === "folder" ? "folder" : "file",
+            clipboardText: mention,
+          };
+        }
         refSeq += 1;
         const id = "vs" + refSeq;
         const modelText = typeof r.modelText === "string" ? r.modelText
@@ -681,7 +823,8 @@ window.__ModuleLoader__.load({
             // Legacy scan-derived chips carry the occurrence id in the DOM; the
             // current composer renders real chip nodes, tagged by tagChipKinds.
             return '[data-decoration="chip"][data-occurrence="' + e.id + '"]{background:' + color + ' !important;}'
-              + '\n[data-composer-chip="' + REF_SOURCE + '"][data-dsh-review-kind="' + (e.kind || "file") + '"] > span{background:' + color + ' !important;}';
+              + '\n[data-composer-chip="' + REF_SOURCE + '"][data-dsh-review-kind="' + (e.kind || "file") + '"] > span{background:' + color + ' !important;}'
+              + '\n[data-composer-chip="reference"][data-dsh-review-kind="' + (e.kind || "file") + '"] > span{background:' + color + ' !important;}';
           })
           .join("\n");
         if (css) chipStyleTag.textContent += "\n" + css;
@@ -703,8 +846,8 @@ window.__ModuleLoader__.load({
           kindByRef[references[i].ref] = (list[i] && list[i].kind) || "file";
         }
         const occurrences = (shell && shell.snapshot && shell.snapshot.occurrences) || [];
-        const ours = occurrences.filter(function (o) { return o.source === REF_SOURCE; });
-        const chips = document.querySelectorAll('[data-composer-chip="' + REF_SOURCE + '"]');
+        const ours = occurrences.filter(function (o) { return o.source === REF_SOURCE || o.source === "reference"; });
+        const chips = document.querySelectorAll('[data-composer-chip="' + REF_SOURCE + '"],[data-composer-chip="reference"]');
         for (let i = 0; i < ours.length && i < chips.length; i++) {
           const kind = kindByRef[ours[i].ref];
           if (kind) chips[i].setAttribute("data-dsh-review-kind", kind);
@@ -727,6 +870,9 @@ window.__ModuleLoader__.load({
       const [collapsed, setCollapsed] = useState(true);
       const [inVSCodeIframe, setInVSCodeIframe] = useState(false);
       const [scopeVersion, setScopeVersion] = useState(0);
+      const [allBusy, setAllBusy] = useState(false);
+      // Reset the all-accept/reject busy latch whenever pending changes.
+      useEffect(() => { setAllBusy(false); }, [entries]);
 
       // The dock slot is session-scoped and receives the framework standard
       // kit. Resolve the CURRENT workspace path: prefer the workspace that
@@ -878,7 +1024,7 @@ window.__ModuleLoader__.load({
 
         function onFocusIn(event) {
           const el = event.target;
-          if (isEditable(el) && el.tagName === "TEXTAREA") lastComposer = el;
+          if (isEditable(el)) lastComposer = el;
         }
 
         function replaceTextareaSelection(el, text) {
@@ -910,8 +1056,53 @@ window.__ModuleLoader__.load({
           }
         }
 
+        // Synthetic paste events are dispatched by insertIncomingText; the
+        // onPaste bridge listener must not re-route them (paste loop).
+        let syntheticPasteDepth = 0;
+
+        /**
+         * @param {HTMLElement} el
+         * @param {string} text
+         * @returns {boolean}
+         * @description Replay text through dsh's native PASTE pipeline
+         *              (DataTransfer text/plain), which splits lines into
+         *              proper line nodes — same as a standalone-browser paste.
+         */
+        function dispatchSyntheticPaste(el, text) {
+          try {
+            const dt = new DataTransfer();
+            dt.setData("text/plain", String(text === null || text === undefined ? "" : text));
+            const evt = new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true });
+            syntheticPasteDepth += 1;
+            try { el.dispatchEvent(evt); } finally { syntheticPasteDepth -= 1; }
+            return true;
+          } catch (err) {
+            return false;
+          }
+        }
+
         function insertIncomingText(text, preferred) {
           if (!isEditable(preferred)) return false;
+          if (preferred.tagName !== "TEXTAREA" && preferred.tagName !== "INPUT") {
+            // dsh 0.1.6+ Lexical composer: execCommand insertText is ignored
+            // and selection.insertText drops newlines (facebook/lexical#5592).
+            // Replay a synthetic paste so the native PASTE pipeline handles it.
+            const focusTarget = (activeEditable() && document.body.contains(activeEditable())) ? activeEditable() : preferred;
+            if (dispatchSyntheticPaste(focusTarget, text)) {
+              setTimeout(function () { focusComposer(); }, 0);
+              return true;
+            }
+            if (sessionId && inputHub) {
+              try {
+                const shell = inputHub.shell(sessionId);
+                if (shell && typeof shell.paste === "function") {
+                  shell.paste(String(text === null || text === undefined ? "" : text));
+                  setTimeout(function () { focusComposer(); }, 0);
+                  return true;
+                }
+              } catch (err) { /* fall through to the DOM path */ }
+            }
+          }
           return insertAtCaret(preferred, text);
         }
 
@@ -919,6 +1110,29 @@ window.__ModuleLoader__.load({
          * @returns {HTMLTextAreaElement | null}
          * @description Last focused composer, else the largest visible textarea.
          */
+        /**
+         * @returns {HTMLElement | null}
+         * @description Largest visible contenteditable (dsh 0.1.6+ Lexical
+         *              composer); same area heuristic as the textarea scan.
+         */
+        function findComposerEditable() {
+          const nodes = document.querySelectorAll('[contenteditable="true"]');
+          let best = null;
+          let bestArea = 0;
+          for (let i = 0; i < nodes.length; i++) {
+            const el = nodes[i];
+            if (!el) continue;
+            const r = el.getBoundingClientRect();
+            if (r.width < 40 || r.height < 16) continue;
+            const area = r.width * r.height;
+            if (area > bestArea) {
+              bestArea = area;
+              best = el;
+            }
+          }
+          return best;
+        }
+
         function findComposerTextarea() {
           if (lastComposer && document.body.contains(lastComposer)) return lastComposer;
           const nodes = document.querySelectorAll("textarea");
@@ -935,7 +1149,7 @@ window.__ModuleLoader__.load({
               best = el;
             }
           }
-          return best;
+          return best || findComposerEditable();
         }
 
         function preferredComposer(preferred) {
@@ -1053,7 +1267,7 @@ window.__ModuleLoader__.load({
         function findRefOccurrence(shell, ref) {
           const occurrences = (shell && shell.snapshot && shell.snapshot.occurrences) || [];
           for (let i = 0; i < occurrences.length; i++) {
-            if (occurrences[i].source === REF_SOURCE && occurrences[i].ref === ref) return occurrences[i];
+            if ((occurrences[i].source === REF_SOURCE || occurrences[i].source === "reference") && occurrences[i].ref === ref) return occurrences[i];
           }
           return null;
         }
@@ -1061,13 +1275,16 @@ window.__ModuleLoader__.load({
         // Try the dsh native occurrence chip path; fall back to plain text.
         function insertRefsAtCaret(refs, fallbackText, preferred) {
           const list = (Array.isArray(refs) ? refs : []).map(formatRefForSend);
-          const formattedFallback = list.map(function (r) { return r.modelText; }).filter(Boolean).join("\n") || fallbackText;
-          if (!sessionId || !inputHub || !refSourceRegistered || list.length === 0) {
+          const formattedFallback = list.map(function (r) { return r.textFallback || r.modelText; }).filter(Boolean).join("\n") || fallbackText;
+          // The custom source is only needed for non-file refs (selection/terminal);
+          // file/folder chips use dsh's native "reference" source.
+          const needsCustom = list.some(function (r) { return r.kind !== "file" && r.kind !== "folder"; });
+          if (!sessionId || !inputHub || (needsCustom && !refSourceRegistered) || list.length === 0) {
             if (formattedFallback) insertComposerText(formattedFallback);
             return {
               mode: "text",
               count: list.length,
-              reason: !sessionId ? "no sessionId" : (!inputHub ? "no inputHub" : (!refSourceRegistered ? "no refSource" : "empty")),
+              reason: !sessionId ? "no sessionId" : (!inputHub ? "no inputHub" : ((needsCustom && !refSourceRegistered) ? "no refSource" : "empty")),
             };
           }
           try {
@@ -1207,6 +1424,7 @@ window.__ModuleLoader__.load({
             reportActivity();
             installClipboardBridge();
             installIframeSidebarPeek();
+            installIframeRailAutoHide();
             compactNativeStatsLine();
             setTimeout(compactNativeStatsLine, 800);
             applyZoom();
@@ -1248,6 +1466,10 @@ window.__ModuleLoader__.load({
               count: result.count,
               reason: result.reason || "",
             });
+          } else if (msg.type === "dshFocusComposer") {
+            // Extension pulled VS Code focus back to the sidebar; now the
+            // view document is active, so the DOM focus lands on the composer.
+            focusComposer();
           } else if (msg.type === "dshPasteImages") {
             const payloads = Array.isArray(msg.images) ? msg.images : [];
             pasteLog("iframe got extension images=" + payloads.length);
@@ -1342,8 +1564,22 @@ window.__ModuleLoader__.load({
               if (editable.tagName === "TEXTAREA" || editable.tagName === "INPUT") {
                 replaceTextareaSelection(editable, "");
               } else {
-                editable.focus();
-                try { document.execCommand("delete", false, null); } catch (err) { /* noop */ }
+                // Lexical composer (dsh 0.1.6+): execCommand("delete") is a
+                // no-op; remove the selection through the input shell.
+                let cut = false;
+                if (sessionId && inputHub) {
+                  try {
+                    const shell = inputHub.shell(sessionId);
+                    if (shell && typeof shell.insertText === "function") {
+                      const span = referenceSpan(shell);
+                      cut = span.start !== span.end && shell.insertText("", span);
+                    }
+                  } catch (err) { /* fall through to the DOM path */ }
+                }
+                if (!cut) {
+                  editable.focus();
+                  try { document.execCommand("delete", false, null); } catch (err) { /* noop */ }
+                }
               }
             }
           } else if (key === "v") {
@@ -1526,6 +1762,12 @@ window.__ModuleLoader__.load({
         // Context-menu paste may still deliver clipboardData; Cmd+V does not.
         function onPaste(event) {
           if (!bridgeActive) return;
+          if (syntheticPasteDepth > 0) {
+            // Our own synthetic paste is on its way to the native PASTE
+            // pipeline; do not re-route it through the extension bridge.
+            try { event.preventDefault(); } catch (err) { /* noop */ }
+            return;
+          }
           const dt = event.clipboardData;
           const itemDump = [];
           try {
@@ -1890,6 +2132,36 @@ window.__ModuleLoader__.load({
           h("span", { style: { opacity: 0.7, marginLeft: "4px" } },
             live.length === 0 ? "无待审" : (live.length + " file" + (live.length > 1 ? "s" : ""))
           ),
+          ["accept", "reject"].map(function (action) {
+            const disabled = allBusy || live.length === 0;
+            return h("span", {
+              key: action,
+              onClick: function (e) {
+                e.preventDefault();
+                e.stopPropagation();
+                if (disabled) return;
+                setAllBusy(true);
+                try {
+                  window.parent.postMessage({ type: "dshReviewAll", action: action }, "*");
+                } catch (err) { setAllBusy(false); }
+              },
+              style: {
+                marginLeft: action === "accept" ? "auto" : "0",
+                padding: "1px 10px",
+                borderRadius: "6px",
+                fontSize: "12px",
+                lineHeight: "18px",
+                cursor: disabled ? "default" : "pointer",
+                userSelect: "none",
+                color: "#ffffff",
+                background: action === "accept"
+                  ? "var(--dsh-color-success, #3fb950)"
+                  : "var(--dsh-color-danger, #f85149)",
+                opacity: disabled ? 0.35 : 1,
+                pointerEvents: disabled ? "none" : "auto",
+              }
+            }, action === "accept" ? "\u2713 全部接受" : "\u2715 全部撤回");
+          }),
         ),
         !collapsed && live.length > 0 && h("div", {
           style: {
@@ -2187,6 +2459,7 @@ window.__ModuleLoader__.load({
 
     function apply(ctx) {
       installIframeSidebarPeek();
+      installIframeRailAutoHide();
       installReviewSettingsCard(ctx);
       // Reverse workbench watchdog:
       // 1) VS Code has no folder open → force dsh home (no session) forever.
@@ -2194,6 +2467,55 @@ window.__ModuleLoader__.load({
       //    (any whitelist workbench). Later user-opened chats are left alone.
       // 3) No matching workspace → new blank session (when a dsh row exists).
       // 4) Current session workbench ∉ whitelist → pull back to latest / new.
+      const uiWorkspace = (typeof ctx.uiWorkspace === "object" && ctx.uiWorkspace) || null;
+
+      /**
+       * @param {object} ssnap sessions.list.getSnapshot()
+       * @returns {string|undefined}
+       * @description Current session: .current pre-0.1.6; mainView retention from 0.1.6 on.
+       */
+      function currentSessionOf(ssnap) {
+        if (ssnap && typeof ssnap.current === "string" && ssnap.current) return ssnap.current;
+        const byId = (ssnap && ssnap.byId) || {};
+        for (const id of Object.keys(byId)) {
+          const s = byId[id];
+          if (s && s.retainedBy && (s.retainedBy.mainView ?? 0) > 0) return id;
+        }
+        return undefined;
+      }
+
+      /**
+       * @param {string} sessionId
+       * @returns {boolean}
+       * @description Open a session: uiWorkspace (0.1.6+) or sessions.open (older).
+       */
+      function openSessionCompat(sessionId) {
+        if (uiWorkspace && typeof uiWorkspace.openSession === "function") {
+          uiWorkspace.openSession(sessionId);
+          return true;
+        }
+        if (typeof sessions.open === "function") {
+          sessions.open(sessionId);
+          return true;
+        }
+        return false;
+      }
+
+      /**
+       * @param {string} workspaceId
+       * @returns {Promise<string>|null}
+       * @description Connect a workspace: uiWorkspace (0.1.6+) or workspaces (older).
+       */
+      function connectWorkspaceCompat(workspaceId) {
+        if (uiWorkspace && typeof uiWorkspace.connectWorkspace === "function") {
+          return uiWorkspace.connectWorkspace(workspaceId);
+        }
+        if (typeof workspaces.connectWorkspace === "function") {
+          return workspaces.connectWorkspace(workspaceId);
+        }
+        return null;
+      }
+
       function findBoundWorkspace(items) {
         for (const want of vscodeScopePaths.concat(vscodeScopeRawPaths)) {
           const hit = items.find((w) => w && normalizeScopePath(w.path) === normalizeScopePath(want));
@@ -2331,7 +2653,7 @@ window.__ModuleLoader__.load({
         connectGeneration += 1;
         hydrateWaitSince = 0;
         try {
-          sessions.open(sessionId);
+          if (!openSessionCompat(sessionId)) throw new Error("no session open API (uiWorkspace.openSession / sessions.open)");
           preferredLatestOpened[normalizeScopePath(matchPath || "")] = sessionId;
           return true;
         } catch (e) {
@@ -2414,10 +2736,11 @@ window.__ModuleLoader__.load({
         const now = Date.now();
         if (vscodeScopePullingAt && now - vscodeScopePullingAt < 5000) return false; // 5s cooldown
         vscodeScopePullingAt = now;
-        if (!workspace.workspaceId || typeof workspaces.connectWorkspace !== "function") return false;
+        const connect = connectWorkspaceCompat(workspace.workspaceId);
+        if (!connect) return false;
         const gen = ++connectGeneration;
         connectInFlight = true;
-        workspaces.connectWorkspace(workspace.workspaceId).then(
+        connect.then(
           function (sessionId) {
             connectInFlight = false;
             if (gen !== connectGeneration) return;
@@ -2447,14 +2770,16 @@ window.__ModuleLoader__.load({
         let wsnap, ssnap;
         try { wsnap = workspaces.list.getSnapshot(); } catch (e) { return; }
         try { ssnap = sessions.list.getSnapshot(); } catch (e) { return; }
-        const current = ssnap && ssnap.current;
+        const current = currentSessionOf(ssnap);
         const items = Array.isArray(wsnap.items) ? wsnap.items : [];
         const byId = (ssnap && ssnap.byId) || {};
 
         function goHome() {
           try {
-            if (sessions && typeof sessions.clear === "function") sessions.clear();
-          } catch (e) { console.warn("[dsh-review] scope home clear failed:", e && e.message || e); }
+            if (sessions && typeof sessions.clear === "function") { sessions.clear(); return; }
+          } catch (e) { console.warn("[dsh-review] scope home clear failed:", e && e.message || e); return; }
+          // dsh 0.1.6+ removed sessions.clear(); there is no public deselect API.
+          console.warn("[dsh-review] scope home: sessions.clear unavailable (dsh 0.1.6+)");
         }
 
         // Handshake has not arrived yet: do not treat empty paths as "no folder".
@@ -2586,7 +2911,7 @@ window.__ModuleLoader__.load({
     }
 
     exports.apply = apply;
-    exports.inject = ["slots", "workspaces", "sessions"];
+    exports.inject = ["slots", "workspaces", "sessions", "uiWorkspace", "settingsScope"];
     return module.exports;
   }
 });

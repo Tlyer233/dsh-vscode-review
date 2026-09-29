@@ -265,6 +265,17 @@ function createReviewHost(context) {
   }
 
   /**
+   * After a bulk ruling (accept/reject all): wipe every owned pending entry
+   * (including delete entries that never had a live session) so the JSON and
+   * the dock converge; the dock clears when the pushed list is empty.
+   */
+  async function allRuledCleanup() {
+    if (persistence && typeof persistence.onAllRuled === 'function') {
+      await Promise.resolve(persistence.onAllRuled()).catch(() => { /* noop */ })
+    }
+  }
+
+  /**
    * @param {{ uri: vscode.Uri, oldText: string, newText: string, meta?: object, reveal?: boolean }} opts
    */
   async function startReview(opts) {
@@ -426,6 +437,19 @@ function createReviewHost(context) {
     vscode.commands.registerCommand('dshReview.rejectAll', async () => {
       const uri = titleBarUri()
       if (uri) await rejectAll(uri)
+    }),
+    // dsh web dock: rule every open review session in this window (sequential).
+    vscode.commands.registerCommand('dshReview.acceptAllPending', async () => {
+      for (const s of pending.values()) {
+        if (!s.done) await acceptAll(s.uri)
+      }
+      await allRuledCleanup()
+    }),
+    vscode.commands.registerCommand('dshReview.rejectAllPending', async () => {
+      for (const s of pending.values()) {
+        if (!s.done) await rejectAll(s.uri)
+      }
+      await allRuledCleanup()
     }),
     vscode.workspace.onDidChangeTextDocument((e) => {
       if (selfEdit) return

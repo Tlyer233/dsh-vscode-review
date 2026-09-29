@@ -8,6 +8,7 @@ dsh 插件 + VS Code 扩展：把 agent 的 write/edit 收成可逐 hunk 接受 
 
 - Shadow git 记录 write/edit（以及 shell `rm` 删除）
 - VS Code 行内接受 / 撤回 hunk
+- ipynb 选区指针含块号：`nb.ipynb C3 L1~L5`（跨块 `C2~C4`），普通文件仍为 `path L1~L2`
 - 仅 VS Code iframe 内显示 dock；独立浏览器不改原生对话 UI
 
 ## Install

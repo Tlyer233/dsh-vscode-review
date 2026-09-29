@@ -202,6 +202,12 @@ function proxyEnv() {
 }
 
 /**
+ * Parse `netstat -ano` output for the pids LISTENING on `port`.
+ *
+ * Only the listening socket counts: an established line also carries the port
+ * (on either side), and killing those clients would take down VS Code's own
+ * extension host — it holds a persistent connection to the dsh port because the
+ * sidebar reaches dsh through the extension's auth proxy.
  * @param {string} stdout
  * @param {number} port
  * @returns {string[]}
@@ -209,13 +215,17 @@ function proxyEnv() {
 function parseNetstatPids(stdout, port) {
   const pids = []
   const seen = Object.create(null)
-  const pin = new RegExp(':' + String(port) + '(?:\\s|\\]|$)')
+  const pin = new RegExp(':' + String(port) + '$')
   for (const line of String(stdout || '').split(/\r?\n/)) {
-    if (!pin.test(line)) continue
-    const m = line.trim().match(/(\d+)\s*$/)
-    if (!m || m[1] === '0' || seen[m[1]]) continue
-    seen[m[1]] = 1
-    pids.push(m[1])
+    const parts = line.trim().split(/\s+/)
+    if (parts.length < 5) continue
+    if (!/^TCP/i.test(parts[0])) continue
+    if (!pin.test(parts[1] || '')) continue
+    if (!/^LISTENING$/i.test(parts[3] || '')) continue
+    const pid = parts[parts.length - 1]
+    if (!/^\d+$/.test(pid) || pid === '0' || seen[pid]) continue
+    seen[pid] = 1
+    pids.push(pid)
   }
   return pids
 }
@@ -223,10 +233,11 @@ function parseNetstatPids(stdout, port) {
 /**
  * @param {number} port
  * @returns {Promise<string[]>}
+ * @description Owner of the listening socket only (never its clients).
  */
 function listPidsOnPortUnix(port) {
   return new Promise((resolve) => {
-    execFile('lsof', ['-ti', 'tcp:' + port], { timeout: 5000 }, (err, stdout) => {
+    execFile('lsof', ['-nP', '-ti', 'tcp:' + port, '-sTCP:LISTEN'], { timeout: 5000 }, (err, stdout) => {
       const pids = String(stdout || '').trim().split(/\s+/).filter(Boolean)
       resolve(pids)
     })
@@ -240,7 +251,7 @@ function listPidsOnPortUnix(port) {
 function listPidsOnPortWin(port) {
   return new Promise((resolve) => {
     const ps = 'Get-NetTCPConnection -LocalPort ' + Number(port)
-      + ' -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess'
+      + ' -State Listen -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess'
     execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps], {
       timeout: 8000,
       windowsHide: true,
@@ -272,10 +283,17 @@ function listPidsOnPort(port) {
  */
 function killPid(pid) {
   return new Promise((resolve) => {
+    const id = String(pid)
+    // Never target ourselves (the extension host) or pid 1/0, whatever the
+    // platform's port listing reported.
+    if (!/^\d+$/.test(id) || Number(id) <= 1 || Number(id) === process.pid) {
+      resolve()
+      return
+    }
     if (process.platform === 'win32') {
-      execFile('taskkill', ['/F', '/PID', String(pid)], { timeout: 5000, windowsHide: true }, () => resolve())
+      execFile('taskkill', ['/F', '/PID', id], { timeout: 5000, windowsHide: true }, () => resolve())
     } else {
-      execFile('kill', ['-9', String(pid)], { timeout: 5000 }, () => resolve())
+      execFile('kill', ['-9', id], { timeout: 5000 }, () => resolve())
     }
   })
 }

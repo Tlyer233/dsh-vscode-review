@@ -79,25 +79,28 @@ function mintCookie(authority) {
 }
 
 /**
- * Start the proxy.
+ * Start the proxy. Every VS Code window runs its own extension host, so the
+ * requested port may already be held by another window's proxy: on EADDRINUSE
+ * the next free port is taken, otherwise the second window would fall back to
+ * the raw dsh URL and show "dsh web authentication required".
  * @param {{ listenPort: number, targetPort: number, log?: (msg: string) => void }} opts
  * @returns {{ url: string, close: () => void, refresh: () => void }}
  */
 function startAuthProxy(opts) {
-  const listenPort = Number(opts.listenPort)
+  const startPort = Number(opts.listenPort)
   const targetPort = Number(opts.targetPort)
   const log = typeof opts.log === 'function' ? opts.log : () => { }
-  const authority = '127.0.0.1:' + String(listenPort)
+  const maxPortAttempts = 12
+  let authority = ''
+  let url = ''
   let cookie = ''
+  let server = null
+  let closed = false
 
   const refresh = () => {
+    if (!authority) throw new Error('proxy is not listening yet')
     cookie = mintCookie(authority)
     log('minted session cookie for ' + authority)
-  }
-  try {
-    refresh()
-  } catch (e) {
-    log('cannot mint session cookie: ' + String((e && e.message) || e))
   }
 
   /**
@@ -133,31 +136,62 @@ function startAuthProxy(opts) {
     req.pipe(up)
   }
 
-  const server = http.createServer((req, res) => forward(req, res))
+  /** One listening attempt on `port`, retrying the next port while it is taken. */
+  const attempt = (port, left) => {
+    const candidate = http.createServer((req, res) => forward(req, res))
 
-  // Upgrades (the Remote stream WebSocket) pass through with the same cookie.
-  server.on('upgrade', (req, socket, head) => {
-    const up = net.connect(targetPort, '127.0.0.1', () => {
-      const headers = Object.assign({}, req.headers)
-      if (cookie) headers.cookie = cookie
-      const lines = [String(req.method) + ' ' + String(req.url) + ' HTTP/1.1']
-      for (const key of Object.keys(headers)) lines.push(key + ': ' + String(headers[key]))
-      up.write(lines.join('\r\n') + '\r\n\r\n')
-      if (head && head.length) up.write(head)
-      up.pipe(socket)
-      socket.pipe(up)
+    // Upgrades (the Remote stream WebSocket) pass through with the same cookie.
+    candidate.on('upgrade', (req, socket, head) => {
+      const up = net.connect(targetPort, '127.0.0.1', () => {
+        const headers = Object.assign({}, req.headers)
+        if (cookie) headers.cookie = cookie
+        const lines = [String(req.method) + ' ' + String(req.url) + ' HTTP/1.1']
+        for (const key of Object.keys(headers)) lines.push(key + ': ' + String(headers[key]))
+        up.write(lines.join('\r\n') + '\r\n\r\n')
+        if (head && head.length) up.write(head)
+        up.pipe(socket)
+        socket.pipe(up)
+      })
+      up.on('error', () => socket.destroy())
+      socket.on('error', () => up.destroy())
     })
-    up.on('error', () => socket.destroy())
-    socket.on('error', () => up.destroy())
-  })
 
-  server.on('error', (e) => log('listen failed: ' + String((e && e.message) || e)))
-  server.listen(listenPort, '127.0.0.1', () => log('listening on http://' + authority + ' -> 127.0.0.1:' + String(targetPort)))
+    candidate.once('error', (e) => {
+      try { candidate.close() } catch { /* noop */ }
+      if (closed) return
+      if (e && e.code === 'EADDRINUSE' && left > 0) {
+        log('port ' + String(port) + ' busy, trying ' + String(port + 1))
+        attempt(port + 1, left - 1)
+        return
+      }
+      log('listen failed: ' + String((e && e.message) || e))
+    })
+
+    candidate.listen(port, '127.0.0.1', () => {
+      if (closed) {
+        try { candidate.close() } catch { /* noop */ }
+        return
+      }
+      server = candidate
+      authority = '127.0.0.1:' + String(port)
+      url = 'http://' + authority
+      try {
+        refresh()
+      } catch (e) {
+        log('cannot mint session cookie: ' + String((e && e.message) || e))
+      }
+      log('listening on ' + url + ' -> 127.0.0.1:' + String(targetPort))
+    })
+  }
+  attempt(startPort, maxPortAttempts)
 
   return {
-    url: 'http://' + authority,
+    get url() { return url },
     refresh,
-    close: () => { try { server.close() } catch { /* noop */ } },
+    close: () => {
+      closed = true
+      try { if (server) server.close() } catch { /* noop */ }
+    },
   }
 }
 

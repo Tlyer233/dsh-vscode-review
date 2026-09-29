@@ -473,7 +473,7 @@ function dshWebviewHtml(url, opts) {
     '    } else if (msg.type === "dshChromeState") {' +
     '      dshChrome = { railSide: msg.railSide === "right" ? "right" : "left", railHidden: !!msg.railHidden, zoom: Number(msg.zoom) || 1 };' +
     '      vscode.postMessage(msg);' +
-    '    } else if (msg.type === "dshViewActive" || msg.type === "dshOpenExternal" || msg.type === "dshOpenFile" || msg.type === "dshPendingRequest" || msg.type === "dshScopeViolation" || msg.type === "dshScopeMissing" || msg.type === "dshScopeEmpty" || msg.type === "dshScopeDiag" || msg.type === "dshScopeRequest" || msg.type === "dshCopyText" || msg.type === "dshPasteRequest" || msg.type === "dshInsertResult" || msg.type === "dshShowCommands") {' +
+    '    } else if (msg.type === "dshViewActive" || msg.type === "dshOpenExternal" || msg.type === "dshOpenFile" || msg.type === "dshPendingRequest" || msg.type === "dshReviewAll" || msg.type === "dshScopeViolation" || msg.type === "dshScopeMissing" || msg.type === "dshScopeEmpty" || msg.type === "dshScopeDiag" || msg.type === "dshScopeRequest" || msg.type === "dshCopyText" || msg.type === "dshPasteRequest" || msg.type === "dshInsertResult" || msg.type === "dshShowCommands") {' +
     '      vscode.postMessage(msg);' +
     '    } else if (msg.type === "dshReload") {' +
     '      reloadFrame(!!msg.force);' +
@@ -711,6 +711,13 @@ function setupDshBrowser(context) {
           }
           return
         }
+        if (msg.type === 'dshReviewAll') {
+          const cmd = msg.action === 'reject' ? 'dshReview.rejectAllPending' : 'dshReview.acceptAllPending'
+          vscode.commands
+            .executeCommand(cmd)
+            .catch((e) => state.log('dshReviewAll failed: ' + (e && e.message || e)))
+          return
+        }
         if (msg.type === 'dshScopeDiag') {
           state.log(
             '[dsh-scope] ' + String(msg.action || '?')
@@ -785,6 +792,12 @@ function setupDshBrowser(context) {
           if (msg.mode && msg.mode !== 'chip') {
             void vscode.window.showWarningMessage('dsh chip 未生效: ' + line)
           }
+          // Pull VS Code focus back to the sidebar after every chip insert
+          // (selection AND drag-drop flows), then ping the iframe so the DOM
+          // focus lands on the composer (the Lexical caret needs it).
+          void focusDshSidebar().then(() => {
+            void view.webview.postMessage({ type: 'dshFocusComposer' })
+          })
         }
       })
 
