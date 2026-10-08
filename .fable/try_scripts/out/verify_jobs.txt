@@ -1,0 +1,13 @@
+VERIFY dsh-review jobs (port=3988 job=bash-1 seconds=4)
+[cookie] mint FAILED (continuing without): ENOENT: no such file or directory, open '/nonexistent/.credentials.yaml'
+[jobs] HTTP 200
+[jobs] 1 job(s); target bash-1 = running "tick loop" cwd=/mock/ws
+[kill] HTTP 200 {"ok":true,"result":"requested"}
+[sse] HTTP 200; target events: job=2 output=10 (chars=80)
+[sse] first="tick-27" last="tick-36"
+[final] target last status via sse: killed
+  [ok] jobs list contains target
+  [ok] sse delivered target output
+  [ok] kill accepted
+  [ok] target reached terminal status
+PASS

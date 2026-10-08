@@ -1,0 +1,23 @@
+2026-09-29T14:13:10.975Z radix sss predominant_manager {"success":true,"keep_tokens":0,"keep_paths":0,"locked":0,"message":"armed; first completion binds keep (system+tools LCP)"}
+2026-09-29T14:19:33.667Z radix ses predominant_manager {"success":true,"cut_kv_tokens":89275,"cut_mamba_states":78,"cut_nodes":80,"keep_tokens":10185,"message":"keep_node has no mamba checkpoint; next cached_tokens may be 0"}
+2026-09-29T14:19:33.676Z radix sss decision_manager {"success":true,"keep_tokens":10185,"keep_paths":1,"locked":1,"message":"armed; first completion binds keep (system+tools LCP)"}
+2026-09-29T14:20:13.671Z radix ses decision_manager {"success":true,"cut_kv_tokens":20906,"cut_mamba_states":11,"cut_nodes":11,"keep_tokens":10185,"message":"keep_node has no mamba checkpoint; next cached_tokens may be 0"}
+2026-09-29T14:20:13.681Z radix sss laborer_worker {"success":true,"keep_tokens":10185,"keep_paths":1,"locked":1,"message":"armed; first completion binds keep (system+tools LCP)"}
+2026-09-29T14:26:24.870Z radix ses laborer_worker {"success":true,"cut_kv_tokens":148877,"cut_mamba_states":51,"cut_nodes":62,"keep_tokens":10185,"message":"keep_node has no mamba checkpoint; next cached_tokens may be 0"}
+2026-09-29T14:26:24.879Z radix sss check_worker {"success":true,"keep_tokens":10185,"keep_paths":1,"locked":1,"message":"armed; first completion binds keep (system+tools LCP)"}
+2026-09-29T14:27:56.565Z radix ses check_worker {"success":true,"cut_kv_tokens":33385,"cut_mamba_states":26,"cut_nodes":26,"keep_tokens":10185,"message":"keep_node has no mamba checkpoint; next cached_tokens may be 0"}
+2026-09-29T14:27:56.574Z radix sss decision_manager#2 {"success":true,"keep_tokens":10185,"keep_paths":1,"locked":1,"message":"armed; first completion binds keep (system+tools LCP)"}
+2026-09-29T14:28:56.942Z radix ses decision_manager#2 {"success":true,"cut_kv_tokens":24697,"cut_mamba_states":11,"cut_nodes":11,"keep_tokens":10185,"message":"keep_node has no mamba checkpoint; next cached_tokens may be 0"}
+2026-09-29T14:28:56.951Z radix sss laborer_worker#2 {"success":true,"keep_tokens":10185,"keep_paths":1,"locked":1,"message":"armed; first completion binds keep (system+tools LCP)"}
+2026-09-29T14:36:14.743Z radix ses laborer_worker#2 {"success":true,"cut_kv_tokens":103811,"cut_mamba_states":101,"cut_nodes":102,"keep_tokens":10185,"message":"keep_node has no mamba checkpoint; next cached_tokens may be 0"}
+2026-09-29T14:36:14.752Z radix sss check_worker#2 {"success":true,"keep_tokens":10185,"keep_paths":1,"locked":1,"message":"armed; first completion binds keep (system+tools LCP)"}
+2026-09-29T14:39:01.963Z radix ses check_worker#2 {"success":true,"cut_kv_tokens":48599,"cut_mamba_states":27,"cut_nodes":28,"keep_tokens":10185,"message":"keep_node has no mamba checkpoint; next cached_tokens may be 0"}
+2026-09-29T14:39:01.972Z radix sss decision_manager#3 {"success":true,"keep_tokens":10185,"keep_paths":1,"locked":1,"message":"armed; first completion binds keep (system+tools LCP)"}
+2026-09-29T14:40:03.500Z radix ses decision_manager#3 {"success":true,"cut_kv_tokens":26260,"cut_mamba_states":11,"cut_nodes":11,"keep_tokens":10185,"message":"keep_node has no mamba checkpoint; next cached_tokens may be 0"}
+2026-09-29T14:40:03.510Z radix sss laborer_worker#3 {"success":true,"keep_tokens":10185,"keep_paths":1,"locked":1,"message":"armed; first completion binds keep (system+tools LCP)"}
+2026-09-29T14:43:55.933Z radix ses laborer_worker#3 {"success":true,"cut_kv_tokens":73766,"cut_mamba_states":54,"cut_nodes":55,"keep_tokens":10185,"message":"keep_node has no mamba checkpoint; next cached_tokens may be 0"}
+2026-09-29T14:43:55.940Z radix sss check_worker#3 {"success":true,"keep_tokens":10185,"keep_paths":1,"locked":1,"message":"armed; first completion binds keep (system+tools LCP)"}
+2026-09-29T14:45:40.710Z radix ses check_worker#3 {"success":true,"cut_kv_tokens":48002,"cut_mamba_states":23,"cut_nodes":24,"keep_tokens":10185,"message":"keep_node has no mamba checkpoint; next cached_tokens may be 0"}
+2026-09-29T14:45:40.719Z radix sss decision_manager#4 {"success":true,"keep_tokens":10185,"keep_paths":1,"locked":1,"message":"armed; first completion binds keep (system+tools LCP)"}
+2026-09-29T14:46:38.454Z radix ses decision_manager#4 {"success":true,"cut_kv_tokens":26460,"cut_mamba_states":12,"cut_nodes":12,"keep_tokens":10185,"message":"keep_node has no mamba checkpoint; next cached_tokens may be 0"}
+2026-09-29T14:46:38.463Z radix sss laborer_worker#4 {"success":true,"keep_tokens":10185,"keep_paths":1,"locked":1,"message":"armed; first completion binds keep (system+tools LCP)"}

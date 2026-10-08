@@ -2290,15 +2290,80 @@ window.__ModuleLoader__.load({
      * @param {object} ctx client context
      * @description Register 设置 → 插件配置 card keyed by Host namespace `dsh-review`.
      */
+    /**
+     * @param {object} remote client `remote` service (has settings face + $on)
+     * @returns {object|null} settingsScope-shaped snapshot store, or null
+     * @description dsh 0.2.0-rc.2 replacement for settingsScope.bind: derive
+     * this namespace's view from the one `remote.settings.describe()` mirror,
+     * refresh on `settings/document-updated`, write via
+     * `remote.settings.mutate(ns, [{op:"set",path,value}], revision)`.
+     */
+    function makeRemoteSettingsScope(remote) {
+      const settings = remote && remote.settings;
+      if (!settings || typeof settings.describe !== "function" || typeof settings.mutate !== "function") return null;
+      let snapshot = { status: "loading", writable: false, value: void 0, revision: 0 };
+      const listeners = new Set();
+      let inFlight = null;
+      function notify() { for (const l of listeners) l(); }
+      function load() {
+        if (inFlight) return inFlight;
+        const run = Promise.resolve().then(function () { return settings.describe(); })
+          .then(function (doc) {
+            const list = (doc && doc.namespaces) || [];
+            let entry;
+            for (const n of list) { if (n && n.ns === REVIEW_SETTINGS_NS) { entry = n; break; } }
+            snapshot = {
+              status: "ready",
+              writable: !!(doc && doc.writable) && !!entry,
+              value: entry && entry.value,
+              revision: entry && typeof entry.revision === "number" ? entry.revision : 0,
+            };
+          }, function () {
+            snapshot = { status: "error", writable: false, value: void 0, revision: snapshot.revision };
+          })
+          .then(function () { inFlight = null; notify(); });
+        inFlight = run;
+        return run;
+      }
+      return {
+        subscribe: function (listener) {
+          listeners.add(listener);
+          return function () { listeners.delete(listener); };
+        },
+        getSnapshot: function () { return snapshot; },
+        set: function (key, value) {
+          return settings.mutate(REVIEW_SETTINGS_NS, [{ op: "set", path: [key], value: value }], snapshot.revision)
+            .then(function (view) {
+              if (view && typeof view.revision === "number") {
+                snapshot = { status: "ready", writable: true, value: view.value, revision: view.revision };
+                notify();
+              } else {
+                load();
+              }
+              return view;
+            });
+        },
+        reload: load,
+      };
+    }
+
     function installReviewSettingsCard(ctx) {
       if (!ctx || typeof ctx.inject !== "function") return;
-      ctx.inject(["settingsScope"], function (sctx) {
-        if (!sctx.settingsScope || typeof sctx.settingsScope.bind !== "function") {
-          console.warn("[dsh-review] settingsScope.bind missing; plugin card skipped");
+      ctx.inject(["remote.settings"], function (sctx) {
+        const reviewScope = makeRemoteSettingsScope(sctx.remote);
+        if (!reviewScope) {
+          console.warn("[dsh-review] remote.settings missing; plugin card skipped");
           return;
         }
-        const reviewScope = sctx.settingsScope.bind({ namespace: REVIEW_SETTINGS_NS });
         reviewSettingsScope = reviewScope;
+        sctx.effect(function () {
+          const remote = sctx.remote;
+          const off = remote && typeof remote.$on === "function"
+            ? remote.$on("settings/document-updated", function () { reviewScope.reload(); })
+            : null;
+          reviewScope.reload();
+          return function () { if (typeof off === "function") off(); };
+        });
         ensureReviewCardCss();
         sctx.effect(function () {
           return sctx.slots.register({
@@ -2911,7 +2976,7 @@ window.__ModuleLoader__.load({
     }
 
     exports.apply = apply;
-    exports.inject = ["slots", "workspaces", "sessions", "uiWorkspace", "settingsScope"];
+    exports.inject = ["slots", "workspaces", "sessions", "uiWorkspace", "remote"];
     return module.exports;
   }
 });

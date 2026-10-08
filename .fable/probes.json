@@ -1,0 +1,54 @@
+{
+  "unknowns": [
+    {
+      "id": "U1",
+      "fact": "ctx.jobs (JobRegistry) 接口形态: read(id, caller?) → {text, snapshot},单一消费游标; kill(id, caller?, reason?) → 'requested'|'already-finished'; list/get/wait/onJobDone(snapshot,owner)/onJobsChanged(owner) 的 listener 会拿到 owner Agent;owned job 有 session 栅栏(无 caller 的非 agent 调用者不能碰 owned job,kill 需要带上记录的 owner Agent)。",
+      "needed_by": "server 插件 tee 包装 + kill 路由",
+      "status": "resolved",
+      "evidence": "读 dsh-jobs/lib/types/*.d.ts(只读):JobRegistry 抽象 + LocalJobRegistry 声明;assertAccess 注释确认栅栏语义;onJobsChanged/onJobDone 签名含 owner: Agent|undefined"
+    },
+    {
+      "id": "U2",
+      "fact": "ctx.webServer.register({kind:'exact'|'prefix', path, handler(req,res)}) 可用;handler 拥有完整响应生命周期,文档明言可保持响应打开做 SSE;ctx.webServer.port 取监听端口;重复 (kind,path) 注册会 throw。",
+      "needed_by": "server 插件挂 SSE/kill 路由",
+      "status": "resolved",
+      "evidence": "读 dsh-host-webserver/lib/types/index.d.ts(只读):WebRoute 注释 'may hold the response open, e.g. SSE'"
+    },
+    {
+      "id": "U3",
+      "fact": "web profile 的组成里注册了 jobs 服务(dsh-base 的 cordis.patch.yml: id: jobs → @deepseek-ai/dsh-jobs-local)和 webServer;dsh-review 插件与它们同处一个 web profile 组合,插件 apply(ctx) 的 ctx 能解析 ctx.jobs 与 ctx.webServer(同一进程级 registry,agent bash 工具用的就是它)。",
+      "needed_by": "插件能 hook 到 ctx.jobs",
+      "status": "resolved",
+      "evidence": "读 ~/.dsh/profiles/web/package.json(bundles 含 dsh-base/dsh-web-app/dsh-review)+ dsh-base/cordis.patch.yml 的 jobs 条目(均只读)"
+    },
+    {
+      "id": "U4",
+      "fact": "dsh-review 插件形态: export name/inject/apply(ctx, config);支持 ctx.on('tools/pre-execute'/'tools/result')、ctx.inject;以 tarball 装进 ~/.dsh/profiles/web(dsh plugin --profile web add <tgz> --force)。",
+      "needed_by": "server 插件改造落点",
+      "status": "resolved",
+      "evidence": "读 CWD/dsh-review/index.js(现有插件,apply(ctx,config) 模式)"
+    },
+    {
+      "id": "U5",
+      "fact": "VSCode 扩展集成点: CJS activate(context);lib/dsh-process.js 导出 dshPort()(config dshReview.dshPort,默认 3080);lib/dsh-auth-proxy.js 导出 mintCookie(authority),用 $DSH_HOME/.credentials.yaml 的 browser-session secret 签 cookie(真实文件已验证正则匹配,32 字节);engines vscode ^1.85,vscode.window.createTerminal({pty}) Pseudoterminal 为稳定公开 API。",
+      "needed_by": "扩展直连 SSE/kill 路由 + 开只读终端",
+      "status": "resolved",
+      "evidence": "读 CWD/dsh-review-vscode/extension.js、lib/dsh-auth-proxy.js、package.json(engines);node 实测 .credentials.yaml secret 模式匹配成功"
+    },
+    {
+      "id": "U6",
+      "fact": "install.sh 流程: npm pack dsh-review → dsh plugin --profile web add <tgz> --force;扩展源拷贝到 ~/.vscode/extensions/dsn.dsh-review-vscode-0.1.9 + extensions.json 目录同步 + argv.json;装完需完全退出 VSCode + 重启 dsh web。",
+      "needed_by": "重装生效步骤",
+      "status": "resolved",
+      "evidence": "读 CWD/install.sh(全部 275 行)"
+    },
+    {
+      "id": "U7",
+      "fact": "JobSnapshot 字段: id/kind/label/status/ownerSession/startedAt/finishedAt/reported 等;session 工作区 cwd 可经 owner Agent 的 agent.session.header.cwd 取得(现有插件 sessionWorkbench 已证明该路径)。",
+      "needed_by": "事件里带 cwd 做当前工作区过滤",
+      "status": "resolved",
+      "evidence": "dsh-jobs types.d.ts JobSnapshot 定义 + 现有 dsh-review/index.js sessionWorkbench(exec) 用法"
+    }
+  ],
+  "probes": []
+}

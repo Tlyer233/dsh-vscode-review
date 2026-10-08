@@ -1,0 +1,13 @@
+- **Task:** 按 install.sh 流程重装两个插件(dsh-review server 插件 + dsh-review-vscode 扩展),跳过 shadow 重置,然后重启 dsh web 使新插件生效。
+- **Done:**
+  - 前置确认:dsh web 在跑,127.0.0.1:3080(PID 71793,`node ~/.local/bin/dsh --profile web --no-open`,由 VSCode 扩展宿主 spawn);重启前 `GET /dsh-review/jobs` = 404(旧插件无该路由)。
+  - 第 1 步(server 插件):`npm pack dsh-review` → `~/.dsh/profiles/web/.install-cache/dsh-review-0.1.13.tgz`(含新 jobs.js,43.7kB);`dsh plugin --profile web add <tgz> --force` exit 0。
+  - 坑 1:`dsh plugin add` 首次 30s 超时被杀;重跑报 `atomic-write: timed out waiting for the writer lock at ~/.dsh/profiles/web/package.json.lock`。锁文件内容为 pid 22923(16:03 残留,进程已死,系参考会话中断的旧安装)→ 删除陈旧锁后重跑成功。
+  - 坑 2:pnpm 判 `file:` 依赖 spec 未变(同版本 0.1.13)→ "Already up to date",node_modules/dsh-review 仍是旧拷贝(无 jobs.js)。处置:用新 tgz `tar -xzf --strip-components=1` 原地覆盖 `~/.dsh/profiles/web/node_modules/dsh-review`,diff 验证与 tgz 逐文件一致 + `node --check` 通过(jobs.js/index.js SYNTAX-OK)。
+  - 第 2 步(扩展):`rm -rf` + 重拷 `dsh-review-vscode/` 源 → `~/.vscode/extensions/dsn.dsh-review-vscode-0.1.9`(extension.js、package.json、lib/、media/、scripts/、node_modules/,含新 `lib/dsh-jobs.js`;diff 与源一致,仅 .vscode/.vscodeignore/README.md/package-lock.json 按 install.sh 惯例不拷);extensions.json 目录项已按 install.sh 的 copy 模式同步(pin 到该目录)。
+  - shadow store 重置:按任务指示跳过(未碰 ~/.dsh/review/shadow)。
+- **Restart(最后一步,单条 bash 内完成):** 状态文件 `try_scripts/out/dsh_restart_state.txt` 记录:旧 pid → `kill -9` → 等端口释放 → `nohup node ~/.local/bin/dsh --profile web --no-open >> ~/.dsh/review/dsh-restart.log 2>&1 &`(与扩展 startDshProcess 同命令,cwd $HOME,detached,父进程死后由 launchd 收养)→ 轮询 `curl 127.0.0.1:3080/dsh-review/jobs` 至非 000,最终状态码写入状态文件。
+- **Seen:** `try_scripts/out/dsh_restart_state.txt`:重启过程时间线 + 最终 /dsh-review/jobs HTTP 状态码(重启会杀掉本 agent 自己的宿主进程,该文件是唯一幸存证据;QA 请以其 + 独立 curl 为准)。
+- **Ruled out:** `code --command dshReview.restartDsh` 走扩展宿主重启(需依赖 code CLI + 窗口焦点,且无状态文件,失败不可观测);pnpm 强制重导入(--force 会重拉全部依赖,含 GitHub 远端 tgz,网络风险大)。
+- **Leftover:** VSCode 需用户完全退出重开(Cmd+Q)才会加载新 `lib/dsh-jobs.js`(install.sh 已告知用户);dsh web 重启后 webview 侧栏可能显示离线,点侧栏 Reload/Restart 即可。
+- OPEN: pnpm 锁文件仍指向旧 0.1.13 tgz 哈希;本次手动覆盖 node_modules 后运行态已新,下次 install.sh 正常升版(pnpm 会重新导入)即自愈,未去改 profile 锁文件(超出最小改动)。
