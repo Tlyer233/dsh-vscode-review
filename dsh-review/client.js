@@ -156,11 +156,10 @@ window.__ModuleLoader__.load({
     }
 
     // VS Code iframe chrome:
-    // 1) keep the native 56px rail (no edge-hide); a tab expands/collapses it.
-    // 2) hide conversation header; a top-right tab toggles it back.
-    // 3) dock the rail left or right.
+    // 1) conversation header is always shown (no toggle button).
+    // 2) dock the rail left or right (the one remaining button).
+    // 3) rail auto-hide on edge hover drives dsh-rail-hidden (kept as-is).
     const IFRAME_SIDEBAR_STYLE_ID = "dsh-review-iframe-sidebar";
-    const IFRAME_HEADER_BTN_ID = "dsh-review-header-toggle";
     const IFRAME_RAIL_SIDE_BTN_ID = "dsh-review-rail-side";
     const IFRAME_RAIL_EXPAND_BTN_ID = "dsh-review-rail-expand";
     const IFRAME_RAIL_SIDE_KEY = "dsh-review-rail-side";
@@ -287,21 +286,6 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * Expand or collapse the conversation header (iframe only).
-     * @param {boolean} on
-     */
-    function setIframeHeaderOpen(on) {
-      try { document.documentElement.classList.toggle("dsh-header-open", !!on); } catch (err) { /* noop */ }
-      const btn = document.getElementById(IFRAME_HEADER_BTN_ID);
-      if (!btn) return;
-      const label = on ? "收起顶栏" : "展开顶栏";
-      btn.setAttribute("aria-expanded", on ? "true" : "false");
-      btn.setAttribute("aria-label", label);
-      btn.title = label;
-      btn.classList.toggle("is-open", !!on);
-    }
-
-    /**
      * Dock the collapsed dsh rail on the left or right edge.
      * @param {"left" | "right"} side
      */
@@ -358,17 +342,8 @@ window.__ModuleLoader__.load({
         "html.dsh-vscode-iframe.dsh-rail-right [data-sidebar-collapsed] > *, html.dsh-vscode-iframe.dsh-rail-right [data-details-collapsed] > *, html.dsh-vscode-iframe.dsh-rail-right [data-slot=\"root\"] > * > * {",
         "  direction: ltr;",
         "}",
-        "html.dsh-vscode-iframe:not(.dsh-header-open) [data-slot=\"conversation.session.header\"],",
-        "html.dsh-vscode-iframe:not(.dsh-header-open) [data-slot=\"conversation.session.header\"] header {",
-        "  display: none !important;",
-        "}",
-        "html.dsh-vscode-iframe.dsh-header-open [data-slot=\"conversation.session.header\"] {",
-        "  display: contents !important;",
-        "}",
-        "#dsh-review-header-toggle, #dsh-review-rail-side, #dsh-review-rail-expand { display: none; }",
-        "html.dsh-vscode-iframe #dsh-review-header-toggle,",
-        "html.dsh-vscode-iframe #dsh-review-rail-side,",
-        "html.dsh-vscode-iframe #dsh-review-rail-expand {",
+        "#dsh-review-rail-side { display: none; }",
+        "html.dsh-vscode-iframe #dsh-review-rail-side {",
         "  display: flex; align-items: center; justify-content: center;",
         "  position: fixed; top: 0; z-index: 80;",
         "  width: 28px; height: 14px; padding: 0; margin: 0;",
@@ -378,21 +353,13 @@ window.__ModuleLoader__.load({
         "  box-shadow: 0 1px 4px rgba(0,0,0,0.35);",
         "  cursor: pointer; opacity: 0.72;",
         "}",
-        "html.dsh-vscode-iframe #dsh-review-header-toggle { right: 10px; }",
-        "html.dsh-vscode-iframe #dsh-review-rail-side { right: 42px; }",
-        "html.dsh-vscode-iframe #dsh-review-rail-expand { right: 74px; }",
-        "html.dsh-vscode-iframe #dsh-review-header-toggle:hover,",
-        "html.dsh-vscode-iframe #dsh-review-rail-side:hover,",
-        "html.dsh-vscode-iframe #dsh-review-rail-expand:hover { opacity: 1; }",
-        "html.dsh-vscode-iframe #dsh-review-header-toggle svg,",
-        "html.dsh-vscode-iframe #dsh-review-rail-side svg,",
-        "html.dsh-vscode-iframe #dsh-review-rail-expand svg {",
+        "html.dsh-vscode-iframe #dsh-review-rail-side { right: 10px; }",
+        "html.dsh-vscode-iframe #dsh-review-rail-side:hover { opacity: 1; }",
+        "html.dsh-vscode-iframe #dsh-review-rail-side svg {",
         "  width: 12px; height: 12px; display: block;",
         "  transition: transform 0.15s ease;",
         "}",
-        "html.dsh-vscode-iframe #dsh-review-header-toggle.is-open svg { transform: rotate(180deg); }",
         "html.dsh-vscode-iframe #dsh-review-rail-side.is-right svg { transform: scaleX(-1); }",
-        "html.dsh-vscode-iframe #dsh-review-rail-expand.is-open svg { transform: rotate(180deg); }",
       ].join("\n");
       let tag = document.getElementById(IFRAME_SIDEBAR_STYLE_ID);
       if (!tag) {
@@ -401,22 +368,10 @@ window.__ModuleLoader__.load({
         try { document.head.appendChild(tag); } catch (err) { /* noop */ }
       }
       tag.textContent = css;
-      const oldHit = document.getElementById("dsh-my-plugin-rail-hit");
-      if (oldHit && oldHit.parentNode) oldHit.parentNode.removeChild(oldHit);
-      if (!document.getElementById(IFRAME_HEADER_BTN_ID)) {
-        const btn = document.createElement("button");
-        btn.id = IFRAME_HEADER_BTN_ID;
-        btn.type = "button";
-        btn.innerHTML = '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 4.2L6 7.8 9.5 4.2" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>';
-        btn.addEventListener("click", function (event) {
-          event.preventDefault();
-          event.stopPropagation();
-          const open = !document.documentElement.classList.contains("dsh-header-open");
-          setIframeHeaderOpen(open);
-        });
-        try { document.body.appendChild(btn); } catch (err) { /* noop */ }
-        setIframeHeaderOpen(false);
-      }
+      ["dsh-my-plugin-rail-hit", "dsh-review-header-toggle", "dsh-review-rail-expand"].forEach(function (oldId) {
+        const oldEl = document.getElementById(oldId);
+        if (oldEl && oldEl.parentNode) oldEl.parentNode.removeChild(oldEl);
+      });
       if (!document.getElementById(IFRAME_RAIL_SIDE_BTN_ID)) {
         const sideBtn = document.createElement("button");
         sideBtn.id = IFRAME_RAIL_SIDE_BTN_ID;
@@ -429,19 +384,6 @@ window.__ModuleLoader__.load({
           setIframeRailSide(next);
         });
         try { document.body.appendChild(sideBtn); } catch (err) { /* noop */ }
-      }
-      if (!document.getElementById(IFRAME_RAIL_EXPAND_BTN_ID)) {
-        const expandBtn = document.createElement("button");
-        expandBtn.id = IFRAME_RAIL_EXPAND_BTN_ID;
-        expandBtn.type = "button";
-        expandBtn.innerHTML = '<svg viewBox="0 0 12 12" aria-hidden="true"><rect x="1.5" y="2" width="9" height="8" rx="1" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M4.5 2v8" fill="none" stroke="currentColor" stroke-width="1.3"/></svg>';
-        expandBtn.addEventListener("click", function (event) {
-          event.preventDefault();
-          event.stopPropagation();
-          const hidden = !document.documentElement.classList.contains("dsh-rail-hidden");
-          setIframeRailHidden(hidden);
-        });
-        try { document.body.appendChild(expandBtn); } catch (err) { /* noop */ }
       }
       const chrome = currentIframeChrome();
       setIframeRailSide(chrome.railSide);
@@ -474,31 +416,20 @@ window.__ModuleLoader__.load({
         if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; }
         if (isHidden()) setIframeRailHidden(false);
       };
-      // Visible rail area = sidebar track rect UNION all visible descendants
-      // (depth-capped walk; the sidebar subtree is small). Icon-rail state:
-      // the 56px track. Expanded state: track ∪ overflow panel = full panel.
-      function railAreaRect() {
+      // 0.1.26 keep zone = paint hit test, not geometry. Debug showed the
+      // sidebar column lays out ~73px right of its painted position when
+      // right-docked (RTL/zoom push layout rects out of the viewport), so
+      // rect math said "pointer outside" while the pointer sat on the rail
+      // icons and auto-hide fired instantly. elementFromPoint sees exactly
+      // what is painted: keep showing while the hit element belongs to the
+      // sidebar column subtree (rail icons, hover panel, settings gear).
+      function overRail(x, y) {
         const frame = document.querySelector('[data-slot="root"] > *');
         const col = frame && frame.children[0];
-        if (!col) return null;
-        const base = col.getBoundingClientRect();
-        let left = base.left, top = base.top, right = base.right, bottom = base.bottom;
-        const walk = (el, depth) => {
-          if (depth > 6) return;
-          const kids = el.children;
-          for (let i = 0; i < kids.length; i++) {
-            const cr = kids[i].getBoundingClientRect();
-            if (cr.width > 0 && cr.height > 0) {
-              if (cr.left < left) left = cr.left;
-              if (cr.right > right) right = cr.right;
-              if (cr.top < top) top = cr.top;
-              if (cr.bottom > bottom) bottom = cr.bottom;
-            }
-            walk(kids[i], depth + 1);
-          }
-        };
-        walk(col, 0);
-        return { left: left, top: top, right: right, bottom: bottom };
+        if (!col) return false;
+        let hit = null;
+        try { hit = document.elementFromPoint(x, y); } catch (err) { /* noop */ }
+        return !!hit && (col === hit || col.contains(hit));
       }
       document.addEventListener("mousemove", (event) => {
         const w = window.innerWidth;
@@ -511,21 +442,16 @@ window.__ModuleLoader__.load({
           ? event.clientX >= w - 14
           : event.clientX <= 14;
         if (nearRailEdge) {
+          if (isHidden()) postScopeMessage("dshScopeDiag", { action: "ah-show edge" });
           show();
           return;
         }
         if (isHidden()) return;
-        // Keep zone: the full visible rail area (union rect), 4px tolerance.
-        const area = railAreaRect();
-        let over = false;
-        if (area) {
-          over = event.clientX >= area.left - 4 && event.clientX <= area.right + 4
-            && event.clientY >= area.top - 4 && event.clientY <= area.bottom + 4;
-        }
-        if (over) { show(); return; }
+        if (overRail(event.clientX, event.clientY)) { show(); return; }
         if (!hideTimer) {
           hideTimer = setTimeout(function () {
             hideTimer = null;
+            postScopeMessage("dshScopeDiag", { action: "ah-fire-hide x=" + Math.round(event.clientX) });
             if (!isHidden()) setIframeRailHidden(true);
           }, 350);
         }
@@ -1162,7 +1088,51 @@ window.__ModuleLoader__.load({
          * @returns {boolean}
          * @description Keyboard must land in the dsh composer after a chip insert.
          */
+        /**
+         * dsh 0.2 rc: after a chip insert the wanted caret (just past the
+         * chip) is remembered for a moment; shell.focus() may answer it with
+         * a start-of-draft caret (observed), so force it back by inserting an
+         * empty string at the wanted span (the editor lands its caret there).
+         */
+        let caretWanted = null;
+        let caretWantedAt = 0;
+        function caretNow(shell) {
+          const p = (shell && shell.projection) || {};
+          return Number.isFinite(p.caret) ? p.caret : null;
+        }
+        function ensureCaretAfterChip() {
+          if (!(sessionId && inputHub) || !Number.isFinite(caretWanted)) return;
+          if (Date.now() - caretWantedAt > 3000) return;
+          try {
+            const shell = inputHub.shell(sessionId);
+            if (!shell) return;
+            const now = caretNow(shell);
+            if (now === null || Math.abs(now - caretWanted) <= 1) return;
+            if (typeof shell.insertText === "function") {
+              const ok = shell.insertText("", { start: caretWanted, end: caretWanted, draftRev: liveRev(shell) });
+              pasteLog("[dbg] caretFix insertText('') ok=" + ok
+                + " now=" + caretNow(shell) + " want=" + caretWanted);
+            }
+          } catch (err) { pasteLog("[dbg] caretFix err=" + (err && err.message || err)); }
+        }
+
         function focusComposer(caret) {
+          // dsh 0.2 rc: the composer is Lexical. A bare DOM focus on the
+          // contenteditable lands the caret at the START (official facade
+          // note); shell.focus() restores the settled caret — right after a
+          // freshly inserted chip. DOM path remains for textarea composers.
+          if (sessionId && inputHub) {
+            try {
+              const shell = inputHub.shell(sessionId);
+              if (shell && typeof shell.focus === "function") {
+                shell.focus();
+                pasteLog("[dbg] focusComposer route=shell.focus caretHint=" + caret
+                  + " caretNow=" + caretNow(shell));
+                ensureCaretAfterChip();
+                return true;
+              }
+            } catch (err) { /* fall through to the DOM path */ }
+          }
           const el = findComposerTextarea();
           if (!el) return false;
           lastComposer = el;
@@ -1170,6 +1140,7 @@ window.__ModuleLoader__.load({
           if (el.tagName === "TEXTAREA" && Number.isFinite(caret) && caret >= 0) {
             try { el.setSelectionRange(caret, caret); } catch (err) { /* noop */ }
           }
+          pasteLog("[dbg] focusComposer route=dom tag=" + el.tagName + " caret=" + caret);
           return true;
         }
 
@@ -1279,6 +1250,11 @@ window.__ModuleLoader__.load({
           // The custom source is only needed for non-file refs (selection/terminal);
           // file/folder chips use dsh's native "reference" source.
           const needsCustom = list.some(function (r) { return r.kind !== "file" && r.kind !== "folder"; });
+          pasteLog("[dbg] insertRefs n=" + list.length
+            + " kinds=" + list.map(function (r) { return r.kind; }).join(",")
+            + " sid=" + (sessionId ? "y" : "n")
+            + " hub=" + (inputHub ? "y" : "n")
+            + " refReg=" + (refSourceRegistered ? "y" : "n"));
           if (!sessionId || !inputHub || (needsCustom && !refSourceRegistered) || list.length === 0) {
             if (formattedFallback) insertComposerText(formattedFallback);
             return {
@@ -1317,8 +1293,20 @@ window.__ModuleLoader__.load({
                 return { id: byRef[r.ref], kind: list[i] && list[i].kind, ref: r.ref };
               }));
               const caretAt = caretAfterRefs(shell, references);
+              // rc.2 caret coordinates are DETECT-space (each mention counts
+              // as one char): the chaining span after the last insert IS the
+              // caret-after-chip. draft-space caretAt (caretAfterRefs) is
+              // ~100 chars off on long mentions, which is why the earlier
+              // caretFix kept missing.
+              if (span && Number.isFinite(span.start)) {
+                caretWanted = span.start;
+                caretWantedAt = Date.now();
+              }
+              pasteLog("[dbg] chip insertReference ok n=" + references.length
+                + " caretAt=" + caretAt + " detectSpan=" + JSON.stringify(span));
               setTimeout(function () { focusComposer(caretAt); }, 0);
               setTimeout(function () { focusComposer(caretAt); }, 50);
+              setTimeout(function () { ensureCaretAfterChip(); }, 300);
               return { mode: "chip", count: references.length, reason: "" };
             }
 
@@ -1359,6 +1347,9 @@ window.__ModuleLoader__.load({
               caret = end;
             }
             const caretAt = caret;
+            pasteLog("[dbg] chip pasteBegin ok n=" + references.length + " caretAt=" + caretAt);
+            caretWanted = caretAt;
+            caretWantedAt = Date.now();
             setTimeout(function () { focusComposer(caretAt); }, 0);
             setTimeout(function () { focusComposer(caretAt); }, 50);
             return { mode: "chip", count: references.length, reason: "" };
@@ -1887,17 +1878,43 @@ window.__ModuleLoader__.load({
           });
         }
 
+        let lastDragOverLogAt = 0;
+        let lastDragOverPostAt = 0;
+        function dtTypes(dt) {
+          try { return Array.prototype.slice.call(dt.types || []).join(","); } catch (err) { return "?"; }
+        }
+
         function onDragOver(event) {
+          const now = Date.now();
+          if (now - lastDragOverLogAt > 1500) {
+            lastDragOverLogAt = now;
+            pasteLog("[dbg] dragover bridge=" + (bridgeActive ? "y" : "n")
+              + " shift=" + (event.shiftKey ? "y" : "n")
+              + " dt=" + (event.dataTransfer ? dtTypes(event.dataTransfer) : "null"));
+          }
+          // VS Code explorer drags only carry dataTransfer data inside the
+          // webview HOST document; this iframe sees hover but no payload.
+          // Tell the host, which turns this iframe pointer-transparent so the
+          // real dragover/drop land on the host and reach the extension.
+          if (event.dataTransfer && now - lastDragOverPostAt > 400) {
+            lastDragOverPostAt = now;
+            try { postToParent({ type: "dshDragOver" }); } catch (err) { /* noop */ }
+          }
           if (!bridgeActive) return;
           if (!event.shiftKey || !event.dataTransfer) return;
           event.preventDefault();
         }
 
         function onDrop(event) {
+          const dt = event.dataTransfer;
+          pasteLog("[dbg] drop shift=" + (event.shiftKey ? "y" : "n")
+            + " bridge=" + (bridgeActive ? "y" : "n")
+            + " dt=" + (dt ? dtTypes(dt) : "null"));
           if (!bridgeActive) return;
           if (!event.shiftKey || !event.dataTransfer) return;
           event.preventDefault();
           const paths = pathsFromDrop(event.dataTransfer);
+          pasteLog("[dbg] drop paths=" + paths.length + (paths.length ? " first=" + paths[0] : ""));
           if (paths.length > 0) {
             const refs = refsForDropPaths(paths, event.dataTransfer);
             const result = insertRefsAtCaret(refs, paths.join("\n"), null);

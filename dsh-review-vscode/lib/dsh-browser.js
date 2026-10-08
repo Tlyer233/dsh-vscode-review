@@ -445,9 +445,38 @@ function dshWebviewHtml(url, opts) {
     '  window.addEventListener("focus", reportDshActive);' +
     '  document.addEventListener("pointerdown", reportDshActive, true);' +
     '  document.addEventListener("keydown", reportDshActive, true);' +
+    '  var lastDragLogAt = 0;' +
+    '  var ghostTimer = 0;' +
+    '  document.addEventListener("dragover", function (event) {' +
+    '    var now = Date.now();' +
+    '    if (now - lastDragLogAt > 1500) {' +
+    '      lastDragLogAt = now;' +
+    '      var ty = "";' +
+    '      try { ty = Array.prototype.slice.call((event.dataTransfer || {}).types || []).join(","); } catch (e) {}' +
+    '      vscode.postMessage({ type: "dshPasteLog", line: "[dbg] webview dragover shift=" + (event.shiftKey ? "y" : "n") + " dt=" + ty });' +
+    '    }' +
+    '    if (event.shiftKey && event.dataTransfer) event.preventDefault();' +
+    '  }, true);' +
+    '  document.addEventListener("drop", function (event) {' +
+    '    if (!event.shiftKey || !event.dataTransfer) {' +
+    '      vscode.postMessage({ type: "dshPasteLog", line: "[dbg] webview drop rejected shift=" + (event.shiftKey ? "y" : "n") });' +
+    '      return;' +
+    '    }' +
+    '    event.preventDefault();' +
+    '    var raws = [];' +
+    '    try { raws.push(event.dataTransfer.getData("application/vnd.code.uri-list")); } catch (e) {}' +
+    '    try { raws.push(event.dataTransfer.getData("text/uri-list")); } catch (e) {}' +
+    '    vscode.postMessage({ type: "dshWebviewDrop", raws: raws });' +
+    '  }, true);' +
     '  window.addEventListener("message", function (event) {' +
     '    var msg = event.data;' +
     '    if (!msg) return;' +
+    '    if (msg.type === "dshDragOver") {' +
+    '      try { frame.style.pointerEvents = "none"; } catch (e) {}' +
+    '      if (ghostTimer) clearTimeout(ghostTimer);' +
+    '      ghostTimer = setTimeout(function () { try { frame.style.pointerEvents = ""; } catch (e) {} }, 1500);' +
+    '      return;' +
+    '    }' +
     '    if (msg.type === "dshBridgeHello") {' +
     '      if (frame && frame.contentWindow) {' +
     '        frame.contentWindow.postMessage({ type: "dshChromeState", railSide: dshChrome.railSide, railHidden: !!dshChrome.railHidden, zoom: dshChrome.zoom }, "*");' +
@@ -580,6 +609,35 @@ async function sendTextToDsh(text) {
   }
 }
 
+/**
+ * Drop payloads from the sidebar webview (VS Code explorer drag) into local
+ * absolute paths. dataTransfer entries carry vscode-webview:// or file://
+ * URIs per line; custom MIME (vnd.code.uri-list) carries the full list.
+ * @param {unknown[]} raws
+ * @returns {string[]}
+ */
+function webviewDropPaths(raws) {
+  const out = []
+  const seen = new Set()
+  for (const raw of (Array.isArray(raws) ? raws : [])) {
+    for (const line of String(raw || '').split(/\r?\n/)) {
+      const u = String(line).trim()
+      if (!u || u.startsWith('#')) continue
+      let p = ''
+      try {
+        if (/^[a-zA-Z]:[\\/]/.test(u)) p = decodeURIComponent(u.replace(/\\/g, '/'))
+        else if (u.startsWith('file://') || u.startsWith('vscode-webview://')) p = decodeURIComponent(new URL(u).pathname)
+        else if (u.startsWith('/')) p = decodeURIComponent(u)
+      } catch { p = '' }
+      if (!p) continue
+      if (process.platform === 'win32' && /^\/[a-zA-Z]:/.test(p)) p = p.slice(1)
+      if (!fs.existsSync(p)) continue
+      if (!seen.has(p)) { seen.add(p); out.push(p) }
+    }
+  }
+  return out
+}
+
 async function sendRefsToDsh(refs, fallbackText) {
   if (!Array.isArray(refs) || refs.length === 0) return sendTextToDsh(fallbackText)
   await focusDshSidebar()
@@ -708,6 +766,20 @@ function setupDshBrowser(context) {
             notifyPendingToDsh(readOwnedPending().filter(entryOwnedByThisWindow))
           } catch (e) {
             state.log('dshPendingRequest failed: ' + (e && e.message || e))
+          }
+          return
+        }
+        if (msg.type === 'dshWebviewDrop') {
+          const rawLens = (Array.isArray(msg.raws) ? msg.raws : []).map((r) => String(r).length).join(',')
+          state.log('[dbg] host drop rawLens=' + rawLens)
+          const paths = webviewDropPaths(msg.raws)
+          state.log('[dbg] host drop paths=' + paths.length + (paths.length ? ' first=' + paths[0] : ''))
+          if (paths.length > 0) {
+            const refs = paths.map((p) => ({
+              kind: fs.existsSync(p) && fs.statSync(p).isDirectory() ? 'folder' : 'file',
+              path: p,
+            }))
+            void sendRefsToDsh(refs, paths.join('\n'))
           }
           return
         }

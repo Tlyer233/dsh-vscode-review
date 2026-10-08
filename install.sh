@@ -196,7 +196,9 @@ install_dsh_plugin() {
   local cache="$HOME/.dsh/profiles/web/.install-cache"
   mkdir -p "$cache"
   # Durable tarball: pnpm records file:<tgz>; do not pack into /tmp.
-  rm -f "$cache"/dsh-review-*.tgz
+  # Keep old tarballs until the new one is installed: pnpm re-resolves the
+  # previously recorded file:<tgz> spec during add, and a missing file makes
+  # the whole install fail with ENOENT.
   if command -v npm >/dev/null 2>&1; then
     (cd "$DSH_PLUGIN" && npm pack --pack-destination "$cache")
   elif command -v pnpm >/dev/null 2>&1; then
@@ -207,13 +209,21 @@ install_dsh_plugin() {
   local tgz=""
   local f
   for f in "$cache"/dsh-review-*.tgz; do
-    if [ -f "$f" ]; then tgz="$f"; break; fi
+    case "${f##*/}" in
+      dsh-review-[0-9]*.tgz) tgz="$f" ;; # newest wins (glob is sorted)
+    esac
   done
   [ -n "$tgz" ] || die "pack produced no tarball in $cache"
   echo "packed $tgz"
   echo "installing a copy into the web profile (not a source-tree link)"
-  # --force: same version 0.1.0 must still replace the previous tarball copy.
+  # --force: same version must still replace the previous tarball copy.
   dsh plugin --profile web add "$tgz" --force
+  # Installed: drop stale tarballs, keep only the recorded one.
+  local keep
+  keep="$(basename "$tgz")"
+  for f in "$cache"/dsh-review-*.tgz; do
+    [ "${f##*/}" = "$keep" ] || rm -f "$f"
+  done
 }
 
 # Drop leftover shadow commits + pending hashes (blob/commit mix breaks review).

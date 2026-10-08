@@ -117,6 +117,10 @@
       {
         "command": "dshReview.killDshJob",
         "title": "dsh: Kill dsh job"
+      },
+      {
+        "command": "dshReview.sendFileToDsh",
+        "title": "Send to dsh (insert reference)"
       }
     ],
     "configuration": {
@@ -129,7 +133,10 @@
         },
         "dshReview.snippetSend": {
           "type": "string",
-          "enum": ["pointer", "fence"],
+          "enum": [
+            "pointer",
+            "fence"
+          ],
           "default": "pointer",
           "markdownDescription": "代码选区 chip 发送模式: pointer = 发送 路径+行号 指针(反引号包裹); fence = 发送整段围栏代码。"
         },
@@ -206,6 +213,10 @@
         {
           "command": "dshReview.sendTerminalSelectionToDsh",
           "when": "terminalTextSelected"
+        },
+        {
+          "command": "dshReview.sendFileToDsh",
+          "when": "false"
         }
       ],
       "editor/title": [
@@ -255,6 +266,12 @@
           "when": "view == dshReview.dshWebview",
           "group": "navigation@4"
         }
+      ],
+      "explorer/context": [
+        {
+          "command": "dshReview.sendFileToDsh",
+          "group": "6_copypath@10"
+        }
       ]
     },
     "viewsContainers": {
@@ -298,6 +315,18 @@
         "win": "ctrl+alt+u ctrl+alt+u",
         "linux": "ctrl+alt+u ctrl+alt+u",
         "when": "terminalFocus || terminalEditorFocus"
+      },
+      {
+        "command": "dshReview.sendSelectionToDsh",
+        "key": "cmd+l",
+        "mac": "cmd+l",
+        "when": "editorTextFocus && editorHasSelection && !terminalFocus && !terminalEditorFocus"
+      },
+      {
+        "command": "dshReview.sendFileToDsh",
+        "key": "cmd+l",
+        "mac": "cmd+l",
+        "when": "focusedView == \"explorer\" && listFocus && !editorFocus && !terminalFocus"
       }
     ]
   },

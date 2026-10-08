@@ -173,7 +173,9 @@ function Install-DshPlugin {
   }
   $cache = Join-Path $env:USERPROFILE '.dsh\profiles\web\.install-cache'
   New-Item -ItemType Directory -Force -Path $cache | Out-Null
-  Get-ChildItem -Path $cache -Filter 'dsh-review-*.tgz' -ErrorAction SilentlyContinue | Remove-Item -Force
+  # Keep old tarballs until the new one is installed: pnpm re-resolves the
+  # previously recorded file:<tgz> spec during add, and a missing file makes
+  # the whole install fail with ENOENT.
   Push-Location $DshPlugin
   try {
     if (Get-Command npm -ErrorAction SilentlyContinue) {
@@ -188,12 +190,15 @@ function Install-DshPlugin {
   } finally {
     Pop-Location
   }
-  $tgz = Get-ChildItem -Path $cache -Filter 'dsh-review-*.tgz' -File | Select-Object -First 1
+  $tgz = Get-ChildItem -Path $cache -Filter 'dsh-review-*.tgz' -File | Sort-Object LastWriteTime -Descending | Select-Object -First 1
   if (-not $tgz) { throw "pack produced no tarball in $cache" }
   Write-Host "packed $($tgz.FullName)"
   Write-Host 'installing a copy into the web profile (not a source-tree link)'
   & dsh plugin --profile web add $tgz.FullName --force
   if ($LASTEXITCODE -ne 0) { throw 'dsh plugin add failed' }
+  # Installed: drop stale tarballs, keep only the recorded one.
+  Get-ChildItem -Path $cache -Filter 'dsh-review-*.tgz' -File -ErrorAction SilentlyContinue |
+    Where-Object { $_.FullName -ne $tgz.FullName } | Remove-Item -Force
 }
 
 function Reset-ShadowStore {

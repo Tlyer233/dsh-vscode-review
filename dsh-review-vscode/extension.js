@@ -116,6 +116,36 @@ function activate(context) {
 
   context.subscriptions.push(vscode.commands.registerCommand('dshReview.sendSelectionToDsh', () => sendEditorSelectionToDsh(log)))
   context.subscriptions.push(vscode.commands.registerCommand('dshReview.sendTerminalSelectionToDsh', () => sendTerminalSelectionToDsh(log)))
+
+  // Explorer drag into the sidebar webview is suppressed by VS Code itself
+  // (webviewElement sets pointer-events none during internal drags — upstream
+  // issue #182449), so file refs ride a right-click command instead.
+  context.subscriptions.push(vscode.commands.registerCommand('dshReview.sendFileToDsh', async (uri, uris) => {
+    let list = Array.isArray(uris) && uris.length > 0 ? uris : (uri ? [uri] : [])
+    if (list.length === 0) {
+      // Keyboard dispatch inside the explorer omits the menu-injected resource
+      // args. Borrow the built-in copyFilePath (it always receives the focused
+      // tree item) and read the paths back from the clipboard.
+      try {
+        await vscode.commands.executeCommand('copyFilePath')
+        const text = (await vscode.env.clipboard.readText() || '').trim()
+        if (text) list = text.split(/\r?\n/).filter(Boolean).map((p) => vscode.Uri.file(p))
+      } catch { /* clipboard unavailable */ }
+    }
+    if (list.length === 0) {
+      log.appendLine('[sendFileToDsh] no selection (no menu args, clipboard empty)')
+      return
+    }
+    const fsx = require('node:fs')
+    const refs = list.map((u) => {
+      let isDir = false
+      try { isDir = fsx.statSync(u.fsPath).isDirectory() } catch { /* keep as file */ }
+      return { kind: isDir ? 'folder' : 'file', path: u.fsPath }
+    })
+    log.appendLine('[sendFileToDsh] n=' + refs.length + ' first=' + refs[0].path)
+    const ok = await sendRefsToDsh(refs, refs.map((r) => r.path).join('\n'))
+    if (!ok) log.appendLine('[sendFileToDsh] sidebar not ready')
+  }))
 }
 
 /**
