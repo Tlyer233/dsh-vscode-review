@@ -64,9 +64,10 @@ window.__ModuleLoader__.load({
     const refRegistry = new Map();
     let refSeq = 0;
 
-    // VSCode workbench scope (reverse watchdog + dock gate).
+    // VSCode workbench scope (reverse watchdog + dock gate + session-list filter).
     // Extension sends realpath + raw fsPath of every folder in THIS window.
-    // Match is STRICT equality only (no parent/child widening).
+    // Match = equal or UNDER a folder (0.1.44; ancestor workspaces excluded:
+    // 子窗口不显示父工作区).
     // Empty list (VS Code opened no folder) = forced no-workbench: clear
     // any current session and keep clearing if the user tries to open one.
     let vscodeScopePaths = [];
@@ -87,11 +88,25 @@ window.__ModuleLoader__.load({
       return String(p || "").replace(/\/+$/, "");
     }
 
+    /**
+     * Workbench membership. 0.1.44 rule (user: "父可以显示子; 子不能显示父"):
+     * a session workspace belongs to this window only when it EQUALS one of
+     * the window folders or sits UNDER one (descendant). Ancestor workspaces
+     * do NOT count — a VS Code window opened on a subfolder must not show
+     * the parent dsh workspace's sessions/dock (watchdog then forces the
+     * empty home screen). Boundary-aware: "/repo2" is NOT under "/repo".
+     * Affects dock gate + scope watchdog + session-list filter.
+     */
     function scopePathAllowed(path) {
       const want = normalizeScopePath(path);
       if (!want) return false;
-      for (const p of vscodeScopePaths) if (normalizeScopePath(p) === want) return true;
-      for (const p of vscodeScopeRawPaths) if (normalizeScopePath(p) === want) return true;
+      const hit = function (p) {
+        const s = normalizeScopePath(p);
+        if (!s) return false;
+        return s === want || want.startsWith(s + "/");
+      };
+      for (const p of vscodeScopePaths) if (hit(p)) return true;
+      for (const p of vscodeScopeRawPaths) if (hit(p)) return true;
       return false;
     }
 
@@ -530,13 +545,28 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * @returns {{ enabled: boolean, fileSend: string, snippetSend: string, sidebarSide: string }}
+     * @returns {boolean} true once the live 设置 snapshot has landed.
+     * @description dsh settings-scope lifecycle is 'loading' → 'ready'/'unavailable'
+     * (value stays undefined until the first accepted read; dsh-web-ui gates the
+     * same way). Watchdog ticks fire BEFORE the settings fetch settles, so
+     * anything acting on user opt-outs must gate on this, never on defaults.
+     */
+    function reviewSettingsReady() {
+      if (!reviewSettingsScope || typeof reviewSettingsScope.getSnapshot !== "function") return false;
+      try {
+        const s = reviewSettingsScope.getSnapshot();
+        return !!(s && s.status === "ready");
+      } catch (e) { return false; }
+    }
+
+    /**
+     * @returns {{ enabled: boolean, fileSend: string, snippetSend: string, sidebarSide: string, jobsTerminal: boolean, scopeFilter: boolean, autoWorkspace: boolean }}
      * @description Live 设置 → 代码审查 values; defaults if the scope is not ready.
      */
     function getReviewSettings() {
       // Default to pointer: matches the user's persisted yaml choice; fence
       // is only used when the live scope explicitly says fence.
-      const d = { enabled: true, fileSend: "path", snippetSend: "pointer", sidebarSide: "left" };
+      const d = { enabled: true, fileSend: "path", snippetSend: "pointer", sidebarSide: "left", jobsTerminal: false, scopeFilter: true, autoWorkspace: true };
       if (!reviewSettingsScope || typeof reviewSettingsScope.getSnapshot !== "function") return d;
       const snap = reviewSettingsScope.getSnapshot();
       const val = snap && snap.value;
@@ -550,6 +580,9 @@ window.__ModuleLoader__.load({
         fileSend: v.fileSend === "prefixed" ? "prefixed" : "path",
         snippetSend: v.snippetSend === "pointer" ? "pointer" : "fence",
         sidebarSide: v.sidebarSide === "right" ? "right" : "left",
+        jobsTerminal: v.jobsTerminal === true,
+        scopeFilter: v.scopeFilter !== false,
+        autoWorkspace: v.autoWorkspace !== false,
       };
     }
 
@@ -2359,6 +2392,9 @@ window.__ModuleLoader__.load({
             const [draftFileSend, setDraftFileSend] = useState(null);
             const [draftSnippetSend, setDraftSnippetSend] = useState(null);
             const [draftSidebarSide, setDraftSidebarSide] = useState(null);
+            const [draftJobsTerminal, setDraftJobsTerminal] = useState(null);
+            const [draftScopeFilter, setDraftScopeFilter] = useState(null);
+            const [draftAutoWorkspace, setDraftAutoWorkspace] = useState(null);
             const [saving, setSaving] = useState(false);
             const [failed, setFailed] = useState(false);
             const live = getReviewSettings();
@@ -2366,14 +2402,23 @@ window.__ModuleLoader__.load({
             const liveFileSend = live.fileSend;
             const liveSnippetSend = live.snippetSend;
             const liveSidebarSide = live.sidebarSide;
+            const liveJobsTerminal = live.jobsTerminal;
+            const liveScopeFilter = live.scopeFilter;
+            const liveAutoWorkspace = live.autoWorkspace;
             const shownEnabled = draftEnabled == null ? liveEnabled : draftEnabled;
             const shownFileSend = draftFileSend == null ? liveFileSend : draftFileSend;
             const shownSnippetSend = draftSnippetSend == null ? liveSnippetSend : draftSnippetSend;
             const shownSidebarSide = draftSidebarSide == null ? liveSidebarSide : draftSidebarSide;
+            const shownJobsTerminal = draftJobsTerminal == null ? liveJobsTerminal : draftJobsTerminal;
+            const shownScopeFilter = draftScopeFilter == null ? liveScopeFilter : draftScopeFilter;
+            const shownAutoWorkspace = draftAutoWorkspace == null ? liveAutoWorkspace : draftAutoWorkspace;
             const dirty = shownEnabled !== liveEnabled
               || shownFileSend !== liveFileSend
               || shownSnippetSend !== liveSnippetSend
-              || shownSidebarSide !== liveSidebarSide;
+              || shownSidebarSide !== liveSidebarSide
+              || shownJobsTerminal !== liveJobsTerminal
+              || shownScopeFilter !== liveScopeFilter
+              || shownAutoWorkspace !== liveAutoWorkspace;
             const available = snap && snap.status === "ready";
             const writable = !!(snap && snap.writable);
 
@@ -2382,8 +2427,11 @@ window.__ModuleLoader__.load({
               setDraftFileSend(null);
               setDraftSnippetSend(null);
               setDraftSidebarSide(null);
+              setDraftJobsTerminal(null);
+              setDraftScopeFilter(null);
+              setDraftAutoWorkspace(null);
               setFailed(false);
-            }, [liveEnabled, liveFileSend, liveSnippetSend, liveSidebarSide]);
+            }, [liveEnabled, liveFileSend, liveSnippetSend, liveSidebarSide, liveJobsTerminal, liveScopeFilter, liveAutoWorkspace]);
 
             if (!available) return null;
 
@@ -2392,6 +2440,9 @@ window.__ModuleLoader__.load({
               setDraftFileSend(null);
               setDraftSnippetSend(null);
               setDraftSidebarSide(null);
+              setDraftJobsTerminal(null);
+              setDraftScopeFilter(null);
+              setDraftAutoWorkspace(null);
               setFailed(false);
             }
 
@@ -2414,6 +2465,15 @@ window.__ModuleLoader__.load({
               if (shownSidebarSide !== liveSidebarSide) {
                 chain = chain.then(function () { return reviewScope.set("sidebarSide", shownSidebarSide); });
               }
+              if (shownJobsTerminal !== liveJobsTerminal) {
+                chain = chain.then(function () { return reviewScope.set("jobsTerminal", shownJobsTerminal); });
+              }
+              if (shownScopeFilter !== liveScopeFilter) {
+                chain = chain.then(function () { return reviewScope.set("scopeFilter", shownScopeFilter); });
+              }
+              if (shownAutoWorkspace !== liveAutoWorkspace) {
+                chain = chain.then(function () { return reviewScope.set("autoWorkspace", shownAutoWorkspace); });
+              }
               chain.then(
                 function () { setSaving(false); discardDraft(); applyRailSideFromSettings(); },
                 function () { setSaving(false); setFailed(true); },
@@ -2429,7 +2489,7 @@ window.__ModuleLoader__.load({
               },
                 h("span", { className: "dshr-headText" },
                   h("span", { className: "dshr-name" }, "代码审查"),
-                  h("span", { className: "dshr-description" }, "待审、侧栏贴边位置、以及拖入文件 / 代码段时发给模型的格式。"),
+                  h("span", { className: "dshr-description" }, "待审、侧栏贴边位置、任务终端、工作区会话显示，以及拖入文件 / 代码段时发给模型的格式。"),
                 ),
                 h("span", {
                   className: "dshr-chevron" + (open ? " dshr-chevronOpen" : ""),
@@ -2504,6 +2564,54 @@ window.__ModuleLoader__.load({
                       h("option", { value: "right" }, "右侧"),
                     ),
                     h("p", { className: "dshr-hint" }, "dsh 会话侧栏贴窗口左/右边缘（VS Code 侧栏内生效，保存后立即换边）。"),
+                  ),
+                ),
+                h("div", { className: "dshr-field" },
+                  h("input", {
+                    id: "dshr-jobs-terminal",
+                    type: "checkbox",
+                    checked: shownJobsTerminal,
+                    disabled: !writable || saving,
+                    onChange: function (e) {
+                      setDraftJobsTerminal(!!e.target.checked);
+                      setFailed(false);
+                    },
+                  }),
+                  h("div", null,
+                    h("label", { htmlFor: "dshr-jobs-terminal" }, "在 VS Code 显示任务终端"),
+                    h("p", { className: "dshr-hint" }, "开启后 agent 的后台 bash 任务才会在 VS Code 弹出只读终端标签；关闭只影响之后的新任务，已打开的终端不受影响。默认关。"),
+                  ),
+                ),
+                h("div", { className: "dshr-field" },
+                  h("input", {
+                    id: "dshr-scope-filter",
+                    type: "checkbox",
+                    checked: shownScopeFilter,
+                    disabled: !writable || saving,
+                    onChange: function (e) {
+                      setDraftScopeFilter(!!e.target.checked);
+                      setFailed(false);
+                    },
+                  }),
+                  h("div", null,
+                    h("label", { htmlFor: "dshr-scope-filter" }, "侧栏只显示当前工作区的对话"),
+                    h("p", { className: "dshr-hint" }, "VS Code 侧栏会话列表隐藏其他工作区的分组与会话（分组 / 排序 / 归档筛选照常可用）。关闭后 VS Code 侧栏显示全部对话。浏览器打开不受影响。默认开。"),
+                  ),
+                ),
+                h("div", { className: "dshr-field" },
+                  h("input", {
+                    id: "dshr-auto-workspace",
+                    type: "checkbox",
+                    checked: shownAutoWorkspace,
+                    disabled: !writable || saving,
+                    onChange: function (e) {
+                      setDraftAutoWorkspace(!!e.target.checked);
+                      setFailed(false);
+                    },
+                  }),
+                  h("div", null,
+                    h("label", { htmlFor: "dshr-auto-workspace" }, "自动为新文件夹创建工作区"),
+                    h("p", { className: "dshr-hint" }, "VS Code 打开的文件夹若从未在 dsh 注册（如单独打开子文件夹），自动为它创建 dsh 工作区并在那里开新会话。关闭后这类窗口返回 dsh 首页并提示。默认开。"),
                   ),
                 ),
                 h("div", { className: "dshr-footer" },
@@ -2731,6 +2839,13 @@ window.__ModuleLoader__.load({
       // wbPath → session id we already default-opened (or a real chat the user is in).
       const preferredLatestOpened = Object.create(null);
       let landDone = false;
+      // 0.1.49 one-shot re-land: dsh can drop the blank session it restored
+      // between restore and mount (first-open logs: current=session-97aaa110
+      // → welcome screen). landDone then latched and the window never landed
+      // again until a manual reload. Retry exactly once, and only while this
+      // window's own workspaces hold no real (non-blank) chat — so "user
+      // closed their session → stay home" still holds in normal windows.
+      let landRetryUsed = false;
       /** Bumped when we open an existing chat so an in-flight connectWorkspace is ignored. */
       let connectGeneration = 0;
       /** First time we started waiting for session list hydrate on this iframe. */
@@ -2781,17 +2896,29 @@ window.__ModuleLoader__.load({
         const unresolved = whitelistHasUnresolvedIds(items, byId);
         const emptyList = ids.length === 0;
         if (unresolved || (matches.length > 0 && emptyList)) {
-          if (!hydrateWaitSince) hydrateWaitSince = Date.now();
-          if (Date.now() - hydrateWaitSince < HYDRATE_WAIT_MS) {
-            if (!waitHydrateLogged) {
-              waitHydrateLogged = true;
-              postScopeDiag({
-                action: "wait-hydrate",
-                current: String(current || ""),
-                dshItems: items.map(function (w) { return w && w.path ? String(w.path) : "(no-path)"; }).slice(0, 30),
-              });
+          // 0.1.50 speed: dsh list stores carry a monotone baseline phase
+          // ('pending' → 'ready'; official contract: empty-with-ready
+          // means truly no sessions, and dsh gates its own restoreSelection on
+          // both lists being ready). Once the sessions store is ready with no
+          // unresolved ids, stop waiting — the fixed 8s sleep only covered a
+          // half-hydrated store and added ~4s to first-open landing.
+          let phaseReady = false;
+          try {
+            phaseReady = (sessions.list.getSnapshot() || {}).phase === "ready";
+          } catch (e) { /* phase unknown → keep waiting */ }
+          if (!(phaseReady && !unresolved)) {
+            if (!hydrateWaitSince) hydrateWaitSince = Date.now();
+            if (Date.now() - hydrateWaitSince < HYDRATE_WAIT_MS) {
+              if (!waitHydrateLogged) {
+                waitHydrateLogged = true;
+                postScopeDiag({
+                  action: "wait-hydrate",
+                  current: String(current || ""),
+                  dshItems: items.map(function (w) { return w && w.path ? String(w.path) : "(no-path)"; }).slice(0, 30),
+                });
+              }
+              return false;
             }
-            return false;
           }
           const fallback = latestAnyWhitelistedSession(items, byId);
           if (fallback) {
@@ -2842,8 +2969,18 @@ window.__ModuleLoader__.load({
             connectInFlight = false;
             if (gen !== connectGeneration) return;
             if (landDone) return;
-            try { sessions.open(sessionId); } catch (e) {
+            // 0.1.48: sessions.open() no longer exists on dsh 0.1.6+ (the
+            // ClientSessions facade only offers retain/search/scope/…). It
+            // threw, the throw was swallowed, landDone was set anyway — the
+            // fresh blank session existed host-side but the main view never
+            // mounted it: welcome screen stuck (the 10-minute incident).
+            // Use the shared compat shim (uiWorkspace.openSession first),
+            // and keep landDone false on failure so the next tick retries.
+            try {
+              if (!openSessionCompat(sessionId)) throw new Error("no session open API (uiWorkspace.openSession / sessions.open)");
+            } catch (e) {
               console.warn("[dsh-review] fresh session open failed:", e && e.message || e);
+              return;
             }
             preferredLatestOpened[key] = sessionId;
             landDone = true;
@@ -2858,9 +2995,103 @@ window.__ModuleLoader__.load({
         return true;
       }
 
+      // ---- 0.1.45 plan B: auto-register window folders as dsh workspaces ----
+      // A VS Code window opened on a folder dsh has never seen (e.g. a
+      // subfolder of another workspace) has no session group of its own,
+      // and dsh ≥0.1.7-rc.1 (commit b9b14dc05e, persisted
+      // "dsh.sessions.current") restores the PARENT's last session there.
+      // Fix at the root: ctx.workspaces.create({path}) (official, idempotent
+      // — same call dsh-workspace-jump uses) registers THIS folder; the
+      // normal landing flow then opens a blank session in it. Create failure
+      // falls back to goHome() (clearMain welcome) + dshScopeMissing toast.
+      const wsAutoCreate = new Map(); // folder → { inflight, attemptedAt, warned }
+      const WS_AUTOCREATE_RETRY_MS = 60000;
+      function autoCreateWorkspaces() {
+        // 0.1.47 race fix: on webview boot the settings snapshot is 'loading'
+        // for a second while the watchdog already ticks — reading the default
+        // (on) then creates workspaces the user turned ② off (the
+        // sub-sub-workspace 20:51:43 incident). Not ready → nudge a reload,
+        // skip; the 1.5s tick retries until the real value lands.
+        if (!reviewSettingsReady()) {
+          try { if (reviewSettingsScope && reviewSettingsScope.reload) reviewSettingsScope.reload(); } catch (e) { /* noop */ }
+          return;
+        }
+        // 0.1.46 setting ②「自动为新文件夹创建工作区」off → never register.
+        if (!getReviewSettings().autoWorkspace) return;
+        const ws = ctx.workspaces;
+        if (!ws || typeof ws.create !== "function") return;
+        for (const folder of vscodeScopePaths) {
+          const f = normalizeScopePath(folder);
+          if (!f) continue;
+          let st = wsAutoCreate.get(f);
+          if (!st) { st = { inflight: false, attemptedAt: 0, warned: false }; wsAutoCreate.set(f, st); }
+          if (st.inflight) continue;
+          if (st.attemptedAt && Date.now() - st.attemptedAt < WS_AUTOCREATE_RETRY_MS) continue;
+          st.inflight = true;
+          st.attemptedAt = Date.now();
+          Promise.resolve(ws.create({ path: f })).then(
+            function (result) {
+              st.inflight = false;
+              if (!result || result.ok) {
+                // One-shot notice through the extension (throttled there).
+                postScopeMessage("dshWorkspaceCreated", { path: f });
+                return;
+              }
+              if (!st.warned) {
+                st.warned = true;
+                console.warn("[dsh-review] auto workspace create failed:", f, (result && result.error && (result.error.message || result.error)) || result);
+              }
+            },
+            function (e) {
+              st.inflight = false;
+              if (!st.warned) {
+                st.warned = true;
+                console.warn("[dsh-review] auto workspace create threw:", f, e && e.message || e);
+              }
+            },
+          );
+        }
+      }
+      /** True while an auto-create is pending/fresh → suppress dshScopeMissing toast. */
+      function autoCreateBusy() {
+        // Settings not landed → creation may still fire: keep the
+        // "workspace missing" toast suppressed (0.1.47 race fix).
+        if (!reviewSettingsReady()) return true;
+        // Setting ② off → no auto-create is ever pending: let dshScopeMissing
+        // toast again ("returned to dsh home" is then the truthful message).
+        if (!getReviewSettings().autoWorkspace) return false;
+        const ws = ctx.workspaces;
+        if (!ws || typeof ws.create !== "function") return false;
+        if (wsAutoCreate.size === 0) return true; // create exists; first tick not run yet
+        for (const st of wsAutoCreate.values()) {
+          if (Date.now() - st.attemptedAt < WS_AUTOCREATE_RETRY_MS) return true;
+        }
+        return false;
+      }
+
+      /** True when any workspace matching THIS window holds a non-blank chat. */
+      function hasRealSession(items, byId) {
+        const matches = matchingWorkspaces(items);
+        for (const w of matches) {
+          const ids = Array.isArray(w.sessionIds) ? w.sessionIds : [];
+          for (const id of ids) {
+            const s = byId[id];
+            if (s && !s.blank) return true;
+          }
+        }
+        return false;
+      }
+
       function checkWorkbenchScope() {
         // Standalone browser: do not pin/clear workspaces. VS Code iframe only.
         if (!inVscodeIframe()) return;
+        // 0.1.46 setting ①「侧栏只显示当前工作区的对话」: the 1.5s tick also
+        // syncs the row filter — off → teardown (un-hides every row), on →
+        // install (wsFilterInstall re-checks its own iframe/scope gates).
+        try {
+          if (getReviewSettings().scopeFilter) wsFilterInstall();
+          else if (wsFilterInstalled) wsFilterTeardown();
+        } catch (e) { /* noop */ }
         const workspaces = ctx.workspaces;
         const sessions = ctx.sessions;
         if (!workspaces || !sessions) { console.warn("[dsh-review] scope watchdog: workspaces/sessions unavailable"); return; }
@@ -2872,11 +3103,17 @@ window.__ModuleLoader__.load({
         const byId = (ssnap && ssnap.byId) || {};
 
         function goHome() {
+          // dsh 0.2.0 home API: uiWorkspace.clearMain() releases the
+          // mainView retain AND empties the persisted "dsh.sessions.current"
+          // (selection store) so the next reload stops restoring the last
+          // session. (dsh 0.1.6 removed sessions.clear — the old no-op path.)
+          try {
+            if (uiWorkspace && typeof uiWorkspace.clearMain === "function") { uiWorkspace.clearMain(); return; }
+          } catch (e) { console.warn("[dsh-review] scope home clearMain failed:", e && e.message || e); return; }
           try {
             if (sessions && typeof sessions.clear === "function") { sessions.clear(); return; }
           } catch (e) { console.warn("[dsh-review] scope home clear failed:", e && e.message || e); return; }
-          // dsh 0.1.6+ removed sessions.clear(); there is no public deselect API.
-          console.warn("[dsh-review] scope home: sessions.clear unavailable (dsh 0.1.6+)");
+          console.warn("[dsh-review] scope home: no clear API (uiWorkspace.clearMain / sessions.clear unavailable)");
         }
 
         // Handshake has not arrived yet: do not treat empty paths as "no folder".
@@ -2895,8 +3132,22 @@ window.__ModuleLoader__.load({
           return;
         }
 
+        // 0.1.45 plan B: no dsh workspace matches this window's folders
+        // (subfolder window, fresh machine…) → register them now (throttled);
+        // the next tick's normal landing flow opens a blank session in it.
+        if (matchingWorkspaces(items).length === 0) autoCreateWorkspaces();
+
         // Home / unknown current: whitelist match → latest chat; else new session.
         if (!current) {
+          if (landDone && !landRetryUsed && !hasRealSession(items, byId)) {
+            // 0.1.49: dsh dropped the restored blank session — unlock
+            // the landing latch ONCE so the first open converges
+            // without needing a manual webview reload.
+            landRetryUsed = true;
+            landDone = false;
+            hydrateWaitSince = 0;
+            postScopeDiag({ action: "land-retry", current: "", dshItems: [] });
+          }
           if (landDone) return;
           openLatestOrNew(items, byId, workspaces, sessions, current);
           return;
@@ -2926,7 +3177,11 @@ window.__ModuleLoader__.load({
             current: String(currentWs.path || ""),
             dshItems: dshItems,
           });
-          postScopeMessage("dshScopeMissing", { path: vscodeScopePaths[0] || vscodeScopeRawPaths[0] || "" });
+          // While auto-create is pending/fresh the toast would be a lie
+          // ("not created yet") — the workspace is being made right now.
+          if (!autoCreateBusy()) {
+            postScopeMessage("dshScopeMissing", { path: vscodeScopePaths[0] || vscodeScopeRawPaths[0] || "" });
+          }
           goHome();
           return;
         }
@@ -2943,7 +3198,110 @@ window.__ModuleLoader__.load({
         return;
       }
 
+      // ---- Session-list workspace filter (VS Code iframe only) ----------
+      // The sidebar keeps its native powers: 分组(按工作区/工作区树/单列表),
+      // 排序(手动/最近更新), 归档筛选. This filter only display:none-hides
+      // rows that do not belong to THIS window's folders (containment, see
+      // scopePathAllowed): session rows via workspaceId→path from the store,
+      // group headers / overflow rows follow their group; the Ungrouped group
+      // is hidden. 归档筛选 composes with it (intersection, per user: a).
+      // Browser tabs never install this ⇒ fully native list, zero intervention.
+      let wsFilterInstalled = false;
+      let wsFilterObserver = null;
+      let wsFilterTimer = null;
+      let wsFilterUnsubs = [];
+      function wsFilterApply() {
+        let items = [];
+        try {
+          const ws = ctx.workspaces;
+          items = (ws && ws.list.getSnapshot().items) || [];
+        } catch (err) { return; } // store not ready: leave rows as they are
+        const groupAllowed = new Map();
+        const idToPath = new Map();
+        for (const w of items) {
+          const gid = w && w.workspaceId != null ? String(w.workspaceId) : "";
+          if (gid) groupAllowed.set(gid, !!(w && w.path) && scopePathAllowed(String(w.path)));
+          if (Array.isArray(w && w.sessionIds)) {
+            for (const sid of w.sessionIds) {
+              if (typeof sid === "string" && !idToPath.has(sid)) idToPath.set(sid, String((w && w.path) || ""));
+            }
+          }
+        }
+        const mark = function (row, hide) {
+          if (row.classList.contains("dshr-rowHidden") === hide) return; // idempotent, no loop
+          if (hide) row.classList.add("dshr-rowHidden");
+          else row.classList.remove("dshr-rowHidden");
+        };
+        for (const row of document.querySelectorAll("[data-row-key]")) {
+          const key = row.getAttribute("data-row-key") || "";
+          if (key.startsWith("session:")) {
+            const path = idToPath.get(key.slice(8));
+            // Unmapped = Ungrouped (or brand-new row mid-store-update); hide.
+            mark(row, path === undefined ? true : !scopePathAllowed(path));
+          } else if (key.startsWith("workspace:")) {
+            const gid = key.slice(10);
+            mark(row, gid === "" || groupAllowed.get(gid) !== true);
+          } else if (key.startsWith("overflow:")) {
+            const gid = key.slice(9);
+            mark(row, gid === "" || groupAllowed.get(gid) !== true);
+          }
+          // "empty" placeholder: native list-empty state; leave as-is.
+        }
+      }
+      function wsFilterSchedule() {
+        if (wsFilterTimer !== null) return;
+        wsFilterTimer = setTimeout(function () {
+          wsFilterTimer = null;
+          try { wsFilterApply(); } catch (err) { console.warn("[dsh-review] session filter pass failed:", err && err.message || err); }
+        }, 120);
+      }
+      function wsFilterInstall() {
+        if (wsFilterInstalled) return;
+        // VS Code sidebar only, and only after the scope whitelist arrived
+        // (a browser tab never receives dshSetScope → never installs).
+        if (!(inVscodeIframe() || bridgeActive || vscodeIframeHint())) return;
+        if (!vscodeScopeReceived) return;
+        // 0.1.46 setting ① off → stay uninstalled (also covers the
+        // scopeChangeListeners path, which fires without the tick). 0.1.47:
+        // ALSO wait for the live 设置 snapshot — acting on the default while
+        // 'loading' would hide rows for users who opted ① off. The 1.5s tick
+        // re-calls this until settings land.
+        try { if (!reviewSettingsReady() || !getReviewSettings().scopeFilter) return; } catch (e) { /* keep default-on */ }
+        wsFilterInstalled = true;
+        try {
+          const style = document.createElement("style");
+          style.id = "dshr-ws-filter";
+          style.textContent = ".dshr-rowHidden{display:none !important}";
+          document.head.appendChild(style);
+        } catch (err) { /* noop */ }
+        try {
+          wsFilterObserver = new MutationObserver(wsFilterSchedule);
+          // Small-scoped root (body of the sidebar frame), attributes
+          // filtered to the keys React rewrites on select/drag; our own class
+          // writes are idempotent so the observer self-terminates.
+          wsFilterObserver.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["data-row-key", "class"] });
+        } catch (err) { /* noop */ }
+        try {
+          const un1 = ctx.workspaces.list.subscribe(wsFilterSchedule);
+          const un2 = ctx.sessions.list.subscribe(wsFilterSchedule);
+          if (typeof un1 === "function") wsFilterUnsubs.push(un1);
+          if (typeof un2 === "function") wsFilterUnsubs.push(un2);
+        } catch (err) { /* noop */ }
+        wsFilterSchedule();
+      }
+      function wsFilterTeardown() {
+        if (wsFilterObserver) { try { wsFilterObserver.disconnect(); } catch (err) { /* noop */ } wsFilterObserver = null; }
+        if (wsFilterTimer !== null) { clearTimeout(wsFilterTimer); wsFilterTimer = null; }
+        for (const un of wsFilterUnsubs) { try { un(); } catch (err) { /* noop */ } }
+        wsFilterUnsubs = [];
+        try { const st = document.getElementById("dshr-ws-filter"); if (st) st.remove(); } catch (err) { /* noop */ }
+        for (const row of document.querySelectorAll(".dshr-rowHidden")) row.classList.remove("dshr-rowHidden");
+        wsFilterInstalled = false;
+      }
+
       scopeWatchdogTick = checkWorkbenchScope;
+      const wsFilterScopeHook = function () { try { wsFilterInstall(); } catch (err) { /* noop */ } };
+      scopeChangeListeners.push(wsFilterScopeHook);
       ctx.effect(function () {
         // Always-on whitelist listener (must not depend on Dock mount).
         function onScopeFromHost(event) {
@@ -2953,11 +3311,14 @@ window.__ModuleLoader__.load({
         }
         window.addEventListener("message", onScopeFromHost);
         try { window.parent.postMessage({ type: "dshScopeRequest" }, "*"); } catch (err) { /* noop */ }
-        const timer = setInterval(checkWorkbenchScope, 1500);
+        const timer = setInterval(checkWorkbenchScope, 800);
         return function () {
           clearInterval(timer);
           window.removeEventListener("message", onScopeFromHost);
           if (scopeWatchdogTick === checkWorkbenchScope) scopeWatchdogTick = null;
+          const hookAt = scopeChangeListeners.indexOf(wsFilterScopeHook);
+          if (hookAt >= 0) scopeChangeListeners.splice(hookAt, 1);
+          wsFilterTeardown();
         };
       }, "dsh-review: workbench scope watchdog");
 

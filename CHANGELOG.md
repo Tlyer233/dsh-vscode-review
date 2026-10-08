@@ -1,5 +1,80 @@
 # Changelog
 
+## dsh-review 0.1.50 (2026-10-08, dsh 0.2.0-rc.2)
+
+### 提速:首开落地不再固定睡 8 秒(实测等待 5~6s → ~3s)
+- 依据(dsh 官方 contract/README 检索实证):sessions/workspaces 列表快照各有独立单调基线闸 `phase: 'pending' → 'ready'`;**empty-with-ready = 真的没有会话**;dsh 自身的"恢复上次会话"同样只等两个列表 ready 即动
+- 改动:`openLatestOrNew` 水合等待改为**就绪即放行** —— sessions 列表 `phase==='ready'` 且无未解析 id 时直接继续(新建/复用空白会话),`HYDRATE_WAIT_MS(8s)` 退化为异常兜底上限;看门狗 tick 1500ms → 800ms
+
+## dsh-review 0.1.49 (2026-10-08, dsh 0.2.0-rc.2)
+
+### 修:子窗口首次打开不落地,必须手动 reload dsh 才进新会话
+- 扩展日志实锤(window6 21:38):首开 dsh 恢复空白会话 97aaa110 → 看门狗判定 `current===目标` 置 `landDone=true` → dsh 随后丢弃该空白会话 → 主区回欢迎页,而 landDone 已锁死,之后每一拍都直接 return,永不重试
+- 修复:`landRetryUsed` 一次性补落地 —— current 为空 + landDone 已锁 + 本窗口工作区内**没有任何非空白会话** 时解锁重落一次(经 openLatestOrNew → 复用/新建空白会话 → openSessionCompat 挂载),并打 `land-retry` 诊断
+- 不影响普通窗口语义:父窗口必有真实会话 → 永不触发"手动关会话→留在 home"
+
+## dsh-review 0.1.48 (2026-10-08, dsh 0.2.0-rc.2)
+
+### 修:自动注册后主区卡「选择工作区」欢迎页(空白会话开不出来)
+- 现场:子窗口 ② 开 → 工作区/侧栏组创建成功,但主区 10 分钟不落地新会话
+- 根因(rc.2 bundle 实证):`ClientSessions` 门面(注入为 ctx.sessions)已无 `open()`(仅 retain/search/scope 等);connectNewSession 成功回调用 `sessions.open()` → TypeError 被 try/catch 吞 → 仍置 `landDone=true` → 永不重试;空白会话已在宿主创建(空白会话不显示在列表),主视图从未挂载
+- 修复:落地改走既有 `openSessionCompat()`(首选 uiWorkspace.openSession,rc.2 公开 API);打开失败不再置 landDone,下一 tick 经 openLatestOrNew → openKnownSession 自动重试收敛
+
+## dsh-review 0.1.47 (2026-10-08, dsh 0.2.0-rc.2)
+
+### 修:关掉「自动为新文件夹创建工作区」后仍被自动注册(时序竞态)
+- 实证:settings.json 写入 autoWorkspace:false 在 20:51:16,sub-sub-workspace 工作区 createdAt 20:51:43(晚 27s 仍被创建)
+- 根因:webview 启动第一拍看门狗(1.5s)早于设置快照到达;`getReviewSettings()` 在 settings scope `status==='loading'`(value undefined)时返回内置默认 true → 抢跑注册
+- 官方依据:dsh-client-runtime `SettingsScopeSnapshot.status: 'loading' | 'ready' | 'unavailable'`,value 在首个可读 section 接受前恒为 undefined;社区 dsh-web-ui 同样以 `status==='ready'` 为闸
+- 修复:新增 `reviewSettingsReady()` 闸 —— 自动注册(②)、侧栏过滤(①)一律等设置就绪才动作;未就绪时每拍触发一次 settings reload,就绪后按真实值执行;`autoCreateBusy` 未就绪期间继续抑制 missing 提示
+
+## dsh-review 0.1.46 (2026-10-08, dsh 0.2.0-rc.2)
+
+### 设置页新增两个开关(默认都开,行为与 0.1.43/0.1.45 一致)
+- 「侧栏只显示当前工作区的对话」(scopeFilter):关 → 会话列表过滤器即时卸载(1.5s 内全部行恢复可见),VS Code 侧栏显示全部对话;开 = 0.1.43 行为;浏览器始终全显示不受影响
+- 「自动为新文件夹创建工作区」(autoWorkspace):关 → 不再自动注册 dsh 工作区,此类窗口回退为「返回 dsh 首页 + 尚未创建工作区」提示(0.1.45 的 clearMain 兜底);开 = 0.1.45 自动注册行为
+- 设置卡描述同步更新;index.js schema/toJSON 增两键(host 端默认 true)
+
+## dsh-review 0.1.45 (2026-10-08, dsh 0.2.0-rc.2 / 扩展 0.1.13)
+
+### 子窗口(无 dsh 工作区)自动注册工作区 —— 不再串父会话
+- 考古定位:dsh **0.1.7-rc.1**(commit b9b14dc05e)引入持久化 `dsh.sessions.current`,启动自动恢复上次会话 → 从此不进空欢迎页(发布说明未提及,git pickaxe 实证)
+- 方案 B(用户选定):看门狗发现窗口文件夹无任何匹配 dsh 工作区 → `ctx.workspaces.create({path})`(官方、幂等,同 dsh-workspace-jump 用法)自动注册 → 下一拍既有流程在新工作区开空白新会话;侧栏只见本工作区空组
+- 兜底 A:注册失败 → `goHome()` 实装 `uiWorkspace.clearMain()`(dsh 0.2.0 的正经 home API:释放 mainView + 清持久化 selection,下次刷新不再恢复);`dshScopeMissing` 提示在自动注册进行期间抑制,避免误报
+- 成功注册 → VS Code 信息提示一条「已在 dsh 中为当前窗口文件夹创建工作区」(扩展 0.1.13 新消息 `dshWorkspaceCreated`,webview 白名单同步)
+- 多根窗口:每个文件夹各注册一个;60s 重试节流;浏览器模式不受影响
+
+## dsh-review 0.1.44 (2026-10-08, dsh 0.2.0-rc.2)
+
+### 修:子文件夹窗口串显父工作区会话(0.1.43 放宽过头)
+- 场景:VS Code 打开 `test-sub-workspace`(dsh 从未在此建工作区),侧栏却显示父工作区 dsh-review-plugin 的组+会话,还自动打开其中对话
+- 根因:0.1.43 判定含「窗口文件夹的祖先也算」——父工作区(祖先)被放行
+- 用户规则:「父可以显示子; 子不能显示父」→ scopePathAllowed 只留 **等于 或 在窗口文件夹之下**;父窗口照常看得到子目录工作区,子窗口看不到父(列表空+看门狗 missing-home 强制空开始页;dock 也不抢父待审,归父窗口)
+
+## dsh-review 0.1.43 (2026-10-08, dsh 0.2.0-rc.2)
+
+### VS Code 侧栏:会话列表只显示当前工作区的对话
+- 新「工作区会话过滤器」(client.js,仅 VS Code iframe 安装,浏览器零介入):
+  - 行归属查 dsh 原生 store(`ctx.workspaces`:workspaceId→path→sessionIds,含归档),DOM 行 `[data-row-key="session:/workspace:/overflow:"]` display:none;Ungrouped(未命名)组隐藏;整组无可见会话时组头/展开行一并隐藏
+  - dsh 原生能力全保留:分组(按工作区/工作区树/单列表)、排序(手动/最近更新)、归档筛选(与归属过滤取交集——「仅显示已归档」只看得到当前工作区的归档)
+  - 不再"点其他工作区会话被弹回":列表里根本看不到,反向看门狗成为纯保险
+- 工作区判定从 STRICT 相等放宽为**包含关系**(scopePathAllowed):多根窗口取并集;会话工作区在窗口文件夹之下(子工作区)或为其祖先都算;边界安全(`/repo2` 不算 `/repo` 之下);dock 门槛/看门狗共用此判定
+- 防抖实现(exa 搜索标准做法):MutationObserver 限定 body 根 + attributeFilter[data-row-key,class] + 120ms 合并 + 幂等 class 写入(自灭不循环);store subscribe 同步刷新
+- 安装时机 = VS Code iframe 判定(bridgeActive/_dshRail 章/iframe)+ 作用域白名单已送达;Zotero 等 webview 无这些信号 → 不装
+
+## dsh-review 0.1.42 (2026-10-08, dsh 0.2.0-rc.2)
+
+### 修任务终端复选框排版
+- 0.1.41 把勾选项塞进了 `dshr-stack`(其 CSS 规则 `.dshr-stack .dshr-field{flex-direction:column}` 会把复选框竖成孤行);挪出 stack,逐字照抄首个「启用代码审查」字段结构——勾选框与标签同行,说明文字在下方
+
+## dsh-review 0.1.41 (2026-10-08, dsh 0.2.0-rc.2)
+
+### 设置卡片:「在 VS Code 显示任务终端」开关(默认关)
+- 新字段 `jobsTerminal`(宿主 schema 默认 false):关闭时 agent 后台 bash 任务**不再**在 VS Code 弹只读终端标签;任务本身照常运行
+- 闸口打在宿主 jobs.js `trackFrame`:未跟踪的新任务不产生 `job` 帧、也不进 `GET /dsh-review/jobs` 列表——扩展重载不会复活终端;扩展端零改动
+- 开关即时生效(宿主每帧查 settings),只影响之后的新任务;已打开的终端不受影响(关开关不追杀旧终端)
+- client.js 卡片照 sidebarSide 同款链路:草稿/dirty/保存链,复选框落在「侧栏位置」下方
+
 ## dsh-review 0.1.40 (2026-10-08, dsh 0.2.0-rc.2)
 
 ### 剥离调试日志,只留关键项

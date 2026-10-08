@@ -144,6 +144,19 @@ export function installJobsBridge(ctx, settingsHooks) {
   const owners = new Map()
   /** jobId → last broadcast `job` frame (status-diff source + GET list source). */
   const tracked = new Map()
+  /**
+   * Card setting "jobsTerminal" gate: off (default) ⇒ never open a new
+   * read-only VS Code terminal for a job. Gating here (not in the extension)
+   * also hides jobs from GET /dsh-review/jobs, so extension reloads do not
+   * resurrect terminals. Already-tracked jobs keep streaming either way.
+   * @returns {boolean}
+   */
+  const terminalsWanted = () => {
+    try {
+      return Boolean(settingsHooks && typeof settingsHooks.get === 'function'
+        && settingsHooks.get().jobsTerminal === true)
+    } catch { return false }
+  }
   /** Connected SSE clients. */
   const clients = new Set()
   /** TEMP instrumentation: surface the first pump broadcasts / early failures. */
@@ -208,6 +221,7 @@ export function installJobsBridge(ctx, settingsHooks) {
     if (fenceOwner !== undefined && !owners.has(snap.id)) owners.set(snap.id, fenceOwner)
     const prev = tracked.get(snap.id)
     if (prev && prev.status === snap.status) return prev
+    if (!prev && !terminalsWanted()) return prev
     const frame = frameOf(snap, owner)
     tracked.set(snap.id, frame)
     broadcast('job', frame)

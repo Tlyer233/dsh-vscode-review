@@ -502,7 +502,7 @@ function dshWebviewHtml(url, opts) {
     '    } else if (msg.type === "dshChromeState") {' +
     '      dshChrome = { railSide: msg.railSide === "right" ? "right" : "left", railHidden: !!msg.railHidden, zoom: Number(msg.zoom) || 1 };' +
     '      vscode.postMessage(msg);' +
-    '    } else if (msg.type === "dshViewActive" || msg.type === "dshOpenExternal" || msg.type === "dshOpenFile" || msg.type === "dshPendingRequest" || msg.type === "dshReviewAll" || msg.type === "dshScopeViolation" || msg.type === "dshScopeMissing" || msg.type === "dshScopeEmpty" || msg.type === "dshScopeDiag" || msg.type === "dshScopeRequest" || msg.type === "dshCopyText" || msg.type === "dshPasteRequest" || msg.type === "dshInsertResult" || msg.type === "dshShowCommands") {' +
+    '    } else if (msg.type === "dshViewActive" || msg.type === "dshOpenExternal" || msg.type === "dshOpenFile" || msg.type === "dshPendingRequest" || msg.type === "dshReviewAll" || msg.type === "dshScopeViolation" || msg.type === "dshScopeMissing" || msg.type === "dshScopeEmpty" || msg.type === "dshWorkspaceCreated" || msg.type === "dshScopeDiag" || msg.type === "dshScopeRequest" || msg.type === "dshCopyText" || msg.type === "dshPasteRequest" || msg.type === "dshInsertResult" || msg.type === "dshShowCommands") {' +
     '      vscode.postMessage(msg);' +
     '    } else if (msg.type === "dshReload") {' +
     '      reloadFrame(!!msg.force);' +
@@ -837,6 +837,17 @@ function setupDshBrowser(context) {
           if (now - (state.lastScopeNoticeAt || 0) > 4000) {
             state.lastScopeNoticeAt = now
             void vscode.window.showWarningMessage('该窗口绑定的工作区尚未在 dsh 中创建，已返回 dsh 首页')
+          }
+          return
+        }
+        // Client auto-registered this window's folder as a dsh workspace
+        // (0.1.45 plan B: subfolder windows get their own empty workspace).
+        if (msg.type === 'dshWorkspaceCreated') {
+          state.log('[dsh-scope] auto workspace created path=' + String(msg.path || ''))
+          const now = Date.now()
+          if (now - (state.lastWsCreateNoticeAt || 0) > 4000) {
+            state.lastWsCreateNoticeAt = now
+            void vscode.window.showInformationMessage('已在 dsh 中为当前窗口文件夹创建工作区' + (msg.path ? ': ' + msg.path : ''))
           }
           return
         }
