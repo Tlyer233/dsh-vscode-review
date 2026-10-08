@@ -183,7 +183,8 @@ window.__ModuleLoader__.load({
      * @returns {{ railSide: "left" | "right", railHidden: boolean, zoom: number }}
      */
     function readIframeChrome() {
-      let railSide = "left";
+      // Seed the rail dock side from plugin settings (设置 → 代码审查 → 侧栏位置).
+      let railSide = getReviewSettings().sidebarSide;
       let railHidden = false;
       let zoom = 1;
       let sideFromUrl = false;
@@ -302,6 +303,22 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * @description Apply the settings sidebar position immediately. Our save
+     * channel is the plugin's own HTTP route (the rc.2 settings plane has no
+     * provider, so no settings/document-updated event fires); the settings
+     * card calls this right after a successful save, and the settings-card
+     * effect calls it after every scope reload. First iframe load seeds it
+     * via readIframeChrome.
+     */
+    function applyRailSideFromSettings() {
+      try {
+        if (!(bridgeActive || vscodeIframeHint())) return;
+        const side = getReviewSettings().sidebarSide;
+        if (iframeChromeLive && iframeChromeLive.railSide !== side) setIframeRailSide(side);
+      } catch (err) { /* noop */ }
+    }
+
+    /**
      * Hide or show the native 56px icon rail. Uses our CSS, not dsh attributes
      * (React immediately restores data-sidebar-collapsed).
      * @param {boolean} hidden
@@ -342,24 +359,6 @@ window.__ModuleLoader__.load({
         "html.dsh-vscode-iframe.dsh-rail-right [data-sidebar-collapsed] > *, html.dsh-vscode-iframe.dsh-rail-right [data-details-collapsed] > *, html.dsh-vscode-iframe.dsh-rail-right [data-slot=\"root\"] > * > * {",
         "  direction: ltr;",
         "}",
-        "#dsh-review-rail-side { display: none; }",
-        "html.dsh-vscode-iframe #dsh-review-rail-side {",
-        "  display: flex; align-items: center; justify-content: center;",
-        "  position: fixed; top: 0; z-index: 80;",
-        "  width: 28px; height: 14px; padding: 0; margin: 0;",
-        "  border: 0; border-radius: 0 0 8px 8px;",
-        "  background: color-mix(in srgb, var(--dsw-alias-bg-base, #1e1e1e) 88%, #000);",
-        "  color: var(--dsw-alias-label-tertiary, #9a9a9a);",
-        "  box-shadow: 0 1px 4px rgba(0,0,0,0.35);",
-        "  cursor: pointer; opacity: 0.72;",
-        "}",
-        "html.dsh-vscode-iframe #dsh-review-rail-side { right: 10px; }",
-        "html.dsh-vscode-iframe #dsh-review-rail-side:hover { opacity: 1; }",
-        "html.dsh-vscode-iframe #dsh-review-rail-side svg {",
-        "  width: 12px; height: 12px; display: block;",
-        "  transition: transform 0.15s ease;",
-        "}",
-        "html.dsh-vscode-iframe #dsh-review-rail-side.is-right svg { transform: scaleX(-1); }",
       ].join("\n");
       let tag = document.getElementById(IFRAME_SIDEBAR_STYLE_ID);
       if (!tag) {
@@ -368,23 +367,10 @@ window.__ModuleLoader__.load({
         try { document.head.appendChild(tag); } catch (err) { /* noop */ }
       }
       tag.textContent = css;
-      ["dsh-my-plugin-rail-hit", "dsh-review-header-toggle", "dsh-review-rail-expand"].forEach(function (oldId) {
+      ["dsh-my-plugin-rail-hit", "dsh-review-header-toggle", "dsh-review-rail-expand", IFRAME_RAIL_SIDE_BTN_ID].forEach(function (oldId) {
         const oldEl = document.getElementById(oldId);
         if (oldEl && oldEl.parentNode) oldEl.parentNode.removeChild(oldEl);
       });
-      if (!document.getElementById(IFRAME_RAIL_SIDE_BTN_ID)) {
-        const sideBtn = document.createElement("button");
-        sideBtn.id = IFRAME_RAIL_SIDE_BTN_ID;
-        sideBtn.type = "button";
-        sideBtn.innerHTML = '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M4.2 2.5L7.8 6 4.2 9.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>';
-        sideBtn.addEventListener("click", function (event) {
-          event.preventDefault();
-          event.stopPropagation();
-          const next = document.documentElement.classList.contains("dsh-rail-right") ? "left" : "right";
-          setIframeRailSide(next);
-        });
-        try { document.body.appendChild(sideBtn); } catch (err) { /* noop */ }
-      }
       const chrome = currentIframeChrome();
       setIframeRailSide(chrome.railSide);
       setIframeRailHidden(chrome.railHidden);
@@ -545,13 +531,13 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * @returns {{ enabled: boolean, fileSend: string, snippetSend: string }}
+     * @returns {{ enabled: boolean, fileSend: string, snippetSend: string, sidebarSide: string }}
      * @description Live 设置 → 代码审查 values; defaults if the scope is not ready.
      */
     function getReviewSettings() {
       // Default to pointer: matches the user's persisted yaml choice; fence
       // is only used when the live scope explicitly says fence.
-      const d = { enabled: true, fileSend: "path", snippetSend: "pointer" };
+      const d = { enabled: true, fileSend: "path", snippetSend: "pointer", sidebarSide: "left" };
       if (!reviewSettingsScope || typeof reviewSettingsScope.getSnapshot !== "function") return d;
       const snap = reviewSettingsScope.getSnapshot();
       const val = snap && snap.value;
@@ -564,6 +550,7 @@ window.__ModuleLoader__.load({
         enabled: v.enabled !== false,
         fileSend: v.fileSend === "prefixed" ? "prefixed" : "path",
         snippetSend: v.snippetSend === "pointer" ? "pointer" : "fence",
+        sidebarSide: v.sidebarSide === "right" ? "right" : "left",
       };
     }
 
@@ -2324,17 +2311,20 @@ window.__ModuleLoader__.load({
       function notify() { for (const l of listeners) l(); }
       function load() {
         if (inFlight) return inFlight;
-        const run = Promise.resolve().then(function () { return settings.describe(); })
-          .then(function (doc) {
-            const list = (doc && doc.namespaces) || [];
-            let entry;
-            for (const n of list) { if (n && n.ns === REVIEW_SETTINGS_NS) { entry = n; break; } }
-            snapshot = {
-              status: "ready",
-              writable: !!(doc && doc.writable) && !!entry,
-              value: entry && entry.value,
-              revision: entry && typeof entry.revision === "number" ? entry.revision : 0,
-            };
+        // rc.2 web profiles mount the settings service but no persistence
+        // provider, so remote.settings.describe() throws and the official
+        // settings plane is read-only. dsh-web plugins (tts: /dsh-tts-api;
+        // voice-input: ctx.remote.speech.configure) all persist through their
+        // OWN host channel; we do the same via /dsh-review/settings.
+        const run = Promise.resolve().then(function () {
+          return fetch("/dsh-review/settings", { credentials: "same-origin", cache: "no-store" });
+        })
+          .then(function (res) {
+            if (!res.ok) throw new Error("settings GET " + res.status);
+            return res.json();
+          })
+          .then(function (value) {
+            snapshot = { status: "ready", writable: true, value: value, revision: snapshot.revision + 1 };
           }, function () {
             snapshot = { status: "error", writable: false, value: void 0, revision: snapshot.revision };
           })
@@ -2349,16 +2339,22 @@ window.__ModuleLoader__.load({
         },
         getSnapshot: function () { return snapshot; },
         set: function (key, value) {
-          return settings.mutate(REVIEW_SETTINGS_NS, [{ op: "set", path: [key], value: value }], snapshot.revision)
-            .then(function (view) {
-              if (view && typeof view.revision === "number") {
-                snapshot = { status: "ready", writable: true, value: view.value, revision: view.revision };
-                notify();
-              } else {
-                load();
-              }
-              return view;
-            });
+          const patch = {};
+          patch[key] = value;
+          return fetch("/dsh-review/settings", {
+            method: "POST",
+            credentials: "same-origin",
+            cache: "no-store",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(patch),
+          }).then(function (res) {
+            if (!res.ok) throw new Error("settings POST " + res.status);
+            return res.json();
+          }).then(function (value) {
+            snapshot = { status: "ready", writable: true, value: value, revision: snapshot.revision + 1 };
+            notify();
+            return value;
+          });
         },
         reload: load,
       };
@@ -2376,17 +2372,13 @@ window.__ModuleLoader__.load({
         sctx.effect(function () {
           const remote = sctx.remote;
           const off = remote && typeof remote.$on === "function"
-            ? remote.$on("settings/document-updated", function () { reviewScope.reload(); })
+            ? remote.$on("settings/document-updated", function () { reviewScope.reload().then(applyRailSideFromSettings); })
             : null;
-          reviewScope.reload();
+          reviewScope.reload().then(applyRailSideFromSettings);
           return function () { if (typeof off === "function") off(); };
         });
         ensureReviewCardCss();
-        sctx.effect(function () {
-          return sctx.slots.register({
-            name: "settings.plugin.item",
-            key: REVIEW_SETTINGS_NS,
-          }, function ReviewSettingsCard() {
+        function ReviewSettingsCard() {
             const snap = useSyncExternalStore(
               function (onStore) { return reviewScope.subscribe(onStore); },
               function () { return reviewScope.getSnapshot(); },
@@ -2395,18 +2387,22 @@ window.__ModuleLoader__.load({
             const [draftEnabled, setDraftEnabled] = useState(null);
             const [draftFileSend, setDraftFileSend] = useState(null);
             const [draftSnippetSend, setDraftSnippetSend] = useState(null);
+            const [draftSidebarSide, setDraftSidebarSide] = useState(null);
             const [saving, setSaving] = useState(false);
             const [failed, setFailed] = useState(false);
             const live = getReviewSettings();
             const liveEnabled = live.enabled;
             const liveFileSend = live.fileSend;
             const liveSnippetSend = live.snippetSend;
+            const liveSidebarSide = live.sidebarSide;
             const shownEnabled = draftEnabled == null ? liveEnabled : draftEnabled;
             const shownFileSend = draftFileSend == null ? liveFileSend : draftFileSend;
             const shownSnippetSend = draftSnippetSend == null ? liveSnippetSend : draftSnippetSend;
+            const shownSidebarSide = draftSidebarSide == null ? liveSidebarSide : draftSidebarSide;
             const dirty = shownEnabled !== liveEnabled
               || shownFileSend !== liveFileSend
-              || shownSnippetSend !== liveSnippetSend;
+              || shownSnippetSend !== liveSnippetSend
+              || shownSidebarSide !== liveSidebarSide;
             const available = snap && snap.status === "ready";
             const writable = !!(snap && snap.writable);
 
@@ -2414,8 +2410,9 @@ window.__ModuleLoader__.load({
               setDraftEnabled(null);
               setDraftFileSend(null);
               setDraftSnippetSend(null);
+              setDraftSidebarSide(null);
               setFailed(false);
-            }, [liveEnabled, liveFileSend, liveSnippetSend]);
+            }, [liveEnabled, liveFileSend, liveSnippetSend, liveSidebarSide]);
 
             if (!available) return null;
 
@@ -2423,6 +2420,7 @@ window.__ModuleLoader__.load({
               setDraftEnabled(null);
               setDraftFileSend(null);
               setDraftSnippetSend(null);
+              setDraftSidebarSide(null);
               setFailed(false);
             }
 
@@ -2442,8 +2440,11 @@ window.__ModuleLoader__.load({
               if (shownSnippetSend !== liveSnippetSend) {
                 chain = chain.then(function () { return reviewScope.set("snippetSend", shownSnippetSend); });
               }
+              if (shownSidebarSide !== liveSidebarSide) {
+                chain = chain.then(function () { return reviewScope.set("sidebarSide", shownSidebarSide); });
+              }
               chain.then(
-                function () { setSaving(false); discardDraft(); },
+                function () { setSaving(false); discardDraft(); applyRailSideFromSettings(); },
                 function () { setSaving(false); setFailed(true); },
               );
             }
@@ -2457,7 +2458,7 @@ window.__ModuleLoader__.load({
               },
                 h("span", { className: "dshr-headText" },
                   h("span", { className: "dshr-name" }, "代码审查"),
-                  h("span", { className: "dshr-description" }, "待审、以及拖入文件 / 代码段时发给模型的格式。"),
+                  h("span", { className: "dshr-description" }, "待审、侧栏贴边位置、以及拖入文件 / 代码段时发给模型的格式。"),
                 ),
                 h("span", {
                   className: "dshr-chevron" + (open ? " dshr-chevronOpen" : ""),
@@ -2516,6 +2517,23 @@ window.__ModuleLoader__.load({
                     ),
                     h("p", { className: "dshr-hint" }, "整段：插入时快照正文；chip 仍显示「文件名 L1~L2」。指针模式路径同样带反引号。"),
                   ),
+                  h("div", { className: "dshr-field" },
+                    h("label", { htmlFor: "dshr-rail-side" }, "侧栏位置"),
+                    h("select", {
+                      id: "dshr-rail-side",
+                      className: "dshr-select",
+                      value: shownSidebarSide,
+                      disabled: !writable || saving,
+                      onChange: function (e) {
+                        setDraftSidebarSide(e.target.value);
+                        setFailed(false);
+                      },
+                    },
+                      h("option", { value: "left" }, "左侧"),
+                      h("option", { value: "right" }, "右侧"),
+                    ),
+                    h("p", { className: "dshr-hint" }, "dsh 会话侧栏贴窗口左/右边缘（VS Code 侧栏内生效，保存后立即换边）。"),
+                  ),
                 ),
                 h("div", { className: "dshr-footer" },
                   failed ? h("p", { className: "dshr-failed", role: "status" }, "保存失败") : null,
@@ -2534,7 +2552,34 @@ window.__ModuleLoader__.load({
                 ),
               ) : null,
             );
+        }
+        sctx.effect(function () {
+          const registered = [];
+          const seats = [
+            // dsh rc.2 plugin-manager page: keyed by the bundle package name;
+            // the manager client declares this slot and loads AFTER us, so we
+            // must go through slots.inject (waits for the declaration) and
+            // register from its callback - a bare register races the owner and
+            // throws "slot is not declared" (voice-input does exactly this).
+            { name: "plugins.bundle.config", key: "dsh-review" },
+            // Upstream dsh master settings card slot; no owner on rc.2, the
+            // inject stays pending and pairs automatically on future hosts.
+            { name: "settings.plugin.item", key: REVIEW_SETTINGS_NS },
+          ];
+          seats.forEach(function (seat) {
+            const off = sctx.slots.inject(seat.name, function () {
+              try {
+                sctx.slots.register(seat, ReviewSettingsCard);
+              } catch (err) {
+                console.log("[dsh-review] seat skip", seat.name, (err && err.message || "").slice(0, 80));
+              }
+            });
+            if (typeof off === "function") registered.push(off);
           });
+          console.log("[dsh-review] card seats injected", seats.length);
+          return function () {
+            registered.forEach(function (off) { off(); });
+          };
         }, "dsh-review: plugin settings card");
       });
     }

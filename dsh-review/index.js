@@ -1,5 +1,5 @@
 import { resolve } from 'node:path'
-import { existsSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { commitFileSnapshot, ensureShadowRepo, relPath } from './shadow.js'
 import { readPending, upsertPending } from './pending.js'
 import { shadowRoot } from './workbench.js'
@@ -14,7 +14,7 @@ const REVIEW_NS = 'dsh-review'
 /**
  * Minimal schemastery-shaped schema: callable resolver + toJSON for describe().
  * @param {unknown} value
- * @returns {{ enabled: boolean, fileSend: string, snippetSend: string }}
+ * @returns {{ enabled: boolean, fileSend: string, snippetSend: string, sidebarSide: string }}
  */
 function reviewConfigSchema(value) {
   const v = value && typeof value === 'object' ? value : {}
@@ -22,6 +22,7 @@ function reviewConfigSchema(value) {
     enabled: v.enabled !== false,
     fileSend: v.fileSend === 'prefixed' ? 'prefixed' : 'path',
     snippetSend: v.snippetSend === 'pointer' ? 'pointer' : 'fence',
+    sidebarSide: v.sidebarSide === 'right' ? 'right' : 'left',
   }
 }
 reviewConfigSchema.toJSON = function toJSON() {
@@ -31,6 +32,7 @@ reviewConfigSchema.toJSON = function toJSON() {
       enabled: { type: 'boolean', default: true },
       fileSend: { type: 'string', default: 'path' },
       snippetSend: { type: 'string', default: 'fence' },
+      sidebarSide: { type: 'string', default: 'left' },
     },
   }
 }
@@ -251,6 +253,15 @@ async function finalizeDeletesFromShell(exec) {
 export function apply(ctx, config) {
   const entry = config && typeof config === 'object' ? config : { enabled: true }
   let source = () => entry
+  // Card-saved settings live in <shadowRoot>/settings.json (this plugin's
+  // own persistence; the rc.2 web profile has no settings provider). They
+  // layer on top of the cordis row so both sources are honored at boot.
+  let override = {}
+  try {
+    const storedPath = resolve(shadowRoot(), 'settings.json')
+    if (existsSync(storedPath)) override = reviewConfigSchema(JSON.parse(readFileSync(storedPath, 'utf8')))
+  } catch { /* keep row config only */ }
+  if (Object.keys(override).length) Object.assign(entry, override)
   installReviewSettings(ctx, entry, {
     setSource: (current) => { source = current },
     onChange: () => {
@@ -272,7 +283,20 @@ export function apply(ctx, config) {
   // review tool hooks below.
   try {
     ctx.inject(['jobs', 'webServer'], (sctx) => {
-      installJobsBridge(sctx)
+      installJobsBridge(sctx, {
+        get: () => reviewConfigSchema({ ...source(), ...override }),
+        set: (patch) => {
+          const merged = reviewConfigSchema({ ...source(), ...override, ...(patch || {}) })
+          override = merged
+          Object.assign(entry, merged)
+          const dir = shadowRoot()
+          mkdirSync(dir, { recursive: true })
+          const target = resolve(dir, 'settings.json')
+          writeFileSync(target + '.tmp', JSON.stringify(merged, null, 2))
+          renameSync(target + '.tmp', target)
+          return merged
+        },
+      })
     })
   } catch (e) {
     console.warn('[dsh-review] jobs bridge failed:', e && e.message || e)

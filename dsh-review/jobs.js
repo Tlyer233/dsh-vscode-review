@@ -117,9 +117,10 @@ function makeLog() {
  * again after a plugin reload (symbol flags on the jobs instance; duplicate
  * route registration would throw and is contained).
  * @param {object} ctx plugin context exposing `jobs` + `webServer`
+ * @param {{ get: () => object, set: (patch: object) => object }=} settingsHooks host settings channel
  * @returns {null|{ jobs: object }}
  */
-export function installJobsBridge(ctx) {
+export function installJobsBridge(ctx, settingsHooks) {
   const jobs = ctx && ctx.jobs
   const webServer = ctx && ctx.webServer
   const hasModern = Boolean(
@@ -516,6 +517,31 @@ export function installJobsBridge(ctx) {
         json(res, 405, { ok: false, error: 'method not allowed' })
       },
     }))
+
+    // Plugin settings channel (same browser-session cookie auth). The rc.2
+    // web profile has no settings persistence provider, so the card reads
+    // and writes through this route instead of the official settings plane.
+    if (settingsHooks && typeof settingsHooks.get === 'function' && typeof settingsHooks.set === 'function') {
+      disposers.push(webServer.register({
+        kind: 'exact',
+        path: '/dsh-review/settings',
+        handler: (req, res) => {
+          if (!authorized(req)) { unauthorized(res); return }
+          if (req.method === 'GET') { json(res, 200, settingsHooks.get()); return }
+          if (req.method === 'POST') {
+            let body = ''
+            req.on('data', (c) => { body += c; if (body.length > 65536) { json(res, 413, { ok: false, error: 'too large' }); req.destroy() } })
+            req.on('end', () => {
+              let parsed
+              try { parsed = JSON.parse(body || '{}') } catch { json(res, 400, { ok: false, error: 'bad json' }); return }
+              try { json(res, 200, settingsHooks.set(parsed)) } catch (e) { json(res, 500, { ok: false, error: (e && e.message) || String(e) }) }
+            })
+            return
+          }
+          json(res, 405, { ok: false, error: 'method not allowed' })
+        },
+      }))
+    }
   } catch (e) {
     // e.g. duplicate route on a shared webserver: leave the prior wiring in place.
     for (const dispose of disposers) { try { dispose() } catch { /* noop */ } }
