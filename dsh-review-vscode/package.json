@@ -2,7 +2,7 @@
   "name": "dsh-review-vscode",
   "displayName": "dsh review — inline diff + dsh sidebar",
   "description": "Inline review (shadow/pending) + dsh webview sidebar",
-  "version": "0.1.9",
+  "version": "0.1.11",
   "publisher": "dsn",
   "engines": {
     "vscode": "^1.85.0"

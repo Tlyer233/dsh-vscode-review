@@ -31,6 +31,7 @@
  */
 
 const http = require('node:http')
+const os = require('node:os')
 const path = require('node:path')
 const vscode = require('vscode')
 const { mintCookie } = require('./dsh-auth-proxy.js')
@@ -132,17 +133,33 @@ function connectDshJobs(opts) {
       },
     }
     terminals.set(id, entry)
-    // Show the agent's input (the command) as a prompt line, like a normal
-    // shell: `$ <command>` before the first output byte. SSE is ordered, so
-    // the job frame (and this header) always precede the job's output frames.
-    const label = frame && frame.label
-    entry.write(label ? '$ ' + label + '\n' : '$ (job ' + id + ')\n')
+    // Show the agent's input as a real-shell prompt line (green PS1 look,
+    // `(base) user@host dir %` + the command) before the first output byte.
+    // SSE is ordered, so the job frame (and this header) always precede the
+    // job's output frames; the prompt line doubles as the per-round
+    // divider when a tab is reopened on a status frame.
+    entry.write(promptLine(id, frame) + '\n')
     try { terminal.show(true) } catch { /* noop */ }
     log('[jobs] open terminal for ' + id + (frame && frame.label ? ' (' + frame.label + ')' : ''))
     return entry
   }
 
   // ---- SSE frame handling -------------------------------------------------
+
+  const DONE_MARK = { completed: '✔ completed', failed: '✘ failed', killed: '■ killed' }
+
+  /** Real-terminal prompt: `<env> user@host dir %` (green) + the command. */
+  function promptLine(id, frame) {
+    const user = os.userInfo().username
+    const host = os.hostname().replace(/\.local$/, '')
+    const dir = path.basename(String((frame && frame.cwd) || '~'))
+    // envLabel comes from the dsh server's real environment (conda/venv);
+    // no label → no prefix, never a made-up "(base)".
+    const envLabel = frame && frame.envLabel ? String(frame.envLabel) + ' ' : ''
+    const prompt = '\x1b[32m' + envLabel + user + '@' + host + ' ' + dir + ' %\x1b[0m '
+    const label = frame && frame.label
+    return prompt + (label ? String(label) : '(job ' + id + ')')
+  }
 
   function onJobFrame(frame) {
     if (!frame || !frame.id) return
@@ -153,7 +170,10 @@ function connectDshJobs(opts) {
       return
     }
     const entry = terminals.get(id)
-    if (entry && DONE.has(frame.status)) entry.write('\n[done: ' + frame.status + ']\n')
+    if (entry && DONE.has(frame.status)) {
+      const detail = typeof frame.detail === 'string' && frame.detail ? ' · ' + frame.detail : ''
+      entry.write('\n' + (DONE_MARK[frame.status] || '[done: ' + frame.status + ']') + detail + '\n')
+    }
   }
 
   function onOutputFrame(frame) {

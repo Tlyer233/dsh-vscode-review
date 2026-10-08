@@ -1,6 +1,6 @@
 {
   "name": "dsh-review",
-  "version": "0.1.26",
+  "version": "0.1.30",
   "description": "dsh review: shadow git + pending for VS Code inline review",
   "license": "MIT",
   "type": "module",

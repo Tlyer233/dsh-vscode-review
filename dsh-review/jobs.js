@@ -10,25 +10,31 @@
  *            GET  /dsh-review/jobs            → [{ id, kind, label, status, cwd? }]
  *            POST /dsh-review/jobs/<id>/kill  → { ok: true, result }
  *
- * Wiring (all in this file; dsh core untouched):
- * - Output is a single consumption cursor shared by the agent and the pump.
- *   The pump (400ms) consumes it via the ORIGINAL `read` (caller = the
- *   recorded owner Agent, so the session fence passes) and appends every
- *   delta to a bounded per-job log (256K chars, drop oldest) whose new
- *   content is broadcast as `output` frames — the VSCode terminal gets
- *   output in real time, without the agent reading.
+ * The dsh jobs service changed shape in 0.2.0, so the bridge feature-detects
+ * and wires one of two paths (the HTTP/SSE surface above is identical):
+ *
+ * Modern path (0.2.0-rc.2+, `jobs.events.subscribe` + `jobs.readAt`):
+ * - `jobs.events.subscribe({ owners: 'scope' }, …)` delivers `registered /
+ *   progress / stopping / settled / removed` lifecycle events (→ `job`
+ *   frames via status diff) and `output` events (id + ring total; the
+ *   400ms pump pulls the delta with the NON-CONSUMING `readAt(id, cursor,
+ *   caller)`). The registry's single consuming cursor stays with
+ *   `job_output` — the bridge never touches `read`, and `reported` cannot
+ *   be suppressed.
+ * - Owner Agents for the session fence (`readAt/kill(id, caller)` are
+ *   owner-fenced) are resolved from `ctx.get('agents')?.get(event.job.owner)`.
+ *
+ * Legacy path (dsh ≤ 0.1.x, `onJobsChanged` + consuming `read`):
+ * - The pump (400ms) CONSUMES the shared cursor via the ORIGINAL `read`
+ *   (caller = the recorded owner Agent, so the fence passes) and appends
+ *   every delta to a bounded per-job log (256K chars, drop oldest) whose
+ *   new content is broadcast as `output` frames.
  * - `ctx.jobs.read` is wrapped once (symbol-flagged, idempotent): the agent
- *   path calls the original as-is (throws propagate untouched), appends its
- *   delta to the same log, and returns the log delta since that reader's
- *   last position — the union of pump-consumed and agent-consumed bytes.
- *   No loss, no duplication.
- * - `reported` safety: settle() captures its snapshot synchronously (no
- *   await) and the completion notice consumes that captured snapshot, so a
- *   later pump tick setting `reported` cannot suppress the agent's notice.
- *   The pump also skips already-terminal jobs.
- * - `onJobsChanged(owner)` + `list(owner)` diff → `job` frames (new job /
- *   status change) and records jobId → owner Agent so `kill` can pass the
- *   session fence.
+ *   path calls the original as-is and gets the log delta since its reader
+ *   position — union of pump- and agent-consumed bytes, no loss, no
+ *   duplication.
+ * - `onJobsChanged(owner)` + `list(owner)` diff → `job` frames, and records
+ *   jobId → owner Agent for the kill fence.
  *
  * Auth: browser session cookie, verified with the same algorithm as
  * dsh-review-vscode/lib/dsh-auth-proxy.js (HMAC-SHA256 over the
@@ -40,17 +46,18 @@ import { homedir } from 'node:os'
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto'
 import path from 'node:path'
 
-/** Marks a `jobs.read` already wrapped by this module (idempotency flag). */
+/** Marks a legacy `jobs.read` already wrapped by this module (idempotency flag). */
 const TEE = Symbol.for('dsh-review.jobsTee')
 /** Marks a jobs registry instance already fully wired by this module. */
 const WIRED = Symbol.for('dsh-review.jobsWired')
 
-const LOG_CHARS = 256 * 1024 // per-job output tail window (character cap)
+const LOG_CHARS = 256 * 1024 // legacy per-job output tail window (character cap)
 const PUMP_MS = 400
 const HEARTBEAT_MS = 20000
 const COOKIE_PREFIX = 'dsh-auth-'
 const COOKIE_VERSION = 1
 const MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000
+const TERMINAL = new Set(['completed', 'killed', 'failed'])
 
 function b64url(value) {
   return Buffer.from(value).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/u, '')
@@ -64,11 +71,10 @@ function b64urlDecode(value) {
 }
 
 /**
- * Bounded per-job output log with positional reads. Every output byte
- * passes through exactly once (whoever consumed the shared cursor — pump or
- * agent) and is appended here exactly once, so `since(pos)` gives each
- * reader its delta with no loss and no duplication. Offsets are character
- * positions; over-cap drops the oldest. Never blocks the main path.
+ * Bounded per-job output log with positional reads (legacy path). Every
+ * output byte passes through exactly once (whoever consumed the shared
+ * cursor — pump or agent) and is appended here exactly once, so `since(pos)`
+ * gives each reader its delta with no loss and no duplication.
  */
 function makeLog() {
   const chunks = []
@@ -116,80 +122,42 @@ function makeLog() {
 export function installJobsBridge(ctx) {
   const jobs = ctx && ctx.jobs
   const webServer = ctx && ctx.webServer
-  if (
-    !jobs || typeof jobs.read !== 'function' || typeof jobs.list !== 'function'
-    || typeof jobs.kill !== 'function' || typeof jobs.onJobsChanged !== 'function'
-    || !webServer || typeof webServer.register !== 'function'
-  ) {
+  const hasModern = Boolean(
+    jobs && typeof jobs.list === 'function' && typeof jobs.kill === 'function'
+    && typeof jobs.readAt === 'function' && jobs.events && typeof jobs.events.subscribe === 'function',
+  )
+  const hasLegacy = Boolean(
+    jobs && typeof jobs.read === 'function' && typeof jobs.kill === 'function'
+    && typeof jobs.onJobsChanged === 'function',
+  )
+  if ((!hasModern && !hasLegacy) || !webServer || typeof webServer.register !== 'function') {
     console.warn('[dsh-review] jobs bridge skipped: ctx.jobs/ctx.webServer not available')
     return null
   }
   if (jobs[WIRED]) return null // already wired for this registry instance
   jobs[WIRED] = true
 
-  /** jobId → { log, pumpLast, readers: Map<readerKey, pos> } (bounded tail window). */
+  /** jobId → per-job pump state (legacy: {log,pumpLast,readers}; modern: {cursor}). */
   const jobState = new Map()
-  /** jobId → owner Agent (undefined = unowned job); needed for the kill fence. */
+  /** jobId → owner Agent (undefined = unowned job); needed for the kill/read fence. */
   const owners = new Map()
   /** jobId → last broadcast `job` frame (status-diff source + GET list source). */
   const tracked = new Map()
   /** Connected SSE clients. */
   const clients = new Set()
+  /** TEMP instrumentation: surface the first pump broadcasts / early failures. */
+  let pumpFails = 0
+  const pumpSpoke = new Set()
 
-  const stateFor = (id) => {
+  const stateFor = (id, make) => {
     let st = jobState.get(id)
     if (!st) {
-      st = { log: makeLog(), pumpLast: 0, readers: new Map() }
+      st = make()
       jobState.set(id, st)
     }
     return st
   }
 
-  /** dsh session workbench = owner.session.header.cwd (same as index.js). */
-  const cwdOf = (owner) => {
-    const cwd = owner && owner.session && owner.session.header && owner.session.header.cwd
-    return typeof cwd === 'string' && cwd ? cwd : undefined
-  }
-
-  const frameOf = (snap, owner) => {
-    const frame = { id: snap.id, kind: snap.kind, label: snap.label, status: snap.status }
-    const cwd = cwdOf(owner)
-    if (cwd) frame.cwd = cwd
-    if (snap.detail) frame.detail = snap.detail
-    return frame
-  }
-
-  // 1) wrap ctx.jobs.read once. The original is called as-is (throws
-  //    propagate untouched); the delta is appended to the log and the
-  //    result text is replaced with this reader's union delta (everything
-  //    since its last position — covers bytes the pump consumed in between).
-  const originalRead = jobs.read
-  if (!originalRead[TEE]) {
-    const wrapped = function read(id, caller) {
-      const result = originalRead.call(jobs, id, caller)
-      try {
-        if (caller !== undefined && !owners.has(id)) owners.set(id, caller)
-        const st = stateFor(id)
-        const delta = result && result.text
-        if (typeof delta === 'string' && delta) st.log.push(delta)
-        const key = caller && caller.id != null ? String(caller.id) : 'anon'
-        const last = st.readers.get(key) ?? st.log.head()
-        result.text = st.log.since(last)
-        st.readers.set(key, st.log.tail())
-      } catch {
-        /* union shaping must never break the agent read path */
-      }
-      return result
-    }
-    wrapped[TEE] = true
-    jobs.read = wrapped
-  }
-
-  // 2) SSE broadcast + 400ms pump. The pump CONSUMES the shared cursor via
-  //    the original read (caller = recorded owner, fence passes) and
-  //    broadcasts the log delta — real-time terminal output. It skips
-  //    terminal jobs, and `reported` is safe: settle() captures its
-  //    snapshot synchronously, before any later pump tick can run.
   const writeFrame = (res, event, data) => {
     try {
       if (res.writableEnded || res.destroyed) {
@@ -204,35 +172,205 @@ export function installJobsBridge(ctx) {
   const broadcast = (event, data) => {
     for (const res of [...clients]) writeFrame(res, event, data)
   }
-  // TEMP instrumentation: surface the first pump failures/broadcasts.
-  let pumpFails = 0
-  const pumpSpoke = new Set()
-  const pump = setInterval(() => {
-    for (const [id, st] of jobState) {
-      const frame = tracked.get(id)
-      if (frame && (frame.status === 'completed' || frame.status === 'killed' || frame.status === 'failed')) continue
-      let res
+
+  /** dsh session workbench = owner.session.header.cwd (same as index.js). */
+  const cwdOf = (owner) => {
+    const cwd = owner && owner.session && owner.session.header && owner.session.header.cwd
+    return typeof cwd === 'string' && cwd ? cwd : undefined
+  }
+
+  const frameOf = (snap, owner) => {
+    const frame = { id: snap.id, kind: snap.kind, label: snap.label, status: snap.status }
+    const cwd = cwdOf(owner)
+    if (cwd) frame.cwd = cwd
+    if (snap.detail) frame.detail = snap.detail
+    // Real env prefix of the shell that runs the command: the dsh server
+    // process IS the environment the executor inherits (bash `env` is
+    // verbatim pass-through), so conda/venv activation is whatever the
+    // server actually has — never hardcoded. Per-call env overrides are not
+    // in the JobView snapshot and are not shown.
+    const env = process.env
+    const venv = env.VIRTUAL_ENV ? path.basename(String(env.VIRTUAL_ENV)) : ''
+    const envLabel = env.CONDA_DEFAULT_ENV || venv
+    if (envLabel) frame.envLabel = '(' + envLabel + ')'
+    return frame
+  }
+
+  /**
+   * Emit a `job` frame when the status moved; record the fence owner.
+   * `owner` is the owner Agent for the cwd (legacy path; rc.2 events carry
+   * only a SessionId). `fenceOwner` is what `readAt/kill` must be called
+   * with: the rc.2 fence compares `job.owner.id !== caller` — a plain
+   * SessionId string; the legacy fence wants the Agent object itself.
+   */
+  const trackFrame = (snap, owner, fenceOwner = owner) => {
+    if (fenceOwner !== undefined && !owners.has(snap.id)) owners.set(snap.id, fenceOwner)
+    const prev = tracked.get(snap.id)
+    if (prev && prev.status === snap.status) return prev
+    const frame = frameOf(snap, owner)
+    tracked.set(snap.id, frame)
+    broadcast('job', frame)
+    return frame
+  }
+
+  // ---- wiring per capability ------------------------------------------------
+
+  let pump = null
+  let offChanged = null
+
+  if (hasModern) {
+    // Modern (0.2.0-rc.2): events.subscribe + non-consuming readAt pulls.
+    const dirty = new Set()
+    const resolveOwner = (sessionId) => {
+      if (sessionId === undefined) return undefined
       try {
-        res = originalRead.call(jobs, id, owners.get(id))
-      } catch (e) {
-        if (pumpFails < 3) console.warn('[dsh-review] pump read FAILED for', id, ':', (e && e.message) || e)
-        pumpFails++
-        continue // fence/unknown job: skip this tick
-      }
-      const text = res && res.text
-      if (text) st.log.push(text)
-      const delta = st.log.since(st.pumpLast)
-      if (delta) {
-        if (!pumpSpoke.has(id)) {
-          pumpSpoke.add(id)
-          console.info('[dsh-review] pump first broadcast for', id, '(' + delta.length + ' chars)')
-        }
-        st.pumpLast = st.log.tail()
-        broadcast('output', { id, text: delta })
+        const agents = typeof ctx.get === 'function' ? ctx.get('agents') : undefined
+        return agents ? agents.get(sessionId) : undefined
+      } catch {
+        return undefined
       }
     }
-  }, PUMP_MS)
-  if (typeof pump.unref === 'function') pump.unref()
+    const pull = (id) => {
+      const st = jobState.get(id)
+      if (!st) return
+      let res
+      try {
+        res = jobs.readAt(id, st.cursor, owners.get(id))
+      } catch (e) {
+        if (pumpFails < 3) console.warn('[dsh-review] pump readAt FAILED for', id, ':', (e && e.message) || e)
+        pumpFails++
+        return // fence/unknown job: skip this tick
+      }
+      const chunks = res && res.chunks
+      const text = Array.isArray(chunks) && chunks.length
+        ? chunks.map((c) => (typeof c.text === 'string' ? c.text : '')).join('')
+        : ''
+      if (typeof res.next === 'number') st.cursor = res.next
+      if (text) {
+        if (!pumpSpoke.has(id)) {
+          pumpSpoke.add(id)
+          console.info('[dsh-review] pump first broadcast for', id, '(' + text.length + ' chars)')
+        }
+        broadcast('output', { id, text })
+      }
+    }
+    pump = setInterval(() => {
+      for (const id of [...dirty]) {
+        const frame = tracked.get(id)
+        if (frame && TERMINAL.has(frame.status)) {
+          dirty.delete(id)
+          continue
+        }
+        dirty.delete(id)
+        pull(id)
+      }
+    }, PUMP_MS)
+    offChanged = jobs.events.subscribe({ owners: 'scope' }, (event) => {
+      try {
+        if (event.type === 'output') {
+          stateFor(event.id, () => ({ cursor: 0 }))
+          if (event.owner !== undefined && !owners.has(event.id)) owners.set(event.id, event.owner)
+          dirty.add(event.id)
+          return
+        }
+        const snap = event.job
+        if (!snap) return
+        if (event.type === 'removed') {
+          jobState.delete(snap.id)
+          dirty.delete(snap.id)
+          return
+        }
+        if (event.type === 'registered') stateFor(snap.id, () => ({ cursor: 0 }))
+        if (event.type === 'settled') {
+          // Drain the tail BEFORE announcing the terminal status: output
+          // frames must precede the footer so the footer always sits at
+          // the bottom of the round in the terminal.
+          pull(snap.id)
+          jobState.delete(snap.id)
+          dirty.delete(snap.id)
+        }
+        // Fence caller = the raw SessionId string (rc.2); the Agent is
+        // resolved only to fill frame.cwd for the extension filter.
+        trackFrame(snap, resolveOwner(snap.owner), snap.owner)
+      } catch (e) {
+        console.warn('[dsh-review] jobs event failed:', (e && e.message) || e)
+      }
+    })
+  } else {
+    // Legacy (dsh ≤ 0.1.x): read-tee + consuming-read pump + onJobsChanged diff.
+    const legacyState = () => ({ log: makeLog(), pumpLast: 0, readers: new Map() })
+    const originalRead = jobs.read
+    if (!originalRead[TEE]) {
+      const wrapped = function read(id, caller) {
+        const result = originalRead.call(jobs, id, caller)
+        try {
+          if (caller !== undefined && !owners.has(id)) owners.set(id, caller)
+          const st = stateFor(id, legacyState)
+          const delta = result && result.text
+          if (typeof delta === 'string' && delta) st.log.push(delta)
+          const key = caller && caller.id != null ? String(caller.id) : 'anon'
+          const last = st.readers.get(key) ?? st.log.head()
+          result.text = st.log.since(last)
+          st.readers.set(key, st.log.tail())
+        } catch {
+          /* union shaping must never break the agent read path */
+        }
+        return result
+      }
+      wrapped[TEE] = true
+      jobs.read = wrapped
+    }
+    pump = setInterval(() => {
+      for (const [id, st] of jobState) {
+        const frame = tracked.get(id)
+        if (frame && TERMINAL.has(frame.status)) continue
+        let res
+        try {
+          res = originalRead.call(jobs, id, owners.get(id))
+        } catch (e) {
+          if (pumpFails < 3) console.warn('[dsh-review] pump read FAILED for', id, ':', (e && e.message) || e)
+          pumpFails++
+          continue // fence/unknown job: skip this tick
+        }
+        const text = res && res.text
+        if (text) st.log.push(text)
+        const delta = st.log.since(st.pumpLast)
+        if (delta) {
+          if (!pumpSpoke.has(id)) {
+            pumpSpoke.add(id)
+            console.info('[dsh-review] pump first broadcast for', id, '(' + delta.length + ' chars)')
+          }
+          st.pumpLast = st.log.tail()
+          broadcast('output', { id, text: delta })
+        }
+      }
+    }, PUMP_MS)
+    offChanged = jobs.onJobsChanged((owner) => {
+      try {
+        for (const snap of jobs.list(owner)) {
+          if (snap.status === 'running' || snap.status === 'stopping') stateFor(snap.id, legacyState)
+          const frame = trackFrame(snap, owner)
+          if (TERMINAL.has(snap.status) && frame && frame.status === snap.status && jobState.has(snap.id)) {
+            // Final drain: deliver any remaining bytes (stream tail, or the
+            // full output of a final-output job) before dropping the state.
+            const st = jobState.get(snap.id)
+            try {
+              const finalRes = originalRead.call(jobs, snap.id, owners.get(snap.id))
+              const finalText = finalRes && finalRes.text
+              if (finalText) st.log.push(finalText)
+              const delta = st.log.since(st.pumpLast)
+              if (delta) broadcast('output', { id: snap.id, text: delta })
+            } catch { /* noop */ }
+            jobState.delete(snap.id) // output done; keep owners for the kill fence
+          }
+        }
+      } catch (e) {
+        console.warn('[dsh-review] jobs diff failed:', (e && e.message) || e)
+      }
+    })
+  }
+  if (pump && typeof pump.unref === 'function') pump.unref()
+
   // Comment frames: ignored by every SSE parser, keep proxies/sockets alive.
   const heartbeat = setInterval(() => {
     for (const res of [...clients]) {
@@ -245,44 +383,8 @@ export function installJobsBridge(ctx) {
   }, HEARTBEAT_MS)
   if (typeof heartbeat.unref === 'function') heartbeat.unref()
 
-  // 3) `job` frames: onJobsChanged + list diff. list() is pure (no output
-  //    cursor advance) and is called with the exact changed owner, so the
-  //    fence passes. Status diff suppresses duplicate frames (unowned jobs
-  //    reappear in several owners' views).
-  const offChanged = jobs.onJobsChanged((owner) => {
-    try {
-      for (const snap of jobs.list(owner)) {
-        if (!owners.has(snap.id)) owners.set(snap.id, owner)
-        // Give every running job pump state, even one nobody has read —
-        // otherwise the pump (which iterates jobState) never follows it.
-        if (snap.status === 'running') stateFor(snap.id)
-        const prev = tracked.get(snap.id)
-        if (!prev || prev.status !== snap.status) {
-          tracked.set(snap.id, frameOf(snap, owner))
-          broadcast('job', tracked.get(snap.id))
-          if (snap.status === 'completed' || snap.status === 'killed' || snap.status === 'failed') {
-            // Final drain: deliver any remaining bytes (stream tail, or the
-            // full output of a final-output job) before dropping the state.
-            const st = jobState.get(snap.id)
-            if (st) {
-              try {
-                const finalRes = originalRead.call(jobs, snap.id, owners.get(snap.id))
-                const finalText = finalRes && finalRes.text
-                if (finalText) st.log.push(finalText)
-                const delta = st.log.since(st.pumpLast)
-                if (delta) broadcast('output', { id: snap.id, text: delta })
-              } catch { /* noop */ }
-            }
-            jobState.delete(snap.id) // output done; keep owners for the kill fence
-          }
-        }
-      }
-    } catch (e) {
-      console.warn('[dsh-review] jobs diff failed:', (e && e.message) || e)
-    }
-  })
+  // ---- browser session cookie auth (same algorithm as dsh-auth-proxy) ------
 
-  // 4) browser session cookie auth (same algorithm as dsh-auth-proxy).
   let secret = null
   let secretTried = false
   const sessionSecret = () => {
@@ -355,6 +457,8 @@ export function installJobsBridge(ctx) {
     res.end(JSON.stringify(value))
   }
 
+  // ---- HTTP/SSE routes (identical on both paths) ---------------------------
+
   const disposers = []
   try {
     disposers.push(webServer.register({
@@ -420,15 +524,15 @@ export function installJobsBridge(ctx) {
     return null
   }
 
-  console.info('[dsh-review] jobs bridge ready: /dsh-review/events (SSE) + /dsh-review/jobs (list/kill)')
+  console.info('[dsh-review] jobs bridge ready (' + (hasModern ? 'events/readAt' : 'legacy read-tee') + '): /dsh-review/events (SSE) + /dsh-review/jobs (list/kill)')
 
-  // 5) teardown on plugin scope disposal (clears timers, routes, listeners).
+  // teardown on plugin scope disposal (clears timers, routes, listeners).
   if (typeof ctx.effect === 'function') {
     try {
       ctx.effect(() => () => {
-        clearInterval(pump)
+        if (pump) clearInterval(pump)
         clearInterval(heartbeat)
-        try { offChanged() } catch { /* noop */ }
+        try { if (offChanged) offChanged() } catch { /* noop */ }
         for (const dispose of disposers) { try { dispose() } catch { /* noop */ } }
         clients.clear()
         jobState.clear()
