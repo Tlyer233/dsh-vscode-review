@@ -63,8 +63,15 @@ export function upsertPending(patch, { clearRolling = false } = {}) {
     after: patch.after !== undefined ? patch.after : (prev && prev.after) || null,
     updatedAt: Date.now(),
   }
-  if (idx >= 0) list[idx] = next
-  else list.push(next)
+  if (idx >= 0) {
+    // Idempotent: unchanged hashes must not rewrite the file. Browser pages
+    // sharing the session re-fire tool events; a rewrite bumps updatedAt,
+    // fires the VS Code watcher, and mount/clear storms make the dock flicker.
+    if (prev.before === next.before && prev.after === next.after && prev.operation === next.operation) {
+      return prev
+    }
+    list[idx] = next
+  } else list.push(next)
   writePendingAtomic(workbench, list)
   return next
 }

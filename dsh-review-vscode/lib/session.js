@@ -378,7 +378,32 @@ function createReviewHost(context) {
     session.allowClearPending = true
     const docText = readDocText(uri)
     if (docText == null) return
-    session.core.modifiedText = docText
+    // Chained AI edits: a further agent edit lands on disk while the review
+    // session (and its buffer) still shows the previous version. The dock
+    // 'accept all' must rule the LATEST content, so adopt disk text first
+    // when the buffer is clean and stale.
+    const doc = documentFor(uri)
+    if (!doc || !doc.isDirty) {
+      try {
+        const diskText = fs.readFileSync(uri.fsPath, 'utf8')
+        if (diskText !== docText) {
+          log.appendLine('acceptAll adopt disk ' + uri.fsPath + ' len=' + diskText.length)
+          const ok = await applyDocText(uri, diskText, { reveal: false })
+          if (ok) {
+            await saveUri(uri)
+            session.core.modifiedText = diskText
+          } else {
+            session.core.modifiedText = docText
+          }
+        } else {
+          session.core.modifiedText = docText
+        }
+      } catch (e) {
+        session.core.modifiedText = docText // disk read failed: keep buffer
+      }
+    } else {
+      session.core.modifiedText = docText
+    }
     session.core.acceptAll()
     session.lastDiffDoc = null
     await saveUri(uri)

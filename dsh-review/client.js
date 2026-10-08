@@ -151,7 +151,6 @@ window.__ModuleLoader__.load({
         scopePaths: vscodeScopePaths.slice(),
         rawPaths: vscodeScopeRawPaths.slice(),
       }, info || {});
-      try { console.log("[dsh-scope]", payload.action, payload); } catch (err) { /* noop */ }
       postScopeMessage("dshScopeDiag", payload);
     }
 
@@ -1096,11 +1095,9 @@ window.__ModuleLoader__.load({
             const now = caretNow(shell);
             if (now === null || Math.abs(now - caretWanted) <= 1) return;
             if (typeof shell.insertText === "function") {
-              const ok = shell.insertText("", { start: caretWanted, end: caretWanted, draftRev: liveRev(shell) });
-              pasteLog("[dbg] caretFix insertText('') ok=" + ok
-                + " now=" + caretNow(shell) + " want=" + caretWanted);
+              shell.insertText("", { start: caretWanted, end: caretWanted, draftRev: liveRev(shell) });
             }
-          } catch (err) { pasteLog("[dbg] caretFix err=" + (err && err.message || err)); }
+          } catch (err) { /* caret fix is best-effort */ }
         }
 
         function focusComposer(caret) {
@@ -1113,8 +1110,6 @@ window.__ModuleLoader__.load({
               const shell = inputHub.shell(sessionId);
               if (shell && typeof shell.focus === "function") {
                 shell.focus();
-                pasteLog("[dbg] focusComposer route=shell.focus caretHint=" + caret
-                  + " caretNow=" + caretNow(shell));
                 ensureCaretAfterChip();
                 return true;
               }
@@ -1127,7 +1122,6 @@ window.__ModuleLoader__.load({
           if (el.tagName === "TEXTAREA" && Number.isFinite(caret) && caret >= 0) {
             try { el.setSelectionRange(caret, caret); } catch (err) { /* noop */ }
           }
-          pasteLog("[dbg] focusComposer route=dom tag=" + el.tagName + " caret=" + caret);
           return true;
         }
 
@@ -1237,11 +1231,6 @@ window.__ModuleLoader__.load({
           // The custom source is only needed for non-file refs (selection/terminal);
           // file/folder chips use dsh's native "reference" source.
           const needsCustom = list.some(function (r) { return r.kind !== "file" && r.kind !== "folder"; });
-          pasteLog("[dbg] insertRefs n=" + list.length
-            + " kinds=" + list.map(function (r) { return r.kind; }).join(",")
-            + " sid=" + (sessionId ? "y" : "n")
-            + " hub=" + (inputHub ? "y" : "n")
-            + " refReg=" + (refSourceRegistered ? "y" : "n"));
           if (!sessionId || !inputHub || (needsCustom && !refSourceRegistered) || list.length === 0) {
             if (formattedFallback) insertComposerText(formattedFallback);
             return {
@@ -1289,8 +1278,6 @@ window.__ModuleLoader__.load({
                 caretWanted = span.start;
                 caretWantedAt = Date.now();
               }
-              pasteLog("[dbg] chip insertReference ok n=" + references.length
-                + " caretAt=" + caretAt + " detectSpan=" + JSON.stringify(span));
               setTimeout(function () { focusComposer(caretAt); }, 0);
               setTimeout(function () { focusComposer(caretAt); }, 50);
               setTimeout(function () { ensureCaretAfterChip(); }, 300);
@@ -1334,7 +1321,6 @@ window.__ModuleLoader__.load({
               caret = end;
             }
             const caretAt = caret;
-            pasteLog("[dbg] chip pasteBegin ok n=" + references.length + " caretAt=" + caretAt);
             caretWanted = caretAt;
             caretWantedAt = Date.now();
             setTimeout(function () { focusComposer(caretAt); }, 0);
@@ -1865,20 +1851,10 @@ window.__ModuleLoader__.load({
           });
         }
 
-        let lastDragOverLogAt = 0;
         let lastDragOverPostAt = 0;
-        function dtTypes(dt) {
-          try { return Array.prototype.slice.call(dt.types || []).join(","); } catch (err) { return "?"; }
-        }
 
         function onDragOver(event) {
           const now = Date.now();
-          if (now - lastDragOverLogAt > 1500) {
-            lastDragOverLogAt = now;
-            pasteLog("[dbg] dragover bridge=" + (bridgeActive ? "y" : "n")
-              + " shift=" + (event.shiftKey ? "y" : "n")
-              + " dt=" + (event.dataTransfer ? dtTypes(event.dataTransfer) : "null"));
-          }
           // VS Code explorer drags only carry dataTransfer data inside the
           // webview HOST document; this iframe sees hover but no payload.
           // Tell the host, which turns this iframe pointer-transparent so the
@@ -1893,15 +1869,10 @@ window.__ModuleLoader__.load({
         }
 
         function onDrop(event) {
-          const dt = event.dataTransfer;
-          pasteLog("[dbg] drop shift=" + (event.shiftKey ? "y" : "n")
-            + " bridge=" + (bridgeActive ? "y" : "n")
-            + " dt=" + (dt ? dtTypes(dt) : "null"));
           if (!bridgeActive) return;
           if (!event.shiftKey || !event.dataTransfer) return;
           event.preventDefault();
           const paths = pathsFromDrop(event.dataTransfer);
-          pasteLog("[dbg] drop paths=" + paths.length + (paths.length ? " first=" + paths[0] : ""));
           if (paths.length > 0) {
             const refs = refsForDropPaths(paths, event.dataTransfer);
             const result = insertRefsAtCaret(refs, paths.join("\n"), null);
@@ -2576,7 +2547,6 @@ window.__ModuleLoader__.load({
             });
             if (typeof off === "function") registered.push(off);
           });
-          console.log("[dsh-review] card seats injected", seats.length);
           return function () {
             registered.forEach(function (off) { off(); });
           };
