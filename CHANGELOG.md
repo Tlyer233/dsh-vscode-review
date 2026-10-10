@@ -21,6 +21,15 @@
    只改 `dsh-review/client.js` → webview 右键 Reload;改 `index.js` → 侧栏 Restart dsh;改扩展 `dsh-review-vscode/**` → **Cmd+Q** 整重启,并同步 `install.sh` 里写死的 `EXT_VER=`。装完重写 `~/.dsh/review/shadow/settings.json`(install.sh 会清空)。
 4. **验证**:hover/点击类 bug **不要用 ego-browser 复现**(CDP 合成鼠标事件 relatedTarget 失真,0.1.56 曾误判),以真实 VS Code webview + 扩展日志为准。
 
+## dsh-review 0.1.65–0.1.66 (2026-10-09, dsh 0.2.0-rc.2) — 仅客户端
+
+### 补:折叠版单文件卡片(标题 "Edited CHANGELOG.md" + 副标题 "Preview in sidebar")点击仍无反应
+- 日志证据:该卡片点击**没有任何 `fileOpen raw=` 行** → 根本没进拦截器:它不是 `button/a/[role=button]`,且文案 `Edited CHANGELOG.mdPreview in sidebar`(span 拼接无分隔)不匹配 0.1.64 判据
+- 修:①matcher 加 `^Edited\s+<name.ext>` 前缀提取(允许后接任意副标题文本);②监听器加**祖先上溯**——closest 找不到可点元素或判据不中时,从 e.target 向上最多 6 层逐节点跑 `fileOpenTargetPath`(纯文本判据依旧严格,散文节点不会误触)
+- 0.1.64 那种展开行(按钮形态)行为不变,日志同样 `[paste] fileOpen raw=...`
+- **0.1.66**:同一卡片里行标签可能带**工作区相对路径**前缀(`dsh-review/client.js`),0.1.64 的 `indexOf("/")<0` 把它们全毙了(实测:纯 basename 行绿、带目录行红)。放开斜杠限制(仍拒 `\`、glob 字符、绝对路径开头);扩展端 `openFileFromDsh` 本来就按 cwd/workspace 根解相对路径,零改动。**用户实测:展开卡片全部行可开 ✓(单文件折叠卡片待测)**
+
+
 ## dsh-review 0.1.64 (2026-10-09, dsh 0.2.0-rc.2) — 仅客户端
 
 ### 修:「Edited N files」汇总卡片的文件行点了打不开(实际是 dsh 原生预览打开又被宽度判定藏掉)

@@ -3494,9 +3494,29 @@ window.__ModuleLoader__.load({
         const full = (btn.textContent || "").trim();
         if (full.length > 1 && full.length <= 120 && full.indexOf("\n") < 0) {
           const cand = full.replace(/[+−+-]\d+\s*[−+-]\s*\d+\s*$/, "").trim();
-          if (cand.length > 1 && cand.indexOf("/") < 0 && cand.indexOf("\\") < 0 &&
-              /^[^/\\*?"<>|]+\.[A-Za-z][A-Za-z0-9]{0,7}$/.test(cand)) {
+          // 0.1.66: card rows may label files with a WORKSPACE-RELATIVE path
+          // ("dsh-review/client.js"), not just a bare basename — the extension
+          // resolves relative paths against the session cwd /
+          // workspace roots. So only reject backslashes and glob junk.
+          if (cand.length > 1 && cand.indexOf("\\") < 0 && cand.indexOf("*") < 0 &&
+              cand.indexOf("?") < 0 && cand.indexOf("<") < 0 && cand.indexOf(">") < 0 &&
+              cand.indexOf("|") < 0 && cand.charAt(0) !== "/" &&
+              /\.[A-Za-z][A-Za-z0-9]{0,7}$/.test(cand)) {
             return cand;
+          }
+        }
+        // Collapsed single-file card (0.1.65): title "Edited CHANGELOG.md" plus
+        // a "Preview in sidebar" subtitle; spans concatenate inside textContent
+        // ("Edited CHANGELOG.mdPreview in sidebar"). Take the basename out of
+        // the "Edited <name.ext>" prefix.
+        if (full.length > 1 && full.length <= 160 && full.indexOf("\n") < 0) {
+          const m = full.match(/^Edited\s+([^/\\\n]+?\.[A-Za-z][A-Za-z0-9]{0,7})/);
+          if (m && m[1]) {
+            const name = m[1].trim();
+            if (name.indexOf("*") < 0 && name.indexOf("?") < 0 && name.indexOf("<") < 0 &&
+                name.indexOf(">") < 0 && name.indexOf("|") < 0) {
+              return name;
+            }
           }
         }
         return null;
@@ -3508,8 +3528,21 @@ window.__ModuleLoader__.load({
             if (!(inVscodeIframe() || bridgeActive || vscodeIframeHint())) return;
             if (!reviewSettingsReady() || !getReviewSettings().openFilesInVscode) return;
             const btn = e.target && e.target.closest ? e.target.closest('button, a, [role="button"]') : null;
-            if (!btn) return;
-            const raw = fileOpenTargetPath(btn);
+            let raw = btn ? fileOpenTargetPath(btn) : null;
+            // Cards/rows are not always real buttons (the collapsed "Edited X"
+            // card is a plain div) — walk up to 6 ancestors and test each
+            // (0.1.65). The text-based matchers stay strict, so only
+            // file-card surfaces hit.
+            if (!raw) {
+              let node = e.target;
+              for (let i = 0; i < 6 && node && node !== document.body; i++) {
+                if (node.nodeType === 1) {
+                  raw = fileOpenTargetPath(node);
+                  if (raw) break;
+                }
+                node = node.parentElement;
+              }
+            }
             if (!raw) return;
             e.preventDefault();
             // dsh's own click handlers sit on document too (capture, registered
