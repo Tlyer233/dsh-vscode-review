@@ -21,6 +21,15 @@
    只改 `dsh-review/client.js` → webview 右键 Reload;改 `index.js` → 侧栏 Restart dsh;改扩展 `dsh-review-vscode/**` → **Cmd+Q** 整重启,并同步 `install.sh` 里写死的 `EXT_VER=`。装完重写 `~/.dsh/review/shadow/settings.json`(install.sh 会清空)。
 4. **验证**:hover/点击类 bug **不要用 ego-browser 复现**(CDP 合成鼠标事件 relatedTarget 失真,0.1.56 曾误判),以真实 VS Code webview + 扩展日志为准。
 
+## dsh-review 0.1.64 (2026-10-09, dsh 0.2.0-rc.2) — 仅客户端
+
+### 修:「Edited N files」汇总卡片的文件行点了打不开(实际是 dsh 原生预览打开又被宽度判定藏掉)
+- 链条(用户复述确认):点行 → dsh 原生预览打开 → 侧栏窄,dsh 宽度判定把预览面板隐藏(看似没反应)→ 拉宽侧栏才显示 → 鼠标一移,侧栏自动隐藏机制回收整栏 → 预览跟着没了。修法方向(用户定):这类行**直接拦到 VS Code 打开真实文件**,原生预览不触发,不碰自动隐藏机制
+- 改 1(matcher):这类行 DOM 无 title 路径、无 `_fileLink` 类 → 新判据=按钮整段文本是**单行带扩展名文件名**(先剥掉 `+7 −0` 统计后缀);散文按钮(全部接受/Skip/Next)不误触
+- 改 2(根治双触发):dsh 自己的 click 监听也挂在 document **捕获**阶段、注册在插件之后——`stopPropagation` 不停**同节点**其他监听,所以此前拦截后 dsh 预览照开(VS Code 编辑器与隐藏预览同时发生)。改 `stopImmediatePropagation`,命中的点击完全归插件
+- 审计日志:每次命中写 `[paste] fileOpen raw=<label>`,配合扩展 `openFile <abs>` 行对账;仅 VS Code 环境 + `openFilesInVscode` 开时生效,浏览器不受影响
+
+
 ## dsh-review 0.1.63 (2026-10-09, dsh 0.2.0-rc.2) — 仅扩展 0.1.21(杂物清理,无行为变化)
 
 - **日志自动清理**:每个 VS Code 窗口会话都会留一个 `2-dsh review  dsh.log`(两个空格),永久堆积。扩展激活 5s 后 `pruneOldReviewLogs()`:扫 Code logs 树,删除 **14 天未改动**的本插件日志(活动文件在写、mtime 新,天然跳过;失败静默)

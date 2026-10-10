@@ -3485,6 +3485,20 @@ window.__ModuleLoader__.load({
             }
           }
         }
+        // "Edited N files" summary-card rows (0.1.64): the label is a bare
+        // basename with an extension — no title, no fileLink class. Accept a
+        // single-line full-text basename match only, so prose buttons
+        // ("全部接受", "Skip", "Next") never fire. Row text may carry the
+        // "+7 −0" diff stats inside the same button — strip a trailing stat
+        // group before testing.
+        const full = (btn.textContent || "").trim();
+        if (full.length > 1 && full.length <= 120 && full.indexOf("\n") < 0) {
+          const cand = full.replace(/[+−+-]\d+\s*[−+-]\s*\d+\s*$/, "").trim();
+          if (cand.length > 1 && cand.indexOf("/") < 0 && cand.indexOf("\\") < 0 &&
+              /^[^/\\*?"<>|]+\.[A-Za-z][A-Za-z0-9]{0,7}$/.test(cand)) {
+            return cand;
+          }
+        }
         return null;
       }
       function fileOpenInstall() {
@@ -3498,7 +3512,13 @@ window.__ModuleLoader__.load({
             const raw = fileOpenTargetPath(btn);
             if (!raw) return;
             e.preventDefault();
-            e.stopPropagation();
+            // dsh's own click handlers sit on document too (capture, registered
+            // after ours). stopPropagation does NOT stop same-node listeners —
+            // the native preview still opened and hid itself via the width
+            // check. stopImmediatePropagation kills them: this click is
+            // ours now.
+            try { e.stopImmediatePropagation(); } catch (err) { e.stopPropagation(); }
+            postScopeMessage("dshPasteLog", { line: "fileOpen raw=" + raw });
             postScopeMessage("dshOpenFile", { path: raw, cwd: currentSessionCwd() });
           } catch (err) { /* noop */ }
         };
