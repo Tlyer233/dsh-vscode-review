@@ -1,5 +1,50 @@
 # Changelog
 
+## 维护指南:以后遇到"某种文件点了打不开 / 点不动"怎么处理(0.1.60 定稿,先查这页再动手)
+
+排查顺序(日志先行,别猜):
+
+1. **看扩展日志**(客户端拦截与扩展打开都会写这里):
+   `ls -t ~/Library/Application\ Support/Code/logs/*/window*/exthost/output_logging_*/"2-dsh review  dsh.log" | head -1`
+   ⚠ 文件名是**两个空格**;每次点击都会留一行 `openFile missing/failed/openFile <路径>`。
+2. **按现象对号入座**:
+
+   | 现象 | 结论 | 处理 |
+   | --- | --- | --- |
+   | 完全无日志(客户端没发 `dshOpenFile`) | 客户端拦截面没覆盖这个新表面 | 对照社区拦截表面表(dsh-artifact-viewer:工具行→textContent、chip/提及→title、md链接→href),在 client.js `fileOpenTargetPath` 加对应 DOM 特征;类名 token 两种 CSS-module 命名都要认(`_X_<hash>` 与 `<hash>_X`) |
+   | 日志 `openFile missing: X` | X 解析不到文件 | `:行号` 已剥、basename 截短标签已全库搜;仍没有 = 文件确实不存在,右下角已自动弹提示 |
+   | 日志 `openFile failed: Binary contents are not supported` | 文本通道拒二进制 | 已有 `vscode.open` 兜底,正常不该再现;再现=兜底没走到,查 `openFileFromDsh` 分支 |
+   | 日志 `openFile failed: <其他>` 且右下角弹"打开失败" | `vscode.open` 也开不了 = VS Code 没装能开该类型的编辑器(如 .psd/.excalidraw) | 属**编辑器生态问题**不是插件问题:装对应 VS Code 扩展即可;若需插件特殊处理某扩展名,在 `openFileFromDsh` 按扩展名加分支 |
+3. **改哪边装哪边,版本必须递增**(服务端按 rev 缓存合并 bundle,同版本号重装=下发旧代码):
+   只改 `dsh-review/client.js` → webview 右键 Reload;改 `index.js` → 侧栏 Restart dsh;改扩展 `dsh-review-vscode/**` → **Cmd+Q** 整重启,并同步 `install.sh` 里写死的 `EXT_VER=`。装完重写 `~/.dsh/review/shadow/settings.json`(install.sh 会清空)。
+4. **验证**:hover/点击类 bug **不要用 ego-browser 复现**(CDP 合成鼠标事件 relatedTarget 失真,0.1.56 曾误判),以真实 VS Code webview + 扩展日志为准。
+
+## dsh-review 0.1.60 (2026-10-09, dsh 0.2.0-rc.2) — 仅扩展 0.1.16
+
+### 修:图片(及一切二进制)点了弹"dsh: 打开失败" —— 用户要求"所有内容都可以打开"
+- 原因:`openTextDocument` 对 PNG 等二进制抛 `Binary contents are not supported`(截图:/tmp/after_wu.png Read 行),当时 catch 直接落"打开失败"提示
+- 修:文本打不开 → 回落 `vscode.commands.executeCommand('vscode.open', uri)`(VS Code 按类型路由:图片=内置图片查看器、pdf=注册的编辑器…任何可打开类型兜底);两者都失败才弹"打开失败"提示
+
+
+## dsh-review 0.1.59 (2026-10-09, dsh 0.2.0-rc.2) — 扩展 0.1.15
+
+### 修:工具行(Edit/Read 卡片)点了没反应;并加"文件未找到"右下角 1s 自动关闭提示(用户点名)
+- 0.1.58 实测:行内提及(`title`=完整路径)✓;工具行 ✗。扩展日志实锤收到的 raw=**`index.js:363`** —— 工具行 `.fileLink` 根本没有 chip 那条 title 路,路径来源=**显示文本**(exa 命中的社区拦截表面表原文:工具行→textContent、chip/提及→title),且 dsh 把标签渲染成**截短 basename + `:行号`** 后缀(官方 decision note:basename 仅在"本轮唯一"时才可解析——工具行标签不保证唯一)
+- 修(扩展):剥 `:行号`/`:行号-行号` 后缀(离线 5/5 用例;开文件不跳行,维持用户决定)→ 会话 cwd / 窗口工作区根解析 → 仍不中则 **workspace 全库 basename 搜索**(社区"先按已采集产物全路径匹配 basename"的等价物),候选里优先路径尾部与标签最匹配者、其次最短
+- 客户端:`_fileLink` 类名 token 两种 CSS-module 命名(`_fileLink_<hash>` 前导名 与 `<hash>_fileLink` 前导 hash)都匹配(两种命名在 dsh 各包并存,0.1.56 portal hash 陷阱同款教训)
+- 新提示:路径最终找不到(相对解析失败 / title 绝对路径已不存在 / 打开异常)→ **右下角 withProgress 通知 1s 自动关闭**(showInformationMessage 不会自动关,withProgress 是标准自动关闭姿势)+ 扩展日志照旧
+
+
+## dsh-review 0.1.58 (2026-10-09, dsh 0.2.0-rc.2) — 扩展 0.1.14
+
+### 新功能:点击对话里的文件 → 用 VS Code 编辑器打开(设置项默认开,可关回原生)
+- 原生机制(exa 查官方 README/docs):`ui-deliverables` 产物 chips / 行内代码文件提及 / 工具行 `.fileLink` 按钮全部走 owner `openFile`,web 客户端里它把文件开成**右侧栏 document-preview tab**(`openResource(dsh-resource://file/...)` → `ui-sidebar-documentpreview`)——在 VS Code 工作区里这预览和编辑器重复
+- 客户端:document **capture click** 拦截(社区先例 dsh-artifact-viewer/dsh-file-panel-left 同款拦截面)→ 目标= `button/a/[role=button]`,路径来源:chips/提及 `title`=完整路径(官方 README 保证);`.fileLink_` 按钮只有会话 cwd 相对显示文本 → 连同当前会话 cwd 一起 `postMessage dshOpenFile`
+- 扩展 `dsh-browser.js`:绝对路径直开;相对路径先按会话 cwd、再按本窗口工作区文件夹解析(存在性检查,查不到只写日志不猜)→ `openTextDocument + showTextDocument(preview:false)`
+- 门控:仅 VS Code 环境(iframe/bridge)且 `openFilesInVscode` 设置为 true(与其余开关同款 **settings-ready 门**——加载中不拦截,保已关用户);浏览器端完全不装,原生预览不变
+- 用户确认过的三项决定:拦截全部入口 / 默认开 / 不支持跳行(只开文件)
+
+
 ## dsh-review 0.1.57 (2026-10-09, dsh 0.2.0-rc.2)
 
 ### 修:鼠标移到菜单项上 → 整个侧栏内容隐藏、只剩菜单悬浮(0.1.56 修好 keep-alive 后暴露的碰撞)

@@ -14,7 +14,7 @@ const REVIEW_NS = 'dsh-review'
 /**
  * Minimal schemastery-shaped schema: callable resolver + toJSON for describe().
  * @param {unknown} value
- * @returns {{ enabled: boolean, fileSend: string, snippetSend: string, sidebarSide: string, jobsTerminal: boolean, scopeFilter: boolean, autoWorkspace: boolean }}
+ * @returns {{ enabled: boolean, fileSend: string, snippetSend: string, sidebarSide: string, jobsTerminal: boolean, scopeFilter: boolean, autoWorkspace: boolean, openFilesInVscode: boolean }}
  */
 function reviewConfigSchema(value) {
   const v = value && typeof value === 'object' ? value : {}
@@ -29,6 +29,9 @@ function reviewConfigSchema(value) {
     // as the fixed behaviour; the 0.1.46 toggles only let users opt out.
     scopeFilter: v.scopeFilter !== false,
     autoWorkspace: v.autoWorkspace !== false,
+    // On by default: in the VS Code workbench the built-in document preview
+    // duplicates the editor the user is already looking at.
+    openFilesInVscode: v.openFilesInVscode !== false,
   }
 }
 reviewConfigSchema.toJSON = function toJSON() {
@@ -42,6 +45,7 @@ reviewConfigSchema.toJSON = function toJSON() {
       jobsTerminal: { type: 'boolean', default: false },
       scopeFilter: { type: 'boolean', default: true },
       autoWorkspace: { type: 'boolean', default: true },
+      openFilesInVscode: { type: 'boolean', default: true },
     },
   }
 }

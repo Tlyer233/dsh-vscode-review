@@ -10,7 +10,110 @@
 
 const vscode = require('vscode')
 const fs = require('node:fs')
+const path = require('node:path')
 const { execFile } = require('node:child_process')
+
+/**
+ * Open a dsh-chat file reference in the editor (paired with plugin setting
+ * openFilesInVscode). Two path sources, per the community interception table:
+ * deliverables chips / inline mentions carry the FULL path in `title`
+ * (absolute, opens directly); tool-row .fileLink buttons only carry their
+ * display text, which dsh renders as a (possibly basename-truncated)
+ * session-cwd-relative path with a `:line` or `:line-line` suffix — the log
+ * proved labels like "index.js:363" reach us verbatim. Strip the line suffix
+ * (we open the file only, no line jump, per user decision), resolve against
+ * the session cwd then this window's workspace folders, and — the way the
+ * community resolves ambiguous basenames against collected artifacts —
+ * fall back to a workspace-wide basename search, preferring the candidate
+ * whose path ends with the label (closest full-path match), then shortest.
+ * @param {string} raw
+ * @param {string} cwd
+ */
+async function openFileFromDsh(raw, cwd) {
+  try {
+    if (!raw) return
+    let p = raw.trim()
+    // "index.js:363" / "a/b.ts:12-20" → path + ignored line hint.
+    const m = p.match(/^(.+?)[:#](\d+)(?:-\d+)?$/)
+    if (m && m[1]) p = m[1]
+    if (!path.isAbsolute(p)) {
+      const roots = []
+      if (cwd) roots.push(cwd)
+      for (const f of vscode.workspace.workspaceFolders || []) roots.push(f.uri.fsPath)
+      let hit = ''
+      for (const r of roots) {
+        try {
+          const cand = path.resolve(r, p)
+          if (fs.existsSync(cand)) { hit = cand; break }
+        } catch (e) { /* next root */ }
+      }
+      if (!hit) {
+        // dsh labels are basename-truncated (official decision note: the
+        // matcher only resolves a basename when it is unique among the
+        // turn's produced paths; ours is not). Search the workspace and
+        // prefer the candidate whose path ends with the label.
+        const base = path.basename(p)
+        const want = p.split('/').join(path.sep)
+        const found = await vscode.workspace.findFiles('**/' + base, '**/node_modules/**', 20)
+        let best = null
+        for (const uri of found) {
+          const fp = uri.fsPath
+          if (fp.endsWith(path.sep + want) && (!best || fp.length < best.length)) best = fp
+        }
+        if (!best) {
+          for (const uri of found) {
+            const fp = uri.fsPath
+            if (!best || fp.length < best.length) best = fp
+          }
+        }
+        hit = best || ''
+      }
+      if (!hit) { state.log('openFile missing: ' + raw); dshFileToast('dsh: 文件未找到 ' + raw); return }
+      p = hit
+    } else if (!fs.existsSync(p)) {
+      // Absolute path from a chip/mention title that no longer
+      // exists (deleted/moved file) — same user-visible outcome.
+      state.log('openFile missing: ' + raw)
+      dshFileToast('dsh: 文件未找到 ' + raw)
+      return
+    }
+    const uri = vscode.Uri.file(p)
+    let doc = null
+    try {
+      doc = await vscode.workspace.openTextDocument(uri)
+    } catch (e) {
+      // Images and other binaries reject openTextDocument
+      // ("Binary contents are not supported" — hit on /tmp/*.png Read rows)
+      // and there are file types with dedicated editors (pdf...).
+      // Fall through to the generic opener so ANY openable file opens.
+      doc = null
+    }
+    if (doc) {
+      await vscode.window.showTextDocument(doc, { preview: false })
+    } else {
+      await vscode.commands.executeCommand('vscode.open', uri)
+    }
+    state.log('openFile ' + p)
+  } catch (e) {
+    state.log('openFile failed: ' + String((e && e.message) || e))
+    dshFileToast('dsh: 打开失败 ' + raw)
+  }
+}
+
+/**
+ * Bottom-right notification that closes itself after ~1s (per user ask) —
+ * showInformationMessage never auto-dismisses, so a 1s withProgress task is
+ * the standard auto-close toast.
+ * @param {string} title
+ */
+function dshFileToast(title) {
+  try {
+    void vscode.window.withProgress(
+      { location: vscode.ProgressLocation.Notification, title: title },
+      () => new Promise((resolve) => setTimeout(resolve, 1000)),
+    )
+  } catch (e) { /* noop */ }
+}
 
 /** @type {{ dshView: any, dshVisible: boolean, lastScopeNoticeAt: number, lastScopeEmpty: boolean|null, log: (s: string) => void }} */
 const state = {
@@ -74,7 +177,7 @@ function saveIframeChrome(raw) {
 }
 
 function setLog(fn) {
-  state.log = typeof fn === 'function' ? fn : () => {}
+  state.log = typeof fn === 'function' ? fn : () => { }
 }
 
 /** @type {null | ((filePath: string) => Promise<boolean>)} */
@@ -738,6 +841,10 @@ function setupDshBrowser(context) {
         }
         if (msg.type === 'dshPasteLog') {
           state.log('[paste] ' + String(msg.line || ''))
+          return
+        }
+        if (msg.type === 'dshOpenFile') {
+          void openFileFromDsh(String(msg.path || ''), String(msg.cwd || ''))
           return
         }
         if (msg.type === 'dshBridgeHello') {

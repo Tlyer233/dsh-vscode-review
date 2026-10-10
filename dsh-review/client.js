@@ -567,13 +567,13 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * @returns {{ enabled: boolean, fileSend: string, snippetSend: string, sidebarSide: string, jobsTerminal: boolean, scopeFilter: boolean, autoWorkspace: boolean }}
+     * @returns {{ enabled: boolean, fileSend: string, snippetSend: string, sidebarSide: string, jobsTerminal: boolean, scopeFilter: boolean, autoWorkspace: boolean, openFilesInVscode: boolean }}
      * @description Live 设置 → 代码审查 values; defaults if the scope is not ready.
      */
     function getReviewSettings() {
       // Default to pointer: matches the user's persisted yaml choice; fence
       // is only used when the live scope explicitly says fence.
-      const d = { enabled: true, fileSend: "path", snippetSend: "pointer", sidebarSide: "left", jobsTerminal: false, scopeFilter: true, autoWorkspace: true };
+      const d = { enabled: true, fileSend: "path", snippetSend: "pointer", sidebarSide: "left", jobsTerminal: false, scopeFilter: true, autoWorkspace: true, openFilesInVscode: true };
       if (!reviewSettingsScope || typeof reviewSettingsScope.getSnapshot !== "function") return d;
       const snap = reviewSettingsScope.getSnapshot();
       const val = snap && snap.value;
@@ -590,6 +590,7 @@ window.__ModuleLoader__.load({
         jobsTerminal: v.jobsTerminal === true,
         scopeFilter: v.scopeFilter !== false,
         autoWorkspace: v.autoWorkspace !== false,
+        openFilesInVscode: v.openFilesInVscode !== false,
       };
     }
 
@@ -2390,254 +2391,279 @@ window.__ModuleLoader__.load({
         });
         ensureReviewCardCss();
         function ReviewSettingsCard() {
-            const snap = useSyncExternalStore(
-              function (onStore) { return reviewScope.subscribe(onStore); },
-              function () { return reviewScope.getSnapshot(); },
+          const snap = useSyncExternalStore(
+            function (onStore) { return reviewScope.subscribe(onStore); },
+            function () { return reviewScope.getSnapshot(); },
+          );
+          const [open, setOpen] = useState(false);
+          const [draftEnabled, setDraftEnabled] = useState(null);
+          const [draftFileSend, setDraftFileSend] = useState(null);
+          const [draftSnippetSend, setDraftSnippetSend] = useState(null);
+          const [draftSidebarSide, setDraftSidebarSide] = useState(null);
+          const [draftJobsTerminal, setDraftJobsTerminal] = useState(null);
+          const [draftScopeFilter, setDraftScopeFilter] = useState(null);
+          const [draftAutoWorkspace, setDraftAutoWorkspace] = useState(null);
+          const [draftOpenFilesVs, setDraftOpenFilesVs] = useState(null);
+          const [saving, setSaving] = useState(false);
+          const [failed, setFailed] = useState(false);
+          const live = getReviewSettings();
+          const liveEnabled = live.enabled;
+          const liveFileSend = live.fileSend;
+          const liveSnippetSend = live.snippetSend;
+          const liveSidebarSide = live.sidebarSide;
+          const liveJobsTerminal = live.jobsTerminal;
+          const liveScopeFilter = live.scopeFilter;
+          const liveAutoWorkspace = live.autoWorkspace;
+          const liveOpenFilesVs = live.openFilesInVscode;
+          const shownEnabled = draftEnabled == null ? liveEnabled : draftEnabled;
+          const shownFileSend = draftFileSend == null ? liveFileSend : draftFileSend;
+          const shownSnippetSend = draftSnippetSend == null ? liveSnippetSend : draftSnippetSend;
+          const shownSidebarSide = draftSidebarSide == null ? liveSidebarSide : draftSidebarSide;
+          const shownJobsTerminal = draftJobsTerminal == null ? liveJobsTerminal : draftJobsTerminal;
+          const shownScopeFilter = draftScopeFilter == null ? liveScopeFilter : draftScopeFilter;
+          const shownAutoWorkspace = draftAutoWorkspace == null ? liveAutoWorkspace : draftAutoWorkspace;
+          const shownOpenFilesVs = draftOpenFilesVs == null ? liveOpenFilesVs : draftOpenFilesVs;
+          const dirty = shownEnabled !== liveEnabled
+            || shownFileSend !== liveFileSend
+            || shownSnippetSend !== liveSnippetSend
+            || shownSidebarSide !== liveSidebarSide
+            || shownJobsTerminal !== liveJobsTerminal
+            || shownScopeFilter !== liveScopeFilter
+            || shownAutoWorkspace !== liveAutoWorkspace
+            || shownOpenFilesVs !== liveOpenFilesVs;
+          const available = snap && snap.status === "ready";
+          const writable = !!(snap && snap.writable);
+
+          useEffect(function () {
+            setDraftEnabled(null);
+            setDraftFileSend(null);
+            setDraftSnippetSend(null);
+            setDraftSidebarSide(null);
+            setDraftJobsTerminal(null);
+            setDraftScopeFilter(null);
+            setDraftAutoWorkspace(null);
+            setDraftOpenFilesVs(null);
+            setFailed(false);
+          }, [liveEnabled, liveFileSend, liveSnippetSend, liveSidebarSide, liveJobsTerminal, liveScopeFilter, liveAutoWorkspace, liveOpenFilesVs]);
+
+          if (!available) return null;
+
+          function discardDraft() {
+            setDraftEnabled(null);
+            setDraftFileSend(null);
+            setDraftSnippetSend(null);
+            setDraftSidebarSide(null);
+            setDraftJobsTerminal(null);
+            setDraftScopeFilter(null);
+            setDraftAutoWorkspace(null);
+            setDraftOpenFilesVs(null);
+            setFailed(false);
+          }
+
+          /**
+           * @description Sequential set() so revision fencing does not collide.
+           */
+          function saveDraft() {
+            setSaving(true);
+            setFailed(false);
+            let chain = Promise.resolve();
+            if (shownEnabled !== liveEnabled) {
+              chain = chain.then(function () { return reviewScope.set("enabled", shownEnabled); });
+            }
+            if (shownFileSend !== liveFileSend) {
+              chain = chain.then(function () { return reviewScope.set("fileSend", shownFileSend); });
+            }
+            if (shownSnippetSend !== liveSnippetSend) {
+              chain = chain.then(function () { return reviewScope.set("snippetSend", shownSnippetSend); });
+            }
+            if (shownSidebarSide !== liveSidebarSide) {
+              chain = chain.then(function () { return reviewScope.set("sidebarSide", shownSidebarSide); });
+            }
+            if (shownJobsTerminal !== liveJobsTerminal) {
+              chain = chain.then(function () { return reviewScope.set("jobsTerminal", shownJobsTerminal); });
+            }
+            if (shownScopeFilter !== liveScopeFilter) {
+              chain = chain.then(function () { return reviewScope.set("scopeFilter", shownScopeFilter); });
+            }
+            if (shownAutoWorkspace !== liveAutoWorkspace) {
+              chain = chain.then(function () { return reviewScope.set("autoWorkspace", shownAutoWorkspace); });
+            }
+            if (shownOpenFilesVs !== liveOpenFilesVs) {
+              chain = chain.then(function () { return reviewScope.set("openFilesInVscode", shownOpenFilesVs); });
+            }
+            chain.then(
+              function () { setSaving(false); discardDraft(); applyRailSideFromSettings(); },
+              function () { setSaving(false); setFailed(true); },
             );
-            const [open, setOpen] = useState(false);
-            const [draftEnabled, setDraftEnabled] = useState(null);
-            const [draftFileSend, setDraftFileSend] = useState(null);
-            const [draftSnippetSend, setDraftSnippetSend] = useState(null);
-            const [draftSidebarSide, setDraftSidebarSide] = useState(null);
-            const [draftJobsTerminal, setDraftJobsTerminal] = useState(null);
-            const [draftScopeFilter, setDraftScopeFilter] = useState(null);
-            const [draftAutoWorkspace, setDraftAutoWorkspace] = useState(null);
-            const [saving, setSaving] = useState(false);
-            const [failed, setFailed] = useState(false);
-            const live = getReviewSettings();
-            const liveEnabled = live.enabled;
-            const liveFileSend = live.fileSend;
-            const liveSnippetSend = live.snippetSend;
-            const liveSidebarSide = live.sidebarSide;
-            const liveJobsTerminal = live.jobsTerminal;
-            const liveScopeFilter = live.scopeFilter;
-            const liveAutoWorkspace = live.autoWorkspace;
-            const shownEnabled = draftEnabled == null ? liveEnabled : draftEnabled;
-            const shownFileSend = draftFileSend == null ? liveFileSend : draftFileSend;
-            const shownSnippetSend = draftSnippetSend == null ? liveSnippetSend : draftSnippetSend;
-            const shownSidebarSide = draftSidebarSide == null ? liveSidebarSide : draftSidebarSide;
-            const shownJobsTerminal = draftJobsTerminal == null ? liveJobsTerminal : draftJobsTerminal;
-            const shownScopeFilter = draftScopeFilter == null ? liveScopeFilter : draftScopeFilter;
-            const shownAutoWorkspace = draftAutoWorkspace == null ? liveAutoWorkspace : draftAutoWorkspace;
-            const dirty = shownEnabled !== liveEnabled
-              || shownFileSend !== liveFileSend
-              || shownSnippetSend !== liveSnippetSend
-              || shownSidebarSide !== liveSidebarSide
-              || shownJobsTerminal !== liveJobsTerminal
-              || shownScopeFilter !== liveScopeFilter
-              || shownAutoWorkspace !== liveAutoWorkspace;
-            const available = snap && snap.status === "ready";
-            const writable = !!(snap && snap.writable);
+          }
 
-            useEffect(function () {
-              setDraftEnabled(null);
-              setDraftFileSend(null);
-              setDraftSnippetSend(null);
-              setDraftSidebarSide(null);
-              setDraftJobsTerminal(null);
-              setDraftScopeFilter(null);
-              setDraftAutoWorkspace(null);
-              setFailed(false);
-            }, [liveEnabled, liveFileSend, liveSnippetSend, liveSidebarSide, liveJobsTerminal, liveScopeFilter, liveAutoWorkspace]);
-
-            if (!available) return null;
-
-            function discardDraft() {
-              setDraftEnabled(null);
-              setDraftFileSend(null);
-              setDraftSnippetSend(null);
-              setDraftSidebarSide(null);
-              setDraftJobsTerminal(null);
-              setDraftScopeFilter(null);
-              setDraftAutoWorkspace(null);
-              setFailed(false);
-            }
-
-            /**
-             * @description Sequential set() so revision fencing does not collide.
-             */
-            function saveDraft() {
-              setSaving(true);
-              setFailed(false);
-              let chain = Promise.resolve();
-              if (shownEnabled !== liveEnabled) {
-                chain = chain.then(function () { return reviewScope.set("enabled", shownEnabled); });
-              }
-              if (shownFileSend !== liveFileSend) {
-                chain = chain.then(function () { return reviewScope.set("fileSend", shownFileSend); });
-              }
-              if (shownSnippetSend !== liveSnippetSend) {
-                chain = chain.then(function () { return reviewScope.set("snippetSend", shownSnippetSend); });
-              }
-              if (shownSidebarSide !== liveSidebarSide) {
-                chain = chain.then(function () { return reviewScope.set("sidebarSide", shownSidebarSide); });
-              }
-              if (shownJobsTerminal !== liveJobsTerminal) {
-                chain = chain.then(function () { return reviewScope.set("jobsTerminal", shownJobsTerminal); });
-              }
-              if (shownScopeFilter !== liveScopeFilter) {
-                chain = chain.then(function () { return reviewScope.set("scopeFilter", shownScopeFilter); });
-              }
-              if (shownAutoWorkspace !== liveAutoWorkspace) {
-                chain = chain.then(function () { return reviewScope.set("autoWorkspace", shownAutoWorkspace); });
-              }
-              chain.then(
-                function () { setSaving(false); discardDraft(); applyRailSideFromSettings(); },
-                function () { setSaving(false); setFailed(true); },
-              );
-            }
-
-            return h("li", { className: "dshr-card" + (open ? " dshr-cardOpen" : "") },
-              h("button", {
-                type: "button",
-                className: "dshr-header",
-                "aria-expanded": open,
-                onClick: function () { setOpen(!open); },
-              },
-                h("span", { className: "dshr-headText" },
-                  h("span", { className: "dshr-name" }, "代码审查"),
-                  h("span", { className: "dshr-description" }, "待审、侧栏贴边位置、任务终端、工作区会话显示，以及拖入文件 / 代码段时发给模型的格式。"),
-                ),
-                h("span", {
-                  className: "dshr-chevron" + (open ? " dshr-chevronOpen" : ""),
-                  "aria-hidden": true,
-                }, "▾"),
+          return h("li", { className: "dshr-card" + (open ? " dshr-cardOpen" : "") },
+            h("button", {
+              type: "button",
+              className: "dshr-header",
+              "aria-expanded": open,
+              onClick: function () { setOpen(!open); },
+            },
+              h("span", { className: "dshr-headText" },
+                h("span", { className: "dshr-name" }, "代码审查"),
+                h("span", { className: "dshr-description" }, "待审、侧栏贴边位置、任务终端、工作区会话显示，以及拖入文件 / 代码段时发给模型的格式。"),
               ),
-              open ? h("div", { className: "dshr-body" },
+              h("span", {
+                className: "dshr-chevron" + (open ? " dshr-chevronOpen" : ""),
+                "aria-hidden": true,
+              }, "▾"),
+            ),
+            open ? h("div", { className: "dshr-body" },
+              h("div", { className: "dshr-field" },
+                h("input", {
+                  id: "dshr-enabled",
+                  type: "checkbox",
+                  checked: shownEnabled,
+                  disabled: !writable || saving,
+                  onChange: function (e) {
+                    setDraftEnabled(!!e.target.checked);
+                    setFailed(false);
+                  },
+                }),
+                h("div", null,
+                  h("label", { htmlFor: "dshr-enabled" }, "启用代码审查"),
+                  h("p", { className: "dshr-hint" }, "关闭后新的工具写入不再进入待审。已打开的审查不受影响。"),
+                ),
+              ),
+              h("div", { className: "dshr-stack" },
                 h("div", { className: "dshr-field" },
-                  h("input", {
-                    id: "dshr-enabled",
-                    type: "checkbox",
-                    checked: shownEnabled,
+                  h("label", { htmlFor: "dshr-file-send" }, "拖入文件时发给模型"),
+                  h("select", {
+                    id: "dshr-file-send",
+                    className: "dshr-select",
+                    value: shownFileSend,
                     disabled: !writable || saving,
                     onChange: function (e) {
-                      setDraftEnabled(!!e.target.checked);
+                      setDraftFileSend(e.target.value);
                       setFailed(false);
                     },
-                  }),
-                  h("div", null,
-                    h("label", { htmlFor: "dshr-enabled" }, "启用代码审查"),
-                    h("p", { className: "dshr-hint" }, "关闭后新的工具写入不再进入待审。已打开的审查不受影响。"),
+                  },
+                    h("option", { value: "path" }, "`file_path`（反引号包路径）"),
+                    h("option", { value: "prefixed" }, "文件: `file_path`"),
                   ),
-                ),
-                h("div", { className: "dshr-stack" },
-                  h("div", { className: "dshr-field" },
-                    h("label", { htmlFor: "dshr-file-send" }, "拖入文件时发给模型"),
-                    h("select", {
-                      id: "dshr-file-send",
-                      className: "dshr-select",
-                      value: shownFileSend,
-                      disabled: !writable || saving,
-                      onChange: function (e) {
-                        setDraftFileSend(e.target.value);
-                        setFailed(false);
-                      },
-                    },
-                      h("option", { value: "path" }, "`file_path`（反引号包路径）"),
-                      h("option", { value: "prefixed" }, "文件: `file_path`"),
-                    ),
-                    h("p", { className: "dshr-hint" }, "路径带反引号，避免 / 被当成 skill。输入框仍是文件名 chip。"),
-                  ),
-                  h("div", { className: "dshr-field" },
-                    h("label", { htmlFor: "dshr-snippet-send" }, "拖入代码段时发给模型"),
-                    h("select", {
-                      id: "dshr-snippet-send",
-                      className: "dshr-select",
-                      value: shownSnippetSend,
-                      disabled: !writable || saving,
-                      onChange: function (e) {
-                        setDraftSnippetSend(e.target.value);
-                        setFailed(false);
-                      },
-                    },
-                      h("option", { value: "fence" }, "整段正文（围栏，无语言）"),
-                      h("option", { value: "pointer" }, "`file_path` L1~L2"),
-                    ),
-                    h("p", { className: "dshr-hint" }, "整段：插入时快照正文；chip 仍显示「文件名 L1~L2」。指针模式路径同样带反引号。"),
-                  ),
-                  h("div", { className: "dshr-field" },
-                    h("label", { htmlFor: "dshr-rail-side" }, "侧栏位置"),
-                    h("select", {
-                      id: "dshr-rail-side",
-                      className: "dshr-select",
-                      value: shownSidebarSide,
-                      disabled: !writable || saving,
-                      onChange: function (e) {
-                        setDraftSidebarSide(e.target.value);
-                        setFailed(false);
-                      },
-                    },
-                      h("option", { value: "left" }, "左侧"),
-                      h("option", { value: "right" }, "右侧"),
-                    ),
-                    h("p", { className: "dshr-hint" }, "dsh 会话侧栏贴窗口左/右边缘（VS Code 侧栏内生效，保存后立即换边）。"),
-                  ),
+                  h("p", { className: "dshr-hint" }, "路径带反引号，避免 / 被当成 skill。输入框仍是文件名 chip。"),
                 ),
                 h("div", { className: "dshr-field" },
-                  h("input", {
-                    id: "dshr-jobs-terminal",
-                    type: "checkbox",
-                    checked: shownJobsTerminal,
+                  h("label", { htmlFor: "dshr-snippet-send" }, "拖入代码段时发给模型"),
+                  h("select", {
+                    id: "dshr-snippet-send",
+                    className: "dshr-select",
+                    value: shownSnippetSend,
                     disabled: !writable || saving,
                     onChange: function (e) {
-                      setDraftJobsTerminal(!!e.target.checked);
+                      setDraftSnippetSend(e.target.value);
                       setFailed(false);
                     },
-                  }),
-                  h("div", null,
-                    h("label", { htmlFor: "dshr-jobs-terminal" }, "在 VS Code 显示任务终端"),
-                    h("p", { className: "dshr-hint" }, "开启后 agent 的后台 bash 任务才会在 VS Code 弹出只读终端标签；关闭只影响之后的新任务，已打开的终端不受影响。默认关。"),
+                  },
+                    h("option", { value: "fence" }, "整段正文（围栏，无语言）"),
+                    h("option", { value: "pointer" }, "`file_path` L1~L2"),
                   ),
+                  h("p", { className: "dshr-hint" }, "整段：插入时快照正文；chip 仍显示「文件名 L1~L2」。指针模式路径同样带反引号。"),
                 ),
                 h("div", { className: "dshr-field" },
-                  h("input", {
-                    id: "dshr-scope-filter",
-                    type: "checkbox",
-                    checked: shownScopeFilter,
+                  h("label", { htmlFor: "dshr-rail-side" }, "侧栏位置"),
+                  h("select", {
+                    id: "dshr-rail-side",
+                    className: "dshr-select",
+                    value: shownSidebarSide,
                     disabled: !writable || saving,
                     onChange: function (e) {
-                      setDraftScopeFilter(!!e.target.checked);
+                      setDraftSidebarSide(e.target.value);
                       setFailed(false);
                     },
-                  }),
-                  h("div", null,
-                    h("label", { htmlFor: "dshr-scope-filter" }, "侧栏只显示当前工作区的对话"),
-                    h("p", { className: "dshr-hint" }, "VS Code 侧栏会话列表隐藏其他工作区的分组与会话（分组 / 排序 / 归档筛选照常可用）。关闭后 VS Code 侧栏显示全部对话。浏览器打开不受影响。默认开。"),
+                  },
+                    h("option", { value: "left" }, "左侧"),
+                    h("option", { value: "right" }, "右侧"),
                   ),
+                  h("p", { className: "dshr-hint" }, "dsh 会话侧栏贴窗口左/右边缘（VS Code 侧栏内生效，保存后立即换边）。"),
                 ),
-                h("div", { className: "dshr-field" },
-                  h("input", {
-                    id: "dshr-auto-workspace",
-                    type: "checkbox",
-                    checked: shownAutoWorkspace,
-                    disabled: !writable || saving,
-                    onChange: function (e) {
-                      setDraftAutoWorkspace(!!e.target.checked);
-                      setFailed(false);
-                    },
-                  }),
-                  h("div", null,
-                    h("label", { htmlFor: "dshr-auto-workspace" }, "自动为新文件夹创建工作区"),
-                    h("p", { className: "dshr-hint" }, "VS Code 打开的文件夹若从未在 dsh 注册（如单独打开子文件夹），自动为它创建 dsh 工作区并在那里开新会话。关闭后这类窗口返回 dsh 首页并提示。默认开。"),
-                  ),
+              ),
+              h("div", { className: "dshr-field" },
+                h("input", {
+                  id: "dshr-jobs-terminal",
+                  type: "checkbox",
+                  checked: shownJobsTerminal,
+                  disabled: !writable || saving,
+                  onChange: function (e) {
+                    setDraftJobsTerminal(!!e.target.checked);
+                    setFailed(false);
+                  },
+                }),
+                h("div", null,
+                  h("label", { htmlFor: "dshr-jobs-terminal" }, "在 VS Code 显示任务终端"),
+                  h("p", { className: "dshr-hint" }, "开启后 agent 的后台 bash 任务才会在 VS Code 弹出只读终端标签；关闭只影响之后的新任务，已打开的终端不受影响。默认关。"),
                 ),
-                h("div", { className: "dshr-footer" },
-                  failed ? h("p", { className: "dshr-failed", role: "status" }, "保存失败") : null,
-                  h("button", {
-                    type: "button",
-                    className: "dshr-discard",
-                    disabled: !dirty || saving,
-                    onClick: discardDraft,
-                  }, "放弃"),
-                  h("button", {
-                    type: "button",
-                    className: "dshr-save",
-                    disabled: !dirty || saving || !writable,
-                    onClick: saveDraft,
-                  }, saving ? "保存中" : "保存"),
+              ),
+              h("div", { className: "dshr-field" },
+                h("input", {
+                  id: "dshr-scope-filter",
+                  type: "checkbox",
+                  checked: shownScopeFilter,
+                  disabled: !writable || saving,
+                  onChange: function (e) {
+                    setDraftScopeFilter(!!e.target.checked);
+                    setFailed(false);
+                  },
+                }),
+                h("div", null,
+                  h("label", { htmlFor: "dshr-scope-filter" }, "侧栏只显示当前工作区的对话"),
+                  h("p", { className: "dshr-hint" }, "VS Code 侧栏会话列表隐藏其他工作区的分组与会话（分组 / 排序 / 归档筛选照常可用）。关闭后 VS Code 侧栏显示全部对话。浏览器打开不受影响。默认开。"),
                 ),
-              ) : null,
-            );
+              ),
+              h("div", { className: "dshr-field" },
+                h("input", {
+                  id: "dshr-auto-workspace",
+                  type: "checkbox",
+                  checked: shownAutoWorkspace,
+                  disabled: !writable || saving,
+                  onChange: function (e) {
+                    setDraftAutoWorkspace(!!e.target.checked);
+                    setFailed(false);
+                  },
+                }),
+                h("div", null,
+                  h("label", { htmlFor: "dshr-auto-workspace" }, "自动为新文件夹创建工作区"),
+                  h("p", { className: "dshr-hint" }, "VS Code 打开的文件夹若从未在 dsh 注册（如单独打开子文件夹），自动为它创建 dsh 工作区并在那里开新会话。关闭后这类窗口返回 dsh 首页并提示。默认开。"),
+                ),
+              ),
+              h("div", { className: "dshr-field" },
+                h("input", {
+                  id: "dshr-open-files-vs",
+                  type: "checkbox",
+                  checked: shownOpenFilesVs,
+                  disabled: !writable || saving,
+                  onChange: function (e) {
+                    setDraftOpenFilesVs(!!e.target.checked);
+                    setFailed(false);
+                  },
+                }),
+                h("div", null,
+                  h("label", { htmlFor: "dshr-open-files-vs" }, "点击文件用 VS Code 编辑器打开"),
+                  h("p", { className: "dshr-hint" }, "点击对话里的文件链接 / 产物卡片 / 行内文件提及时,在 VS Code 编辑器打开该文件,而不是 dsh 内置预览(仅 VS Code 侧栏内生效;关闭后恢复 dsh 原生预览)。默认开。"),
+                ),
+              ),
+              h("div", { className: "dshr-footer" },
+                failed ? h("p", { className: "dshr-failed", role: "status" }, "保存失败") : null,
+                h("button", {
+                  type: "button",
+                  className: "dshr-discard",
+                  disabled: !dirty || saving,
+                  onClick: discardDraft,
+                }, "放弃"),
+                h("button", {
+                  type: "button",
+                  className: "dshr-save",
+                  disabled: !dirty || saving || !writable,
+                  onClick: saveDraft,
+                }, saving ? "保存中" : "保存"),
+              ),
+            ) : null,
+          );
         }
         sctx.effect(function () {
           const registered = [];
@@ -3422,12 +3448,76 @@ window.__ModuleLoader__.load({
         } catch (err) { menuPatchObserver = null; }
       }
 
+      // ---- Open clicked files in the VS Code editor (0.1.58) -----------------
+      // dsh routes every clickable file reference — turnTail produced-file
+      // chips, inline-code file mentions, and tool-row .fileLink buttons —
+      // through the owner openFile, which on the web client opens a
+      // document-preview tab in the right sidebar (dsh-resource://file →
+      // ui-sidebar-documentpreview). In the VS Code workbench that preview
+      // duplicates the editor the user is already looking at, so with the
+      // openFilesInVscode setting on (default) we capture those clicks and
+      // post the path to the extension (dshOpenFile → openTextDocument).
+      // Path source per the official ui-deliverables README: chips and
+      // mentions carry the FULL path in title; .fileLink buttons only show
+      // session-cwd-relative text, so relative paths are resolved host-side
+      // against the session cwd + window workspace folders.
+      let fileOpenListener = null;
+      function currentSessionCwd() {
+        try {
+          const ssnap = ctx.sessions.list.getSnapshot();
+          const id = ssnap && ssnap.current;
+          const rec = id && ssnap.byId ? ssnap.byId[id] : null;
+          return rec && rec.cwd ? String(rec.cwd) : "";
+        } catch (err) { return ""; }
+      }
+      function fileOpenTargetPath(btn) {
+        const title = btn.getAttribute && btn.getAttribute("title");
+        if (typeof title === "string" && title.charAt(0) === "/") return title;
+        if (btn.classList) {
+          for (let j = 0; j < btn.classList.length; j++) {
+            // CSS-module token for the tool-row link appears in BOTH naming
+            // schemes across dsh packages ("_fileLink_<hash>" leading-name,
+            // and "<hash>_fileLink" leading-hash) — match either.
+            const t = btn.classList[j];
+            if (t.indexOf("_fileLink_") === 0 || (t.length > 9 && t.endsWith("_fileLink"))) {
+              const txt = (btn.textContent || "").trim();
+              if (txt) return txt;
+            }
+          }
+        }
+        return null;
+      }
+      function fileOpenInstall() {
+        if (fileOpenListener) return;
+        fileOpenListener = function (e) {
+          try {
+            if (!(inVscodeIframe() || bridgeActive || vscodeIframeHint())) return;
+            if (!reviewSettingsReady() || !getReviewSettings().openFilesInVscode) return;
+            const btn = e.target && e.target.closest ? e.target.closest('button, a, [role="button"]') : null;
+            if (!btn) return;
+            const raw = fileOpenTargetPath(btn);
+            if (!raw) return;
+            e.preventDefault();
+            e.stopPropagation();
+            postScopeMessage("dshOpenFile", { path: raw, cwd: currentSessionCwd() });
+          } catch (err) { /* noop */ }
+        };
+        try { document.addEventListener("click", fileOpenListener, true); } catch (err) { fileOpenListener = null; }
+      }
+      function fileOpenTeardown() {
+        if (fileOpenListener) {
+          try { document.removeEventListener("click", fileOpenListener, true); } catch (err) { /* noop */ }
+          fileOpenListener = null;
+        }
+      }
+
       scopeWatchdogTick = checkWorkbenchScope;
       const wsFilterScopeHook = function () { try { wsFilterInstall(); } catch (err) { /* noop */ } };
       scopeChangeListeners.push(wsFilterScopeHook);
       ctx.effect(function () {
         // Always-on whitelist listener (must not depend on Dock mount).
         try { menuPatchInstall(); } catch (err) { /* noop */ }
+        try { fileOpenInstall(); } catch (err) { /* noop */ }
         function onScopeFromHost(event) {
           const msg = event.data;
           if (!msg || msg.type !== "dshSetScope") return;
@@ -3443,6 +3533,7 @@ window.__ModuleLoader__.load({
           const hookAt = scopeChangeListeners.indexOf(wsFilterScopeHook);
           if (hookAt >= 0) scopeChangeListeners.splice(hookAt, 1);
           try { if (menuPatchObserver) { menuPatchObserver.disconnect(); menuPatchObserver = null; } } catch (err) { /* noop */ }
+          fileOpenTeardown();
           wsFilterTeardown();
         };
       }, "dsh-review: workbench scope watchdog");
