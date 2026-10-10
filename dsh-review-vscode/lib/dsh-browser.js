@@ -11,6 +11,7 @@
 const vscode = require('vscode')
 const fs = require('node:fs')
 const path = require('node:path')
+const electron = require('electron')
 const { execFile } = require('node:child_process')
 
 /**
@@ -741,6 +742,34 @@ function webviewDropPaths(raws) {
   return out
 }
 
+/**
+ * macOS: real file paths of a Finder "Copy" clipboard payload.
+ * Finder Cmd+C stores only a file promise (NSFilenamesPboardType plist) — no
+ * bytes — which is why pasting into the dsh webview yields an empty chip.
+ * The extension host sees the OS clipboard, so it resolves the paths.
+ * @returns {string[]} existing absolute paths, empty when the clipboard holds
+ *   bitmaps (screenshot copy) or nothing file-shaped.
+ */
+function clipboardFilePaths () {
+  if (process.platform !== 'darwin') return []
+  try {
+    const buf = electron.clipboard.readBuffer('NSFilenamesPboardType')
+    if (!buf || !buf.length) return []
+    const xml = buf.toString('utf8')
+    const out = []
+    const re = /<string>([^<]+)<\/string>/g
+    let m
+    while ((m = re.exec(xml))) {
+      const p = m[1].replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+      if (p && fs.existsSync(p)) out.push(p)
+    }
+    return out
+  } catch (e) {
+    state.log('clipboardFilePaths failed: ' + String(e && e.message || e))
+    return []
+  }
+}
+
 async function sendRefsToDsh(refs, fallbackText) {
   if (!Array.isArray(refs) || refs.length === 0) return sendTextToDsh(fallbackText)
   await focusDshSidebar()
@@ -845,6 +874,23 @@ function setupDshBrowser(context) {
         }
         if (msg.type === 'dshOpenFile') {
           void openFileFromDsh(String(msg.path || ''), String(msg.cwd || ''))
+          return
+        }
+        if (msg.type === 'dshPasteFileRef') {
+          // Client saw a size-0 Files paste (Finder file promise) and swallowed
+          // it; resolve the real paths from the OS clipboard and insert through
+          // the normal send-to-dsh native reference channel.
+          const paths = clipboardFilePaths()
+          state.log('paste file-ref names=' + JSON.stringify(msg.names || []) + ' paths=' + paths.length)
+          if (paths.length) {
+            const refs = paths.map((p) => ({
+              kind: fs.existsSync(p) && fs.statSync(p).isDirectory() ? 'folder' : 'file',
+              path: p,
+            }))
+            void sendRefsToDsh(refs, paths.join('\n'))
+          } else {
+            state.log('paste file-ref: clipboard has no file paths (bitmap paste stays native)')
+          }
           return
         }
         if (msg.type === 'dshBridgeHello') {
@@ -961,6 +1007,21 @@ function setupDshBrowser(context) {
         if (msg.type === 'dshCopyText' && typeof msg.text === 'string') {
           void vscode.env.clipboard.writeText(msg.text)
         } else if (msg.type === 'dshPasteRequest') {
+          // macOS Finder "Copy" of file(s): the pasteboard carries a file
+          // promise PLUS the file's ICON bitmap (and its name
+          // as text). The old bridge pasted exactly those two junk flavors —
+          // filename text + icon image cards. When the clipboard has real file
+          // paths, insert native reference chips instead and skip both.
+          const clipPaths = clipboardFilePaths()
+          if (clipPaths.length) {
+            state.log('paste: file-promise clipboard -> refs n=' + clipPaths.length)
+            const refs = clipPaths.map((p) => ({
+              kind: fs.existsSync(p) && fs.statSync(p).isDirectory() ? 'folder' : 'file',
+              path: p,
+            }))
+            void sendRefsToDsh(refs, clipPaths.join('\n'))
+            return
+          }
           vscode.env.clipboard.readText().then((text) => {
             void view.webview.postMessage({ type: 'dshPasteText', text: String(text ?? '') })
           }, () => { /* noop */ })

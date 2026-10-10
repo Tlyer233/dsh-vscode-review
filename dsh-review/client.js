@@ -3511,6 +3511,52 @@ window.__ModuleLoader__.load({
         }
       }
 
+      // ---- Finder file-paste into the VS Code webview (0.1.63) --------
+      // Finder Cmd+C on a file puts only a FILE PROMISE on the clipboard
+      // (no pixels — that is why the pasted chip is empty). Browsers
+      // materialize the promise into a real File; the VS Code webview clipboard
+      // bridge hands us a size-0 placeholder, so dsh's native rail gets no
+      // bytes. When a Files paste carries no bytes at all, swallow it and ask
+      // the extension host, which reads the real paths out of the macOS
+      // clipboard (NSFilenamesPboardType) and inserts them through the normal
+      // "send to dsh" native reference channel (dshInsertRefs). Screenshots
+      // and "copy image" carry real bytes (size > 0) and stay untouched.
+      let pasteGuardListener = null;
+      function pasteGuardInstall() {
+        if (pasteGuardListener) return;
+        pasteGuardListener = function (e) {
+          try {
+            if (!(inVscodeIframe() || bridgeActive || vscodeIframeHint())) return;
+            const dt = e.clipboardData;
+            if (!dt) return;
+            const files = dt.files ? Array.prototype.slice.call(dt.files) : [];
+            if (!files.length) return;
+            const parts = [];
+            let allEmpty = true;
+            for (let i = 0; i < files.length; i++) {
+              const f = files[i];
+              const size = (f && f.size) || 0;
+              if (size > 0) allEmpty = false;
+              parts.push(((f && f.name) || "?") + ":" + size);
+            }
+            postScopeMessage("dshPasteLog", { line: "files[" + parts.join(", ") + "]" + (allEmpty ? " placeholder" : "") });
+            if (!allEmpty) return;
+            e.preventDefault();
+            e.stopPropagation();
+            postScopeMessage("dshPasteFileRef", {
+              names: files.map(function (f) { return (f && f.name) || ""; }),
+            });
+          } catch (err) { /* noop */ }
+        };
+        try { document.addEventListener("paste", pasteGuardListener, true); } catch (err) { pasteGuardListener = null; }
+      }
+      function pasteGuardTeardown() {
+        if (pasteGuardListener) {
+          try { document.removeEventListener("paste", pasteGuardListener, true); } catch (err) { /* noop */ }
+          pasteGuardListener = null;
+        }
+      }
+
       scopeWatchdogTick = checkWorkbenchScope;
       const wsFilterScopeHook = function () { try { wsFilterInstall(); } catch (err) { /* noop */ } };
       scopeChangeListeners.push(wsFilterScopeHook);
@@ -3518,6 +3564,7 @@ window.__ModuleLoader__.load({
         // Always-on whitelist listener (must not depend on Dock mount).
         try { menuPatchInstall(); } catch (err) { /* noop */ }
         try { fileOpenInstall(); } catch (err) { /* noop */ }
+        try { pasteGuardInstall(); } catch (err) { /* noop */ }
         function onScopeFromHost(event) {
           const msg = event.data;
           if (!msg || msg.type !== "dshSetScope") return;
@@ -3534,6 +3581,7 @@ window.__ModuleLoader__.load({
           if (hookAt >= 0) scopeChangeListeners.splice(hookAt, 1);
           try { if (menuPatchObserver) { menuPatchObserver.disconnect(); menuPatchObserver = null; } } catch (err) { /* noop */ }
           fileOpenTeardown();
+          pasteGuardTeardown();
           wsFilterTeardown();
         };
       }, "dsh-review: workbench scope watchdog");

@@ -15,9 +15,45 @@
    | 日志 `openFile missing: X` | X 解析不到文件 | `:行号` 已剥、basename 截短标签已全库搜;仍没有 = 文件确实不存在,右下角已自动弹提示 |
    | 日志 `openFile failed: Binary contents are not supported` | 文本通道拒二进制 | 已有 `vscode.open` 兜底,正常不该再现;再现=兜底没走到,查 `openFileFromDsh` 分支 |
    | 日志 `openFile failed: <其他>` 且右下角弹"打开失败" | `vscode.open` 也开不了 = VS Code 没装能开该类型的编辑器(如 .psd/.excalidraw) | 属**编辑器生态问题**不是插件问题:装对应 VS Code 扩展即可;若需插件特殊处理某扩展名,在 `openFileFromDsh` 按扩展名加分支 |
+   | **拖文件进侧栏**:overlay 闪一下就没 / 拖放无效 | VS Code ≥1.90 的 Shift 设计:拖文件未按 Shift 时 webview 被 `pointer-events:none`(#182449 / PR#209211),非插件回归 | **实测(0.1.20 后)**:拖到**输入框/附件条区域**可直接拖入——dsh 自己的 dropzone 在 dragenter 就 preventDefault,走了官方 defaultPrevented 逃生门,不需要 Shift;拖到面板其他区域才被遮罩(那时才需 Shift)。`code.dragAndDropItemFacilitator` 配方实测失败(0.1.61,灰层卡死,0.1.62 已撤销),别再试 |
+   | **粘贴文件成空 chip**(访达 Cmd+C 复制文件→粘贴,chip 无内容) | 访达复制只放"文件引用"没有像素;webview 剪贴板桥给 0 字节占位,浏览器会实体化所以正常 | 0.1.63:客户端吞掉 0 字节 Files 粘贴 → 扩展读 `NSFilenamesPboardType` 真路径 → 走「发送到 dsh」原生引用通道插入;截图复制(有字节)不受影响。排查看扩展日志 `paste file-ref ... paths=N`(0=剪贴板没路径)与 `[paste] files[名:大小]` |
 3. **改哪边装哪边,版本必须递增**(服务端按 rev 缓存合并 bundle,同版本号重装=下发旧代码):
    只改 `dsh-review/client.js` → webview 右键 Reload;改 `index.js` → 侧栏 Restart dsh;改扩展 `dsh-review-vscode/**` → **Cmd+Q** 整重启,并同步 `install.sh` 里写死的 `EXT_VER=`。装完重写 `~/.dsh/review/shadow/settings.json`(install.sh 会清空)。
 4. **验证**:hover/点击类 bug **不要用 ego-browser 复现**(CDP 合成鼠标事件 relatedTarget 失真,0.1.56 曾误判),以真实 VS Code webview + 扩展日志为准。
+
+## dsh-review 0.1.63 (2026-10-09, dsh 0.2.0-rc.2) — 仅扩展 0.1.20(粘贴二次修复,日志定案)
+
+### 0.1.19 的 size==0 判据没打中:元凶是**插件自己的旧粘贴桥**
+- 日志铁证(每行都有):`request paste via extension bridge` → `os clipboard image type=image/png bytes=42975` → `attach ok` —— 旧桥(0.1.5x 为截图设计)在每次粘贴时**主动读系统剪贴板图片**;访达复制文件时剪贴板本来就带**文件图标位图**(那些 42975/61011 字节就是 PNG/PDF 图标!)+ 文件名文本 → 于是出现"图标卡 + 文件名文本",即截图现象
+- 而 webview iframe 里访达文件粘贴的 `clipboardData.files` 是**空的**(文件 promise 不物化)→ 0.1.19 客户端守卫根本没触发(日志无 `files[...]` 行)
+- 修(仅扩展,零客户端改动):`dshPasteRequest` 分支**先查** `NSFilenamesPboardType` 文件路径:有 → `sendRefsToDsh` 原生引用 chips,跳过图标位图与文件名文本;没有(截图/拷贝图像)→ 原图片桥照旧。**日志新增 `paste: file-promise clipboard -> refs n=N`**
+- 0.1.19 的客户端 size==0 守卫与 `dshPasteFileRef` 分支保留(若某环境把占位物化成 0 字节 File,双保险都收敛到 refs)
+
+
+## dsh-review 0.1.63 (2026-10-09, dsh 0.2.0-rc.2) — 扩展 0.1.19
+
+### 修:访达复制文件 → 粘贴进 VS Code 侧栏 dsh,chip 是空的(agent 拿不到图)
+- 根因:macOS 访达 Cmd+C 只往剪贴板放**文件引用**(`NSFilenamesPboardType`,无像素,截图里的 PNG 图标就是占位);浏览器 Chromium 会把引用实体化成真 File,VS Code webview 的剪贴板桥只给 0 字节占位 → dsh 原生 rail 拿到空文件
+- 修(exa 查实 dsh 原生通道后复用,不造新轮子):客户端 capture `paste`,Files 项**全部 0 字节** → preventDefault + 桥发 `dshPasteFileRef` → 扩展 `electron.clipboard.readBuffer('NSFilenamesPboardType')` 解析真路径 → 走现成 `sendRefsToDsh` → `dshInsertRefs` → `shell.insertReference` **原生文件引用气泡**插入输入框(dsh-drop-in 同一通道)
+- 边界:截图/预览"拷贝图像"(真 bitmap,size>0)完全不拦,走 dsh 原生图片 rail;非 macOS 平台分支不触发;每次粘贴写扩展日志 `[paste] files[名:大小]` + `paste file-ref ... paths=N` 便于对账
+- 拖入(0.1.61 的 facilitator)保持撤销状态,按用户决定不再修
+
+
+## dsh-review 0.1.62 (2026-10-09, dsh 0.2.0-rc.2) — 扩展 0.1.18
+
+### 撤销 0.1.61 的 facilitator 方案(实测失败,已回滚到 0.1.60 代码)
+- 失败现象:拖文件时整个 webview 被灰色"拖到编辑器打开"反馈层盖住,松手后**永不消失**(webview 吃掉 drop,VS Code 收不到 drop/dragend → DropOverlay 卡死;20s 看门狗调 `...FacilitatorEnd` 也没解开)
+- 机制终版(exa 读 VS Code 源码 `webview/browser/pre/index.html` + `webviewElement.ts` + `webviewWindowDragMonitor.ts`):
+  1. webview 宿主页监听 dragenter:若 `e.defaultPrevented`(页面自己接管了拖放)→ 不发 'drag-start' → **不上锁**。dsh 的输入框 drop 区本来就 preventDefault → 老版本 VS Code 里拖文件进 dsh 直接可用(**这就是 0.1.6 时代能用的原因**)
+  2. PR#209211(修 #182449,随 1.90/1.91 发布)新增:宿主页 dragover/drag **无条件** preventDefault 并向宿主派发合成 DragEvent;窗口级 monitor 收到非 Shift 的合成 dragover → `pointer-events:none` 重新上锁 → 该上锁路径**不看 defaultPrevented**,上面的逃生门被封死
+  3. 解锁通道只剩:合成事件 `shiftKey=true`、宿主容器上的 mousedown/mousemove/drop、窗口 dragend —— 全在 VS Code 侧,**webview 侧无解**;`code.dragAndDropItemFacilitator` 只影响编辑器 DropOverlay,不影响这把锁 → 方案作废
+- 结论:非 Shift 拖文件进 webview 在现 VS Code 是官方设计(灰层上就写着"Hold ⇧ to drop into editor"),插件层无法绕过,除非改 VS Code 设置 `editor.dropIntoEditor.enabled=false`(副作用:资源管理器拖文件到编辑器打开也失效)
+
+## dsh-review 0.1.61 (2026-10-09, dsh 0.2.0-rc.2) — 扩展 0.1.17(已撤销,见 0.1.62)
+
+### 尝试修:VS Code 侧栏拖入 PNG/文件,overlay 闪 0.5s 就没了 —— facilitator 方案,实测失败
+
+
 
 ## dsh-review 0.1.60 (2026-10-09, dsh 0.2.0-rc.2) — 仅扩展 0.1.16
 
