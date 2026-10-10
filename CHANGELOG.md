@@ -18,8 +18,22 @@
    | **拖文件进侧栏**:overlay 闪一下就没 / 拖放无效 | VS Code ≥1.90 的 Shift 设计:拖文件未按 Shift 时 webview 被 `pointer-events:none`(#182449 / PR#209211),非插件回归 | **实测(0.1.20 后)**:拖到**输入框/附件条区域**可直接拖入——dsh 自己的 dropzone 在 dragenter 就 preventDefault,走了官方 defaultPrevented 逃生门,不需要 Shift;拖到面板其他区域才被遮罩(那时才需 Shift)。`code.dragAndDropItemFacilitator` 配方实测失败(0.1.61,灰层卡死,0.1.62 已撤销),别再试 |
    | **粘贴文件成空 chip**(访达 Cmd+C 复制文件→粘贴,chip 无内容) | 访达复制只放"文件引用"没有像素;webview 剪贴板桥给 0 字节占位,浏览器会实体化所以正常 | 0.1.63:客户端吞掉 0 字节 Files 粘贴 → 扩展读 `NSFilenamesPboardType` 真路径 → 走「发送到 dsh」原生引用通道插入;截图复制(有字节)不受影响。排查看扩展日志 `paste file-ref ... paths=N`(0=剪贴板没路径)与 `[paste] files[名:大小]` |
 3. **改哪边装哪边,版本必须递增**(服务端按 rev 缓存合并 bundle,同版本号重装=下发旧代码):
-   只改 `dsh-review/client.js` → webview 右键 Reload;改 `index.js` → 侧栏 Restart dsh;改扩展 `dsh-review-vscode/**` → **Cmd+Q** 整重启,并同步 `install.sh` 里写死的 `EXT_VER=`。装完重写 `~/.dsh/review/shadow/settings.json`(install.sh 会清空)。
+   只改 `dsh-review/client.js` → webview 右键 Reload;改 `index.js` → 侧栏 Restart dsh;改扩展 `dsh-review-vscode/**` → **Cmd+Q**(mac)/ **Ctrl+Q**(Linux)整重启,并 bump `dsh-review-vscode/package.json` 的 `version`——`install.sh` 的 `EXT_VER` 现在自动读它,不用再手改。装完重写 `~/.dsh/review/shadow/settings.json`(install.sh 会清空)。
 4. **验证**:hover/点击类 bug **不要用 ego-browser 复现**(CDP 合成鼠标事件 relatedTarget 失真,0.1.56 曾误判),以真实 VS Code webview + 扩展日志为准。
+
+## dsh-review-vscode 0.1.22 (2026-10-09, dsh 0.2.0-rc.2) — 仅扩展 + install.sh / Ubuntu 首跑通
+
+### 修: Linux 侧「从剪贴板贴图」把复制的文字当图片(坏附件)
+- 现象(Ubuntu 24.04 / X11 / xclip 0.13): 剪贴板里只有文字时 `xclip -selection clipboard -t image/png -o` **不报错、rc=0**,把 UTF8 文本原样吐回来(实测 13 字节文本 → `buf.length > 8` 判成图片) → 侧栏收到一个坏 PNG 附件
+- 修: `readLinuxClipboardImage` 两个分支(wl-paste / xclip)统一走 `isPngBuffer()`,校验 PNG magic `89 50 4E 47 0D 0A 1A 0A`
+- 平台面: mac 走 `osascript`、win 走 `powershell.exe`,`readOsClipboardImage` 按 `process.platform` 分流,两者**不进这个函数** → Mac/Windows 零影响
+- 验证: 文本 buffer ✗、`media/dsh.png` ✓、svg ✗(与预期一致)
+- Linux 依赖(`install.sh` 不查,需自备): **pnpm**(`dsh plugin add` 走 pnpm,缺了直接 `dsh: pnpm was not found`)+ **xclip**(X11 贴图;Wayland 换 `wl-clipboard`,走 wl-paste 分支)
+
+### 改: `install.sh` 的 `EXT_VER` 从 `dsh-review-vscode/package.json` 读
+- 本次实测踩到: 仓库里 `install.sh` 写死 `EXT_VER="0.1.11"`,而包实际 `0.1.13` → copy 路径装出假版本目录,`extensions.json` 的 `location.path` / `relativeLocation` 跟着错。**Mac 同样受影响,不是 Linux 专属**
+- 改成 `EXT_VER="$(node -p "require('$ROOT/dsh-review-vscode/package.json').version")"`;配合上一条 runbook,以后发版只需 bump `package.json` 的 `version`
+- 前置: 脚本 `set -euo pipefail`,第 8 行就取版本 → 没 node 会在这里退出;实际不可能缺(`install_dsh_plugin` 本来就要 npm 或 pnpm)
 
 ## dsh-review 0.1.65–0.1.66 (2026-10-09, dsh 0.2.0-rc.2) — 仅客户端
 
