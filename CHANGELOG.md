@@ -27,7 +27,7 @@
 - 日志证据:该卡片点击**没有任何 `fileOpen raw=` 行** → 根本没进拦截器:它不是 `button/a/[role=button]`,且文案 `Edited CHANGELOG.mdPreview in sidebar`(span 拼接无分隔)不匹配 0.1.64 判据
 - 修:①matcher 加 `^Edited\s+<name.ext>` 前缀提取(允许后接任意副标题文本);②监听器加**祖先上溯**——closest 找不到可点元素或判据不中时,从 e.target 向上最多 6 层逐节点跑 `fileOpenTargetPath`(纯文本判据依旧严格,散文节点不会误触)
 - 0.1.64 那种展开行(按钮形态)行为不变,日志同样 `[paste] fileOpen raw=...`
-- **0.1.66**:同一卡片里行标签可能带**工作区相对路径**前缀(`dsh-review/client.js`),0.1.64 的 `indexOf("/")<0` 把它们全毙了(实测:纯 basename 行绿、带目录行红)。放开斜杠限制(仍拒 `\`、glob 字符、绝对路径开头);扩展端 `openFileFromDsh` 本来就按 cwd/workspace 根解相对路径,零改动。**用户实测:展开卡片全部行可开 ✓(单文件折叠卡片待测)**
+- **0.1.66**:同一卡片里行标签可能带**工作区相对路径**前缀(`dsh-review/client.js`),0.1.64 的 `indexOf("/")<0` 把它们全毙了(实测:纯 basename 行绿、带目录行红)。放开斜杠限制(仍拒 `\`、glob 字符、绝对路径开头);扩展端 `openFileFromDsh` 本来就按 cwd/workspace 根解相对路径,零改动。**用户实测:展开卡片全部行 ✓、单文件折叠卡片 ✓(0.1.65 的 `Edited X.ext` 前缀判据 + 祖先上溯生效)**
 
 
 ## dsh-review 0.1.64 (2026-10-09, dsh 0.2.0-rc.2) — 仅客户端
