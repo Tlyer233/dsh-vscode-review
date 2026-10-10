@@ -21,6 +21,13 @@
    只改 `dsh-review/client.js` → webview 右键 Reload;改 `index.js` → 侧栏 Restart dsh;改扩展 `dsh-review-vscode/**` → **Cmd+Q** 整重启,并同步 `install.sh` 里写死的 `EXT_VER=`。装完重写 `~/.dsh/review/shadow/settings.json`(install.sh 会清空)。
 4. **验证**:hover/点击类 bug **不要用 ego-browser 复现**(CDP 合成鼠标事件 relatedTarget 失真,0.1.56 曾误判),以真实 VS Code webview + 扩展日志为准。
 
+## dsh-review 0.1.63 (2026-10-09, dsh 0.2.0-rc.2) — 仅扩展 0.1.21(杂物清理,无行为变化)
+
+- **日志自动清理**:每个 VS Code 窗口会话都会留一个 `2-dsh review  dsh.log`(两个空格),永久堆积。扩展激活 5s 后 `pruneOldReviewLogs()`:扫 Code logs 树,删除 **14 天未改动**的本插件日志(活动文件在写、mtime 新,天然跳过;失败静默)
+- 一次性清理已做:旧 keybindings `.bak*`(10-08 实验 5 个)已删;每窗口只留最新 dsh 日志(删 7 个)
+- `test-sub-workspace/` 探针文件夹已不存在(mdfind+find 无结果),无需动作
+
+
 ## dsh-review 0.1.63 (2026-10-09, dsh 0.2.0-rc.2) — 仅扩展 0.1.20(粘贴二次修复,日志定案)
 
 ### 0.1.19 的 size==0 判据没打中:元凶是**插件自己的旧粘贴桥**

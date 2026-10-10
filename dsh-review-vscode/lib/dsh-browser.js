@@ -770,6 +770,38 @@ function clipboardFilePaths () {
   }
 }
 
+/**
+ * Housekeeping (0.1.21): every VS Code window session spawns one
+ * "2-dsh review  dsh.log" (TWO spaces) output-log file under the exthost log
+ * dirs, and they accumulate forever. Delete ours when they stop being touched
+ * (14 days), never the active one. Best-effort: any FS error is swallowed.
+ */
+function pruneOldReviewLogs () {
+  try {
+    let base
+    if (process.platform === 'darwin') base = path.join(process.env.HOME || '', 'Library', 'Application Support', 'Code', 'logs')
+    else if (process.platform === 'win32') base = path.join(process.env.APPDATA || '', 'Code', 'logs')
+    else base = path.join(process.env.HOME || '', '.config', 'Code', 'logs')
+    if (!base || !fs.existsSync(base)) return
+    const cutoff = Date.now() - 14 * 24 * 3600 * 1000
+    let removed = 0
+    const rmDir = (dir) => {
+      let names
+      try { names = fs.readdirSync(dir) } catch (e) { return }
+      for (const n of names) {
+        const p = path.join(dir, n)
+        let st
+        try { st = fs.statSync(p) } catch (e) { continue }
+        if (st.isDirectory()) { rmDir(p); continue }
+        if (n !== '2-dsh review  dsh.log') continue
+        try { if (st.mtimeMs < cutoff) { fs.unlinkSync(p); removed++ } } catch (e) { /* in use */ }
+      }
+    }
+    rmDir(base)
+    if (removed) state.log('pruned ' + removed + ' stale dsh review log file(s)')
+  } catch (e) { /* best effort */ }
+}
+
 async function sendRefsToDsh(refs, fallbackText) {
   if (!Array.isArray(refs) || refs.length === 0) return sendTextToDsh(fallbackText)
   await focusDshSidebar()
@@ -838,6 +870,8 @@ async function openPendingFileInEditor(filePath) {
 function setupDshBrowser(context) {
   extensionContext = context
   iframeChrome = normalizeChrome(context.globalState.get(CHROME_KEY))
+  // Deferred housekeeping so it never competes with activation.
+  setTimeout(pruneOldReviewLogs, 5000)
   context.subscriptions.push(vscode.commands.registerCommand('dshReview.reloadSidebar', () => {
     state.log('reloadSidebar command')
     reloadDshWebview(true)

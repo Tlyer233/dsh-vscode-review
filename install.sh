@@ -5,7 +5,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 EXT_ID="dsn.dsh-review-vscode"
-EXT_VER="0.1.20"
+EXT_VER="0.1.21"
 DSH_PLUGIN="$ROOT/dsh-review"
 VSCODE_SRC="$ROOT/dsh-review-vscode"
 VSCODE_EXT_DIR="${VSCODE_EXTENSIONS_DIR:-$HOME/.vscode/extensions}"
