@@ -429,7 +429,14 @@ window.__ModuleLoader__.load({
         if (!col) return false;
         let hit = null;
         try { hit = document.elementFromPoint(x, y); } catch (err) { /* noop */ }
-        return !!hit && (col === hit || col.contains(hit));
+        if (!hit) return false;
+        // 0.1.57: portaled popovers live on document.body OUTSIDE the sidebar
+        // column — an open row "..." menu (role=menu) or a session HoverCard
+        // (role=tooltip) resting under the pointer must NOT read as "left the
+        // rail", else auto-hide blanks the whole sidebar under the floating
+        // panel (panel content vanishes, only the body-level portal remains).
+        if (hit.closest && hit.closest('[role="menu"], [role="tooltip"]')) return true;
+        return col === hit || col.contains(hit);
       }
       document.addEventListener("mousemove", (event) => {
         const w = window.innerWidth;
@@ -3299,11 +3306,128 @@ window.__ModuleLoader__.load({
         wsFilterInstalled = false;
       }
 
+      // ---- Sidebar menu hover-grace patch (0.1.55) ---------------------------
+      // dsh sidebar row menus (ui-primitives Menu, portal:true +
+      // closeOnPointerLeave:true) close on a 200ms usePointerGrace timer armed
+      // by a REACT pointerleave on the trigger span; the cancel on entering
+      // the portaled list does not happen in the VS Code webview, so the menu
+      // dies ~200ms after the pointer leaves the button. Patch: native
+      // pointerenter/pointermove listeners on each portaled menu dispatch a
+      // synthetic pointerover at the trigger anchor (inside the root
+      // container, with relatedTarget set — React's enter/leave polyfill
+      // ignores over events without one, facebook/react#12978) so React
+      // observes a span-enter and cancels the close; when the pointer really
+      // leaves the menu, ordinary events re-arm the grace and it closes
+      // natively. (ego-browser CDP mouse events distort relatedTarget — this
+      // patch verified in the real VS Code webview, not in ego.)
+      // Second fix: in a narrow sidebar the fixed-positioned portal
+      // menu can hang past the webview viewport and get clipped (labels cut
+      // off); after open (fixedPos lands a couple of frames later — a
+      // late pass at 250ms is the effective one) clamp its left/top inside
+      // the viewport. React keeps fixedPos stable while open, so the inline
+      // correction is not clobbered.
+      let menuPatchObserver = null;
+      function dshrMenuFit(menuEl) {
+        const fix = function () {
+          try {
+            if (!menuEl.isConnected) return;
+            const r = menuEl.getBoundingClientRect();
+            if (r.width === 0 || r.height === 0) return;
+            const vw = window.innerWidth, vh = window.innerHeight;
+            const left = parseFloat(menuEl.style.left);
+            const top = parseFloat(menuEl.style.top);
+            let nl = left, nt = top;
+            if (r.right > vw - 4) nl = Math.max(8, vw - r.width - 8);
+            if (r.bottom > vh - 4) nt = Math.max(8, vh - r.height - 8);
+            if (nl !== left && nl > 0) menuEl.style.left = nl + "px";
+            if (nt !== top && nt > 0) menuEl.style.top = nt + "px";
+          } catch (err) { /* noop */ }
+        };
+        try {
+          requestAnimationFrame(function () { requestAnimationFrame(fix); });
+          setTimeout(fix, 250);
+        } catch (err) { /* noop */ }
+      }
+      function menuPatchArm(menuEl) {
+        if (menuEl.__dshrMenuPatched) return;
+        menuEl.__dshrMenuPatched = true;
+        dshrMenuFit(menuEl);
+        let lastSent = 0;
+        function send(e) {
+          const now = Date.now();
+          if (now - lastSent < 150) return;
+          lastSent = now;
+          let anchor = null;
+          try {
+            // The portal's nearest ancestor DOM node in the REACT tree is the
+            // Menu root <span> that wraps the anchor button (the portal is a
+            // React child of that span); the fiber walk finds it even
+            // though the DOM parent is body.
+            const fk = Object.keys(menuEl).find(function (k) { return k.indexOf("__reactFiber$") === 0; });
+            let fiber = fk ? menuEl[fk] : null;
+            let hops = 0;
+            while (fiber && hops < 24) {
+              const node = fiber.stateNode;
+              if (node && node.nodeType === 1 && node !== menuEl) {
+                const b = node.querySelector ? node.querySelector("button") : null;
+                anchor = b || node;
+                break;
+              }
+              fiber = fiber.return;
+              hops++;
+            }
+          } catch (err) { anchor = null; }
+          if (!anchor || !anchor.isConnected) return;
+          try {
+            anchor.dispatchEvent(new PointerEvent("pointerover", {
+              bubbles: true, cancelable: true, composed: true,
+              clientX: e.clientX, clientY: e.clientY,
+              pointerId: e.pointerId || 1, pointerType: e.pointerType || "mouse",
+            }));
+          } catch (err) { /* noop */ }
+        }
+        menuEl.addEventListener("pointerenter", send, true);
+        menuEl.addEventListener("pointermove", send, true);
+      }
+      function menuPatchInstall() {
+        if (menuPatchObserver) return;
+        try {
+          menuPatchObserver = new MutationObserver(function (muts) {
+            for (const m of muts) {
+              const nodes = m.addedNodes;
+              for (let i = 0; i < nodes.length; i++) {
+                const n = nodes[i];
+                if (n.nodeType !== 1) continue;
+                const cands = [];
+                if (n.matches && n.matches('[role="menu"]')) cands.push(n);
+                if (n.querySelectorAll) {
+                  const inner = n.querySelectorAll('[role="menu"]');
+                  for (let j = 0; j < inner.length; j++) cands.push(inner[j]);
+                }
+                for (const c of cands) {
+                  // Only the portaled popovers need it (their DOM
+                  // parent is body ⇒ invisible to React's listeners).
+                  // CSS-module tokens look like "_portal_<hash>" — match the
+                  // LEADING name; the hash suffix varies per dsh build.
+                  let portal = false;
+                  for (let j = 0; j < c.classList.length; j++) {
+                    if (c.classList[j].indexOf("_portal_") === 0 || c.classList[j] === "_portal") { portal = true; break; }
+                  }
+                  if (portal) menuPatchArm(c);
+                }
+              }
+            }
+          });
+          menuPatchObserver.observe(document.body, { childList: true });
+        } catch (err) { menuPatchObserver = null; }
+      }
+
       scopeWatchdogTick = checkWorkbenchScope;
       const wsFilterScopeHook = function () { try { wsFilterInstall(); } catch (err) { /* noop */ } };
       scopeChangeListeners.push(wsFilterScopeHook);
       ctx.effect(function () {
         // Always-on whitelist listener (must not depend on Dock mount).
+        try { menuPatchInstall(); } catch (err) { /* noop */ }
         function onScopeFromHost(event) {
           const msg = event.data;
           if (!msg || msg.type !== "dshSetScope") return;
@@ -3318,6 +3442,7 @@ window.__ModuleLoader__.load({
           if (scopeWatchdogTick === checkWorkbenchScope) scopeWatchdogTick = null;
           const hookAt = scopeChangeListeners.indexOf(wsFilterScopeHook);
           if (hookAt >= 0) scopeChangeListeners.splice(hookAt, 1);
+          try { if (menuPatchObserver) { menuPatchObserver.disconnect(); menuPatchObserver = null; } } catch (err) { /* noop */ }
           wsFilterTeardown();
         };
       }, "dsh-review: workbench scope watchdog");

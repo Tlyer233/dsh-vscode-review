@@ -1,5 +1,53 @@
 # Changelog
 
+## dsh-review 0.1.57 (2026-10-09, dsh 0.2.0-rc.2)
+
+### 修:鼠标移到菜单项上 → 整个侧栏内容隐藏、只剩菜单悬浮(0.1.56 修好 keep-alive 后暴露的碰撞)
+- 真凶=插件自己的 **rail auto-hide**(`installIframeRailAutoHide`):mousemove 用 `elementFromPoint` 判定"指针是否还在侧栏列子树内",不在 350ms 后隐藏整条 rail。而菜单弹层/HoverCard 是 portal 到 `document.body` 的,**不在侧栏列子树** → 指针移到菜单上 = 判定"离开侧栏" → 侧栏整体隐藏;菜单挂在 body 不受影响 → 恰好"侧栏消失、菜单残留",移出/关菜单即恢复(用户截图+两问答确认:头部整体消失、瞬时可逆)
+- 修:`overRail` 豁免 `hit.closest('[role="menu"], [role="tooltip"]')` —— 行 "..." 菜单(role=menu)与 HoverCard 内容卡(role=tooltip,dsh rc.2 起卡片可悬停阅读)都算"仍在侧栏",auto-hide 不误火;真正移到侧栏外空白区仍照常隐藏
+- 同版带上 `dshrMenuFit`:窄侧栏里固定定位的菜单弹层可能超出 webview 视口被裁字(截图:Unpin/Rename 文字截断)→ 打开后(等 fixedPos 落位的 250ms 延迟复查)把 left/top 夹回视口内
+- 对 0.1.56 的更正:该条目"React 18 收不到 portal 事件"归因不准确——dsh 的 grace 设计依赖 React enter/leave 走 React tree(官方设计笔记),真实 webview 里 v1 补丁验证有效;ego-browser 复测失败是 **CDP 合成鼠标事件 relatedTarget 失真**,CDP 鼠标事件 ≠ 真实指针事件,勿再用于 hover 类验证
+
+
+## dsh-review 0.1.56 (2026-10-09, dsh 0.2.0-rc.2)
+
+### 修:侧栏会话行 "..." 菜单(Pin/Rename/Fork/Archive)鼠标一移进菜单就消失 —— dsh native bug,插件打补丁
+- 根因(浏览器纯原生复现证实,插件无辜):`ui-primitives/Menu` `portal:true + closeOnPointerLeave:true`,指针离开触发 span 即起 **200ms** `usePointerGrace` 关闭倒计时;而菜单弹层 portal 挂在 `document.body`,**React 18 事件委托在根容器上,收不到指针进入 portal 的事件** → 倒计时永远无法被"进入菜单"取消 → 正常伸手进菜单必超时关闭
+- 实测三组(ego-browser :3080,插件过滤不装载的浏览器端):瞬移入菜单中心=存活;斜穿列表移入=关;指针已在菜单内停留=仍关(菜单消失时刻指针还在行区域路上)
+- 补丁:MutationObserver(body childList)发现 `[role=menu]` 且类名 token 以 `_portal_` 开头的弹层 → 原生 `pointerenter/pointermove` 监听 → 沿 React fiber 上溯找到 Menu 根 span 内的锚点按钮,派发合成 `pointerover`(bubbles+composed,150ms 节流)→ React 视为"指针进入 span" → `cancelClose` 取消关闭;指针真离开菜单后原生 pointerover 正常触发 leave,菜单按原生宽限关闭,行为还原生设计
+- 范围:整个 dsh web client(浏览器 + VS Code 侧栏,native bug 全平台);与 workbench scope watchdog 同 effect 装载/拆除;无设置项(纯 bug 修复)
+- 踩坑记录:portal 类名实际形态 `_portal_<hash>`(CSS module hash 在**尾部**),首版误写 `endsWith("_portal")` 永假;判定改为 `startsWith("_portal_")`
+- 部署坑:服务端按 `rev` 缓存插件合并 bundle,**同版本号重复 install → rev 不变 → 继续下发旧代码**;改动代码必须递增版本号再装
+
+## dsh-review 0.1.54 (2026-10-09, dsh 0.2.0-rc.2)
+
+### 移除:@ 弹窗对话过滤器(0.1.51–0.1.53 实验)整体删除,设置③一并移除
+- 三轮未修好的根因(搜索+源码定位):@ 菜单真主是 `dsh-client-ui-input-trigger/MenuView`,分组头类名 = **`groupTitle`**(0.1.51–53 的 DOM hack 一直选择器打空;MenuView 按 InputTriggerSource 分组渲染)
+- 官方扩展正道 = 注册过滤版 `InputTriggerSource`(社区 dsh-at-mention 即此路线,只列同工作区会话);待用户定方向再实现
+- 删除:client.js mention 过滤器全块/observer/tick 挂点/设置③复选框与存储链、index.js `mentionFilter` schema;client.js/index.js 与 0.1.50 提交版逐字节一致(净 diff 0)
+
+## dsh-review 0.1.53 (2026-10-09, dsh 0.2.0-rc.2)
+
+### 修:③ 仍不生效(0.1.52 也 0 行被处理)——遍历结构改为 menu 为中心 + 诊断日志
+- 嫌疑锁定:0.1.51/0.1.52 的循环以 `sectionTitle` 为入口,`head.closest('[class$="_menu"]')` 兜底 parentElement —— 若分区头渲染在菜单容器**之外**(rc.2 未证实该包含关系),每轮 0 行处理、无报错、无隐藏,与截图症状一致
+- 已证实事实(ego 探针 CHAIN):`BUTTON._item > DIV._viewport > DIV._menu` —— **行一定在 _menu 内**;新循环直接遍历 `[class$="_menu"]`,行处理与"分区头在哪"解耦:菜单内有标题 → 状态机只过滤会话组;标题在菜单外(菜单内无标题)→ 全行兜底(路径规则要求**精确等于已注册工作区路径**,文件行/命令行永不命中,不会误伤)
+- 证据闭环:`postScopeDiag action=mention-run {rows,hidden,known,allowed}` 节流 5s 进 dsh.log —— rows=0 → 选择器结构问题;rows>0,hidden=0 → 判定问题;hidden>0 → 生效
+
+## dsh-review 0.1.52 (2026-10-09, dsh 0.2.0-rc.2)
+
+### 修:③ 开启后「有标题+路径」的对话行仍显示(用户截图:全是 /goal 标题行)
+- 日志排查:window13 dsh.log scope 正确、shadow settings `mentionFilter:true` 已存 → 设置链路无恙,是判定缺口:0.1.51 只隐藏行文本含 `session-uuid` 的行,标题行全保留
+- ego-browser 探针实证行结构:`_itemDescription` = `会话工作区路径 · 相对时间`;dsh 官方 README:**仅当会话工作区≠当前工作区才显示该路径** → 以 `/` 开头的描述就是可判定的外来提示
+- 修复:三级判定 —— ①标签含 session-uuid → 按 id 集合;②描述以 `/` 开头 → 路径 ∉ 本窗口 workbench 工作区集合(knownPaths 中的已知路径才裁决,未知保留)→ 隐藏;③两者皆无 → 保留(不变)
+
+## dsh-review 0.1.51 (2026-10-08, dsh 0.2.0-rc.2)
+
+### 新功能:③「@ 弹窗只显示当前工作区的对话」(默认关)
+- 机制检索(exa 官方 README/源码笔记 + rc.2 本地 bundle + ego-browser 实测 DOM):composer `@` 的「对话」组候选来自宿主 `sessionReferenceResolver/candidates`(全量会话、无 workspace 参数、按 cwd 亲和度排序、上限 50、无标题回退显示 session-uuid);行 DOM = `[class$="_item"]` 按钮,规范 `dsh-session:` mention 不落 DOM
+- 设置:新开关 `mentionFilter` 默认关;开=VS Code 窗口内 @ 弹窗「对话」组只显示当前 workbench(含子工作区,与 ① 同一 matchingWorkspaces 判定)的会话;浏览器打开不受影响;两开关互相独立
+- 判定:行文本含 `session-<uuid>` → 按工作区归属精确隐藏/保留;**有标题的行无法判定 → 保留**(宁可多显,绝不误藏);未知分组标题不动;文件组不受影响
+- 触发:全局 MutationObserver(菜单异步渲染/虚拟重排)+ 看门狗 tick 兜底,150ms 防抖;开关关/设置未就绪 → 恢复所有本插件隐藏的行
+
 ## dsh-review 0.1.50 (2026-10-08, dsh 0.2.0-rc.2)
 
 ### 提速:首开落地不再固定睡 8 秒(实测等待 5~6s → ~3s)
