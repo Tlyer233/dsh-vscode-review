@@ -11,6 +11,7 @@
 const vscode = require('vscode')
 const fs = require('node:fs')
 const path = require('node:path')
+const os = require('node:os')
 const electron = require('electron')
 const { execFile } = require('node:child_process')
 
@@ -37,6 +38,13 @@ async function openFileFromDsh(raw, cwd) {
     // "index.js:363" / "a/b.ts:12-20" → path + ignored line hint.
     const m = p.match(/^(.+?)[:#](\d+)(?:-\d+)?$/)
     if (m && m[1]) p = m[1]
+    // dsh labels files under the home dir as "~/dsh/..."; path.isAbsolute
+    // says false for "~", so it used to resolve to <workspace>/~/... and
+    // miss (workspace findFiles also can't reach ~/.dsh). Expand the
+    // leading ~ via os.homedir() before any resolution.
+    if (p === '~' || p.startsWith('~/') || p.startsWith('~' + path.sep)) {
+      p = path.join(os.homedir(), p.slice(1))
+    }
     if (!path.isAbsolute(p)) {
       const roots = []
       if (cwd) roots.push(cwd)

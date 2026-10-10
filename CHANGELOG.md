@@ -12,7 +12,7 @@
    | 现象 | 结论 | 处理 |
    | --- | --- | --- |
    | 完全无日志(客户端没发 `dshOpenFile`) | 客户端拦截面没覆盖这个新表面 | 对照社区拦截表面表(dsh-artifact-viewer:工具行→textContent、chip/提及→title、md链接→href),在 client.js `fileOpenTargetPath` 加对应 DOM 特征;类名 token 两种 CSS-module 命名都要认(`_X_<hash>` 与 `<hash>_X`) |
-   | 日志 `openFile missing: X` | X 解析不到文件 | `:行号` 已剥、basename 截短标签已全库搜;仍没有 = 文件确实不存在,右下角已自动弹提示 |
+   | 日志 `openFile missing: X` | X 解析不到文件 | `:行号` 已剥、basename 截短标签已全库搜;仍没有 = 文件确实不存在,右下角已自动弹提示。**例外(0.1.23 已修)**:X 以 `~` 开头(如 `~/dsh/skills/...`)时文件其实在家目录——`path.isAbsolute("~/…")` 为 false,曾按 `<工作区>/~/…` 解析且工作区搜不到家目录;现 `openFileFromDsh` 开头用 `os.homedir()` 展开行首 `~` 再判断。若再现 missing 且**不是** `~` 开头 = 真没了 |
    | 日志 `openFile failed: Binary contents are not supported` | 文本通道拒二进制 | 已有 `vscode.open` 兜底,正常不该再现;再现=兜底没走到,查 `openFileFromDsh` 分支 |
    | 日志 `openFile failed: <其他>` 且右下角弹"打开失败" | `vscode.open` 也开不了 = VS Code 没装能开该类型的编辑器(如 .psd/.excalidraw) | 属**编辑器生态问题**不是插件问题:装对应 VS Code 扩展即可;若需插件特殊处理某扩展名,在 `openFileFromDsh` 按扩展名加分支 |
    | **拖文件进侧栏**:overlay 闪一下就没 / 拖放无效 | VS Code ≥1.90 的 Shift 设计:拖文件未按 Shift 时 webview 被 `pointer-events:none`(#182449 / PR#209211),非插件回归 | **实测(0.1.20 后)**:拖到**输入框/附件条区域**可直接拖入——dsh 自己的 dropzone 在 dragenter 就 preventDefault,走了官方 defaultPrevented 逃生门,不需要 Shift;拖到面板其他区域才被遮罩(那时才需 Shift)。`code.dragAndDropItemFacilitator` 配方实测失败(0.1.61,灰层卡死,0.1.62 已撤销),别再试 |
@@ -20,6 +20,15 @@
 3. **改哪边装哪边,版本必须递增**(服务端按 rev 缓存合并 bundle,同版本号重装=下发旧代码):
    只改 `dsh-review/client.js` → webview 右键 Reload;改 `index.js` → 侧栏 Restart dsh;改扩展 `dsh-review-vscode/**` → **Cmd+Q**(mac)/ **Ctrl+Q**(Linux)整重启,并 bump `dsh-review-vscode/package.json` 的 `version`——`install.sh` 的 `EXT_VER` 现在自动读它,不用再手改。装完重写 `~/.dsh/review/shadow/settings.json`(install.sh 会清空)。
 4. **验证**:hover/点击类 bug **不要用 ego-browser 复现**(CDP 合成鼠标事件 relatedTarget 失真,0.1.56 曾误判),以真实 VS Code webview + 扩展日志为准。
+
+## dsh-review-vscode 0.1.23 (2026-10-09, dsh 0.2.0-rc.2) — 仅扩展 / `~` 路径展开
+
+### 修:卡片行标签 `~/xxx` 点开报「文件未找到」(用户截图:zotero8-dedup.md 明明存在)
+- 定位:扩展日志回显的就是字面 `~/dsh/skills/...`;`path.isAbsolute("~/…")`=false → 按 `<cwd>/~/…` resolve 必然 miss → 兜底 `workspace.findFiles` 只搜工作区,家目录(`~/.dsh`、`~/dsh`)文件搜不到 → toast。
+- 修法(用户确认「扩展端展开 ~ 为家目录」):`openFileFromDsh` 剥行号后、解析前,行首 `~`/`~/` 用 `os.homedir()` 展开(`node:os` 新增 require),展开后走原有绝对路径分支。mac/Linux 通用;Windows dsh 标签不带 `~`,无影响。客户端 0.1.66 未动(`~/` 标签本就通过匹配器)。
+- 同批合入 ubuntu 远端:ext 0.1.22 Linux 剪贴板 PNG magic 修复 + install.sh `EXT_VER` 改自动读 package.json(远端曾写死 0.1.11 与包内 0.1.13 打架,mac 也受害)。
+- ⚠ 部署备忘更新:今后只 bump `dsh-review-vscode/package.json` 的 version 即可,install.sh 自动跟随。
+
 
 ## dsh-review-vscode 0.1.22 (2026-10-09, dsh 0.2.0-rc.2) — 仅扩展 + install.sh / Ubuntu 首跑通
 
