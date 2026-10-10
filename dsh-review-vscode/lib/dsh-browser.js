@@ -339,11 +339,17 @@ function readWinClipboardImage() {
 
 /**
  * Linux: wl-paste / xclip PNG bytes.
+ * xclip 0.13 falls back to a text target when image/png is absent, so require
+ * the PNG magic bytes; otherwise copied text becomes a corrupt "image".
  * @returns {Promise<ClipboardImagePayload | null>}
  */
+const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+function isPngBuffer(buf) {
+  return Buffer.isBuffer(buf) && buf.length > 8 && buf.subarray(0, 8).equals(PNG_MAGIC)
+}
 function readLinuxClipboardImage() {
   return execClipboardCmd('wl-paste', ['--type', 'image/png', '--no-newline'], { encoding: 'buffer' }).then((buf) => {
-    if (Buffer.isBuffer(buf) && buf.length > 8) {
+    if (isPngBuffer(buf)) {
       return {
         type: 'image/png',
         name: 'clipboard.png',
@@ -352,7 +358,7 @@ function readLinuxClipboardImage() {
       }
     }
     return execClipboardCmd('xclip', ['-selection', 'clipboard', '-t', 'image/png', '-o'], { encoding: 'buffer' }).then((buf2) => {
-      if (Buffer.isBuffer(buf2) && buf2.length > 8) {
+      if (isPngBuffer(buf2)) {
         return {
           type: 'image/png',
           name: 'clipboard.png',
