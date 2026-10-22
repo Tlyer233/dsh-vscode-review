@@ -13,7 +13,7 @@ const fs = require('node:fs')
 const path = require('node:path')
 const os = require('node:os')
 const electron = require('electron')
-const { execFile } = require('node:child_process')
+const { execFile, execFileSync } = require('node:child_process')
 
 /**
  * Open a dsh-chat file reference in the editor (paired with plugin setting
@@ -30,8 +30,15 @@ const { execFile } = require('node:child_process')
  * whose path ends with the label (closest full-path match), then shortest.
  * @param {string} raw
  * @param {string} cwd
+ * @param {{ keepFocus?: boolean }} [opts] - 0.1.24: default true, open the file
+ *   WITHOUT taking focus away from the sidebar webview. Clicking a chip while a
+ *   draft is being composed used to focus the editor, so every following
+ *   keystroke landed in the file instead of the composer. Alt/Option-click and
+ *   deliberate document opens (plan full-text) pass keepFocus:false to get the
+ *   old focus-the-editor behaviour.
  */
-async function openFileFromDsh(raw, cwd) {
+async function openFileFromDsh(raw, cwd, opts) {
+  const keepFocus = (!opts || opts.keepFocus === undefined) ? true : !!opts.keepFocus
   try {
     if (!raw) return
     let p = raw.trim()
@@ -98,14 +105,46 @@ async function openFileFromDsh(raw, cwd) {
       doc = null
     }
     if (doc) {
-      await vscode.window.showTextDocument(doc, { preview: false })
+      await vscode.window.showTextDocument(doc, { preview: false, preserveFocus: keepFocus })
     } else {
+      // Binary / dedicated-editor fallback: `vscode.open` has no preserveFocus
+      // option, so hand focus back to the sidebar when the caller wanted to
+      // keep typing in the composer.
       await vscode.commands.executeCommand('vscode.open', uri)
+      if (keepFocus) setTimeout(() => { void focusDshSidebar() }, 30)
     }
-    state.log('openFile ' + p)
+    state.log('openFile ' + p + (keepFocus ? ' (keepFocus)' : ''))
   } catch (e) {
     state.log('openFile failed: ' + String((e && e.message) || e))
     dshFileToast('dsh: 打开失败 ' + raw)
+  }
+}
+
+/**
+ * 0.1.24: plan cards (pending review「查看全文」and logged plan cards) are
+ * `dsh-resource://` virtual documents opened in dsh's right sidebar — useless
+ * in a narrow VS Code aux bar. The client hands us the markdown; store it under
+ * the plugin's own directory (never inside the user's repo) and open it in the
+ * editor WITH focus, since clicking a plan is an explicit read request.
+ * @param {{ markdown?: string, title?: string, callId?: string, sessionId?: string, cwd?: string }} payload
+ */
+async function openPlanFromDsh(payload) {
+  const md = String((payload && payload.markdown) || '')
+  if (!md) { state.log('[planFile] empty markdown — skipped'); return }
+  try {
+    const dir = path.join(os.homedir(), '.dsh', 'review', 'plans')
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
+    const clean = (s, n) => String(s || '').replace(/[^A-Za-z0-9_-]/g, '').slice(0, n)
+    const sid = clean((payload && payload.sessionId) || 'session', 16) || 'session'
+    const key = clean((payload && payload.callId) || String(Date.now()), 12) || String(Date.now())
+    const file = path.join(dir, 'plan-' + sid + '-' + key + '.md')
+    fs.writeFileSync(file, md.endsWith('\n') ? md : md + '\n')
+    state.log('[planFile] wrote ' + file + ' chars=' + md.length +
+      ' title=' + String((payload && payload.title) || '').slice(0, 60))
+    await openFileFromDsh(file, String((payload && payload.cwd) || ''), { keepFocus: false })
+  } catch (e) {
+    state.log('[planFile] failed: ' + String((e && e.message) || e))
+    dshFileToast('dsh: 打开计划失败')
   }
 }
 
@@ -620,7 +659,7 @@ function dshWebviewHtml(url, opts) {
     '    } else if (msg.type === "dshChromeState") {' +
     '      dshChrome = { railSide: msg.railSide === "right" ? "right" : "left", railHidden: !!msg.railHidden, zoom: Number(msg.zoom) || 1 };' +
     '      vscode.postMessage(msg);' +
-    '    } else if (msg.type === "dshViewActive" || msg.type === "dshOpenExternal" || msg.type === "dshOpenFile" || msg.type === "dshPendingRequest" || msg.type === "dshReviewAll" || msg.type === "dshScopeViolation" || msg.type === "dshScopeMissing" || msg.type === "dshScopeEmpty" || msg.type === "dshWorkspaceCreated" || msg.type === "dshScopeDiag" || msg.type === "dshScopeRequest" || msg.type === "dshCopyText" || msg.type === "dshPasteRequest" || msg.type === "dshInsertResult" || msg.type === "dshShowCommands") {' +
+    '    } else if (msg.type === "dshViewActive" || msg.type === "dshOpenExternal" || msg.type === "dshOpenFile" || msg.type === "dshOpenPlan" || msg.type === "dshPendingRequest" || msg.type === "dshReviewAll" || msg.type === "dshScopeViolation" || msg.type === "dshScopeMissing" || msg.type === "dshScopeEmpty" || msg.type === "dshWorkspaceCreated" || msg.type === "dshScopeDiag" || msg.type === "dshScopeRequest" || msg.type === "dshCopyText" || msg.type === "dshPasteRequest" || msg.type === "dshInsertResult" || msg.type === "dshShowCommands") {' +
     '      vscode.postMessage(msg);' +
     '    } else if (msg.type === "dshReload") {' +
     '      reloadFrame(!!msg.force);' +
@@ -757,29 +796,135 @@ function webviewDropPaths(raws) {
 }
 
 /**
- * macOS: real file paths of a Finder "Copy" clipboard payload.
- * Finder Cmd+C stores only a file promise (NSFilenamesPboardType plist) — no
- * bytes — which is why pasting into the dsh webview yields an empty chip.
- * The extension host sees the OS clipboard, so it resolves the paths.
+ * Parse an NSFilenamesPboardType XML plist into existing absolute paths. Shared
+ * by the Electron buffer route and any raw pasteboard data route.
+ * @param {string} xml
+ * @returns {string[]}
+ */
+function parseNsfilenamesPlist (xml) {
+  const out = []
+  const re = /<string>([^<]+)<\/string>/g
+  let m
+  while ((m = re.exec(xml))) {
+    const p = m[1].replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+    if (p && fs.existsSync(p)) out.push(p)
+  }
+  return out
+}
+
+/**
+ * macOS, no Electron: ask AppKit for the pasteboard file items via JXA.
+ * 0.1.24 — VS Code 1.142's extension host no longer exposes electron.clipboard
+ * ("Cannot read properties of undefined (reading 'readBuffer')"), which killed
+ * the 0.1.63 Finder-copy → paste feature. Order: the legacy NSFilenames plist,
+ * then NSURL pasteboard helpers, then a single public.file-url.
+ * @returns {string[]}
+ */
+function readMacClipboardFilesViaJxa () {
+  const script = [
+    'ObjC.import("AppKit");',
+    'var pb = $.NSPasteboard.generalPasteboard;',
+    'var out = [];',
+    // JXA gotcha (verified on 1.142/macOS): String() of an ObjC bridge object
+    // yields "[id __NSCFString]", so every value must go through
+    // ObjC.unwrap/deepUnwrap and be type-checked before use.
+    'function pushPath(p) { if (typeof p === "string" && p) out.push(p); }',
+    'try {',
+    '  var pl = ObjC.deepUnwrap(pb.propertyListForType("NSFilenamesPboardType"));',
+    '  if (Array.isArray(pl)) pl.forEach(pushPath);',
+    '} catch (e) {}',
+    'if (!out.length) {',
+    '  try {',
+    '    var s = ObjC.unwrap(pb.stringForType("public.file-url"));',
+    '    if (typeof s === "string" && s) {',
+    '      if (s.indexOf("file://") === 0) s = s.slice(7);',
+    '      var q = s.indexOf("#"); if (q >= 0) s = s.slice(0, q);',
+    '      try { s = decodeURIComponent(s); } catch (e) {}',
+    '      pushPath(s);',
+    '    }',
+    '  } catch (e) {}',
+    '}',
+    'out.join("\\n")',
+  ].join('\n')
+  const txt = execFileSync('osascript', ['-l', 'JavaScript', '-e', script], {
+    encoding: 'utf8', timeout: 2000, maxBuffer: 1 << 20, stdio: ['ignore', 'pipe', 'ignore'],
+  })
+  return String(txt || '').split('\n').map((s) => s.trim()).filter((p) => p && fs.existsSync(p))
+}
+
+/**
+ * Linux: text/uri-list on the clipboard (file managers publish it next to the
+ * selection). wl-paste first (Wayland), xclip otherwise (X11).
+ * @returns {string[]}
+ */
+function readLinuxClipboardFiles () {
+  let txt = ''
+  const run = (cmd, args) => execFileSync(cmd, args, { encoding: 'utf8', timeout: 2000, maxBuffer: 1 << 20, stdio: ['ignore', 'pipe', 'ignore'] })
+  try { txt = run('wl-paste', ['-t', 'text/uri-list']) } catch { /* not Wayland */ }
+  if (!txt || !txt.trim()) {
+    try { txt = run('xclip', ['-o', '-selection', 'clipboard', '-t', 'text/uri-list']) } catch { /* no xclip / no uri-list */ }
+  }
+  return urisToPaths(txt)
+}
+
+/**
+ * Windows: shell clipboard in FileDropList format.
+ * @returns {string[]}
+ */
+function readWinClipboardFiles () {
+  const ps = 'Get-Clipboard -Format FileDropList | ForEach-Object { $_.FullName }'
+  let txt = ''
+  try { txt = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps], { encoding: 'utf8', timeout: 3000, maxBuffer: 1 << 20, stdio: ['ignore', 'pipe', 'ignore'] }) } catch { /* no powershell */ }
+  return String(txt || '').split(/\r?\n/).map((s) => s.trim()).filter((p) => p && fs.existsSync(p))
+}
+
+/**
+ * `file://` uri-list text → absolute paths (percent-decoded).
+ * @param {string} txt
+ * @returns {string[]}
+ */
+function urisToPaths (txt) {
+  const out = []
+  for (const line of String(txt || '').split(/\r?\n/)) {
+    const t = line.trim()
+    if (!t || t.startsWith('#')) continue
+    let p = t.startsWith('file://') ? decodeURIComponent(t.slice(7)).replace(/^\/([A-Za-z]:)/, '$1') : t
+    if (fs.existsSync(p)) out.push(p)
+  }
+  return out
+}
+
+/**
+ * Real file paths of a file-manager "Copy" clipboard payload (Finder/Cmd+C
+ * stores only a file promise — no bytes — which is why pasting into the dsh
+ * webview used to yield an empty chip). The extension host sees the OS
+ * clipboard, so it resolves the paths.
  * @returns {string[]} existing absolute paths, empty when the clipboard holds
  *   bitmaps (screenshot copy) or nothing file-shaped.
  */
 function clipboardFilePaths () {
-  if (process.platform !== 'darwin') return []
+  // 1) Electron pasteboard buffer (pre-1.142 extension hosts).
   try {
-    const buf = electron.clipboard.readBuffer('NSFilenamesPboardType')
-    if (!buf || !buf.length) return []
-    const xml = buf.toString('utf8')
-    const out = []
-    const re = /<string>([^<]+)<\/string>/g
-    let m
-    while ((m = re.exec(xml))) {
-      const p = m[1].replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
-      if (p && fs.existsSync(p)) out.push(p)
+    if (electron && electron.clipboard && typeof electron.clipboard.readBuffer === 'function') {
+      const buf = electron.clipboard.readBuffer('NSFilenamesPboardType')
+      if (buf && buf.length) {
+        const out = parseNsfilenamesPlist(buf.toString('utf8'))
+        if (out.length) { state.log('clipboardFilePaths electron n=' + out.length); return out }
+      }
     }
+  } catch (e) {
+    state.log('clipboardFilePaths electron failed: ' + String(e && e.message || e))
+  }
+  // 2) OS-native fallback per platform.
+  try {
+    let out = []
+    if (process.platform === 'darwin') out = readMacClipboardFilesViaJxa()
+    else if (process.platform === 'win32') out = readWinClipboardFiles()
+    else out = readLinuxClipboardFiles()
+    state.log('clipboardFilePaths ' + process.platform + ' n=' + out.length)
     return out
   } catch (e) {
-    state.log('clipboardFilePaths failed: ' + String(e && e.message || e))
+    state.log('clipboardFilePaths fallback failed: ' + String(e && e.message || e))
     return []
   }
 }
@@ -921,7 +1066,11 @@ function setupDshBrowser(context) {
           return
         }
         if (msg.type === 'dshOpenFile') {
-          void openFileFromDsh(String(msg.path || ''), String(msg.cwd || ''))
+          void openFileFromDsh(String(msg.path || ''), String(msg.cwd || ''), { keepFocus: msg.keepFocus !== false })
+          return
+        }
+        if (msg.type === 'dshOpenPlan') {
+          void openPlanFromDsh(msg)
           return
         }
         if (msg.type === 'dshPasteFileRef') {

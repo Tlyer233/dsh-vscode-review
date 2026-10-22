@@ -1166,6 +1166,10 @@ window.__ModuleLoader__.load({
           return true;
         }
 
+        // 0.1.67: the click-interception patch lives in another closure; expose
+        // the composer refocus so the insert-guard branch can hand focus back.
+        try { window.__dshrFocusComposer = focusComposer; } catch (err) { /* noop */ }
+
         function insertComposerText(text) {
           const value = String(text === null || text === undefined ? "" : text);
           if (!value) return false;
@@ -1322,6 +1326,9 @@ window.__ModuleLoader__.load({
               setTimeout(function () { focusComposer(caretAt); }, 0);
               setTimeout(function () { focusComposer(caretAt); }, 50);
               setTimeout(function () { ensureCaretAfterChip(); }, 300);
+              // 0.1.67 insert-guard: the click that follows a fresh chip is the
+              // user placing the caret, not a request to open the file.
+              try { window.__dshrRefGuardUntil = Date.now() + 800; } catch (err) { /* noop */ }
               return { mode: "chip", count: references.length, reason: "" };
             }
 
@@ -1366,6 +1373,7 @@ window.__ModuleLoader__.load({
             caretWantedAt = Date.now();
             setTimeout(function () { focusComposer(caretAt); }, 0);
             setTimeout(function () { focusComposer(caretAt); }, 50);
+            try { window.__dshrRefGuardUntil = Date.now() + 800; } catch (err) { /* noop */ }
             return { mode: "chip", count: references.length, reason: "" };
           } catch (err) {
             console.warn("[dsh-review] native chip insert failed, fallback to text:", err && err.message || err);
@@ -3470,6 +3478,115 @@ window.__ModuleLoader__.load({
           return rec && rec.cwd ? String(rec.cwd) : "";
         } catch (err) { return ""; }
       }
+      function currentSessionId() {
+        try {
+          const ssnap = ctx.sessions.list.getSnapshot();
+          return ssnap && ssnap.current ? String(ssnap.current) : "";
+        } catch (err) { return ""; }
+      }
+
+      // Plan cards (0.2.1): submitted / pending plans are `dsh-resource://`
+      // virtual documents opened in the RIGHT sidebar, which in a narrow VS
+      // Code aux bar is barely readable. 0.1.67 intercepts the click and hands
+      // the same markdown to VS Code as a real file (extension writes
+      // ~/.dsh/review/plans/… and opens it focused).
+      // Text sources, in order: the React payload dsh builds in submittedPlan
+      // ({callId, markdown, title}), the client resource store, the open
+      // preview DOM. If all three miss, the click is left to dsh untouched.
+      function planSurface(el) {
+        try {
+          if (!el || !el.closest) return null;
+          const card = el.closest("[data-plan-card]");
+          if (card) return { kind: "card", node: card, callId: String(card.getAttribute("data-plan-card") || "") };
+          let node = el;
+          for (let i = 0; i < 6 && node && node !== document.body; i++) {
+            if (node.nodeType === 1 && node.classList) {
+              for (let j = 0; j < node.classList.length; j++) {
+                const t = node.classList[j];
+                // CSS-module tokens come in both namings: "_reviewLink_<hash>"
+                // and "<hash>_reviewLink" (dsh-client-ui-plan PlanPreview).
+                if (t.indexOf("_reviewLink_") === 0 || (t.length > 11 && t.endsWith("_reviewLink"))) {
+                  return { kind: "review", node: node, callId: "" };
+                }
+              }
+            }
+            node = node.parentElement;
+          }
+        } catch (err) { /* not a plan surface */ }
+        return null;
+      }
+
+      function planRecordOf(value, depth) {
+        // Recursively look for the {markdown, …} record; shallow + sampled so a
+        // click never walks the whole React tree.
+        if (!value || typeof value !== "object" || depth > 3) return null;
+        if (typeof value.markdown === "string" && value.markdown.length > 40) return value;
+        if (value.review && typeof value.review.markdown === "string" && value.review.markdown.length > 40) return value.review;
+        if (value.plan && typeof value.plan.markdown === "string" && value.plan.markdown.length > 40) return value.plan;
+        if (Array.isArray(value)) {
+          for (let i = 0; i < value.length && i < 12; i++) {
+            const hit = planRecordOf(value[i], depth + 1);
+            if (hit) return hit;
+          }
+          return null;
+        }
+        if (value.props && typeof value.props === "object") {
+          const hit = planRecordOf(value.props, depth + 1);
+          if (hit) return hit;
+        }
+        return null;
+      }
+
+      function planRecordFromFiber(node) {
+        try {
+          const keys = node && Object.keys(node) ? Object.keys(node) : [];
+          let fk = null;
+          for (let i = 0; i < keys.length; i++) {
+            if (keys[i].indexOf("__reactFiber$") === 0) { fk = keys[i]; break; }
+          }
+          let fiber = fk ? node[fk] : null;
+          for (let hops = 0; fiber && hops < 40; hops++) {
+            const hitProps = planRecordOf(fiber.memoizedProps, 0);
+            if (hitProps) return hitProps;
+            let state = fiber.memoizedState;
+            for (let h = 0; state && h < 30; h++) {
+              const hit = planRecordOf(state.memoizedState !== undefined ? state.memoizedState : state, 0);
+              if (hit) return hit;
+              state = state.next;
+            }
+            fiber = fiber.return;
+          }
+        } catch (err) { /* fiber shape changed */ }
+        return null;
+      }
+
+      function planTextFromResources(address) {
+        try {
+          const res = ctx && ctx.resources;
+          if (!res || typeof res.source !== "function") return "";
+          const src = res.source(address);
+          if (!src) return "";
+          if (typeof src === "string") return src;
+          if (typeof src.markdown === "string") return src.markdown;
+          if (typeof src.text === "string") return src.text;
+          return "";
+        } catch (err) { return ""; }
+      }
+
+      function planTextFromPreviewDom() {
+        try {
+          const nodes = document.querySelectorAll("[class]");
+          for (let i = 0; i < nodes.length; i++) {
+            const cls = String(nodes[i].className || "");
+            const isDoc = cls.indexOf("_document_") >= 0 || /(^|\s)_document\b/.test(cls) || cls.split(/\s+/).some((t) => t.endsWith("_document"));
+            if (!isDoc) continue;
+            const txt = String(nodes[i].innerText || "").trim();
+            if (txt.length > 40) return txt;
+          }
+        } catch (err) { /* noop */ }
+        return "";
+      }
+
       function fileOpenTargetPath(btn) {
         const title = btn.getAttribute && btn.getAttribute("title");
         if (typeof title === "string" && title.charAt(0) === "/") return title;
@@ -3527,6 +3644,39 @@ window.__ModuleLoader__.load({
           try {
             if (!(inVscodeIframe() || bridgeActive || vscodeIframeHint())) return;
             if (!reviewSettingsReady() || !getReviewSettings().openFilesInVscode) return;
+            // 0.1.67: plan cards → write the plan markdown to a real file and
+            // open it in the VS Code editor (dsh's own right-sidebar preview is
+            // unreadable in a narrow aux bar).
+            const planHit = planSurface(e.target);
+            if (planHit) {
+              const rec = planRecordFromFiber(planHit.node);
+              const sid = currentSessionId();
+              const callId = (rec && rec.callId) || planHit.callId || "";
+              let text = rec && typeof rec.markdown === "string" ? rec.markdown : "";
+              let tier = text ? "fiber" : "";
+              if (!text && sid && callId) {
+                text = planTextFromResources("dsh-resource://plan/" + encodeURIComponent(sid) + "/" + encodeURIComponent(callId));
+                if (text) tier = "resource";
+              }
+              if (!text) { text = planTextFromPreviewDom(); if (text) tier = "dom"; }
+              if (!text) {
+                // Nothing readable yet: leave the click to dsh so its own
+                // preview still opens instead of the click doing nothing.
+                postScopeMessage("dshPasteLog", { line: "[plan] tier=none kind=" + planHit.kind + " -> native preview" });
+                return;
+              }
+              e.preventDefault();
+              try { e.stopImmediatePropagation(); } catch (err) { e.stopPropagation(); }
+              postScopeMessage("dshPasteLog", { line: "[plan] kind=" + planHit.kind + " tier=" + tier + " chars=" + text.length + " callId=" + callId });
+              postScopeMessage("dshOpenPlan", {
+                markdown: text,
+                title: (rec && rec.title) || "",
+                callId: callId,
+                sessionId: sid,
+                cwd: currentSessionCwd(),
+              });
+              return;
+            }
             const btn = e.target && e.target.closest ? e.target.closest('button, a, [role="button"]') : null;
             let raw = btn ? fileOpenTargetPath(btn) : null;
             // Cards/rows are not always real buttons (the collapsed "Edited X"
@@ -3544,6 +3694,7 @@ window.__ModuleLoader__.load({
               }
             }
             if (!raw) return;
+            const inInsertGuard = Date.now() < (window.__dshrRefGuardUntil || 0);
             e.preventDefault();
             // dsh's own click handlers sit on document too (capture, registered
             // after ours). stopPropagation does NOT stop same-node listeners —
@@ -3551,8 +3702,21 @@ window.__ModuleLoader__.load({
             // check. stopImmediatePropagation kills them: this click is
             // ours now.
             try { e.stopImmediatePropagation(); } catch (err) { e.stopPropagation(); }
-            postScopeMessage("dshPasteLog", { line: "fileOpen raw=" + raw });
-            postScopeMessage("dshOpenFile", { path: raw, cwd: currentSessionCwd() });
+            if (inInsertGuard) {
+              // 0.1.67: right after we insert refs ourselves, the click that
+              // places the caret lands on the fresh chip. Opening the file moved
+              // VS Code focus into the editor, so every following keystroke
+              // typed into the FILE instead of the composer. Swallow the click
+              // (no VS Code open, no dsh preview) and hand focus back.
+              postScopeMessage("dshPasteLog", { line: "[openfile] suppressed (insert-guard) raw=" + raw });
+              try { if (window.__dshrFocusComposer) window.__dshrFocusComposer(); } catch (err) { /* noop */ }
+              return;
+            }
+            postScopeMessage("dshPasteLog", { line: "fileOpen raw=" + raw + (e.altKey ? " (focusEditor)" : "") });
+            // Alt/Option-click = pre-0.1.24 behaviour (open AND focus the file).
+            // A plain click keeps focus in the composer so typing continues in
+            // the draft; the file opens in the background.
+            postScopeMessage("dshOpenFile", { path: raw, cwd: currentSessionCwd(), keepFocus: !e.altKey });
           } catch (err) { /* noop */ }
         };
         try { document.addEventListener("click", fileOpenListener, true); } catch (err) { fileOpenListener = null; }

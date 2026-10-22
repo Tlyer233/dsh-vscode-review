@@ -2,7 +2,7 @@
   "name": "dsh-review-vscode",
   "displayName": "dsh review — inline diff + dsh sidebar",
   "description": "Inline review (shadow/pending) + dsh webview sidebar",
-  "version": "0.1.23",
+  "version": "0.1.24",
   "publisher": "dsn",
   "engines": {
     "vscode": "^1.85.0"
@@ -216,7 +216,7 @@
         },
         {
           "command": "dshReview.sendFileToDsh",
-          "when": "false"
+          "when": "filesExplorerFocus && listFocus"
         }
       ],
       "editor/title": [
@@ -326,7 +326,17 @@
         "command": "dshReview.sendFileToDsh",
         "key": "cmd+l",
         "mac": "cmd+l",
-        "when": "focusedView == \"explorer\" && listFocus && !editorFocus && !terminalFocus"
+        "win": "ctrl+alt+l",
+        "linux": "ctrl+alt+l",
+        "when": "filesExplorerFocus && listFocus && !editorFocus && !terminalFocus && !inputFocus"
+      },
+      {
+        "command": "dshReview.sendFileToDsh",
+        "key": "shift+cmd+l",
+        "mac": "shift+cmd+l",
+        "win": "ctrl+shift+l",
+        "linux": "ctrl+shift+l",
+        "when": "filesExplorerFocus && listFocus && !editorFocus && !terminalFocus && !inputFocus"
       }
     ]
   },

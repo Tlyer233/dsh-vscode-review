@@ -251,6 +251,159 @@ reset_shadow_store() {
   echo "emptied pending $pend/*.json"
 }
 
+# 0.1.24: drop keybindings.json rows that can never fire, so the extension's own
+# cmd+l / shift+cmd+l contributions are not shadowed. Two stale shapes exist in
+# the wild: `focusedView == "explorer"` (the pre-1.142 explorer view id — 1.142
+# reports workbench.explorer.fileView) and `focusedView == '\"explorer\"'`
+# (double-escaped when the when-clause was copied out of package.json, so the
+# literal keeps its quote characters and never matches). Backs the file up and
+# keeps the surviving rows verbatim, so the user's formatting is untouched.
+prune_stale_dsh_keybindings() {
+  local kb=""
+  case "$(uname -s)" in
+    Darwin) kb="$HOME/Library/Application Support/Code/User/keybindings.json" ;;
+    Linux)  kb="${XDG_CONFIG_HOME:-$HOME/.config}/Code/User/keybindings.json" ;;
+    MING*|MSYS*|CYGWIN*) [ -n "${APPDATA:-}" ] && kb="$APPDATA/Code/User/keybindings.json" ;;
+  esac
+  if [ -z "$kb" ] || [ ! -f "$kb" ]; then
+    echo "keybindings.json not found — no stale dsh rows to prune"
+    return 0
+  fi
+  need python3
+  python3 - "$kb" <<'PY'
+import json, re, shutil, sys, time
+
+path = sys.argv[1]
+raw = open(path, encoding='utf-8').read()
+start = raw.find('[')
+if start < 0:
+    print('keybindings.json: no JSON array — skipped'); raise SystemExit(0)
+
+
+def close_index(text, open_ch, close_ch):
+    """Index of the close_ch matching the open_ch at position 0 (string aware)."""
+    depth, in_str, esc = 0, False, False
+    for i, c in enumerate(text):
+        if in_str:
+            if esc:
+                esc = False
+            elif c == '\\':
+                esc = True
+            elif c == '"':
+                in_str = False
+            continue
+        if c == '"':
+            in_str = True
+        elif c == open_ch:
+            depth += 1
+        elif c == close_ch:
+            depth -= 1
+            if depth == 0:
+                return i
+    return -1
+
+
+end = close_index(raw[start:], '[', ']')
+if end < 0:
+    print('keybindings.json: array never closes — skipped'); raise SystemExit(0)
+end += start
+body = raw[start + 1:end]
+
+# split the array body on top-level commas; each chunk keeps its own text
+chunks, buf, depth, in_str, esc = [], [], 0, False, False
+for c in body:
+    if in_str:
+        buf.append(c)
+        if esc:
+            esc = False
+        elif c == '\\':
+            esc = True
+        elif c == '"':
+            in_str = False
+        continue
+    if c == '"':
+        in_str = True
+        buf.append(c)
+        continue
+    if c in '[{':
+        depth += 1
+    elif c in ']}':
+        depth -= 1
+    if c == ',' and depth == 0:
+        chunks.append(''.join(buf))
+        buf = []
+    else:
+        buf.append(c)
+if buf:
+    chunks.append(''.join(buf))
+
+
+def strip_line_comments(text):
+    out, in_str, esc = [], False, False
+    for line in text.split('\n'):
+        s, has_str = [], in_str
+        prev = ''
+        for ch in line:
+            if has_str:
+                if esc:
+                    esc = False
+                elif ch == '\\':
+                    esc = True
+                elif ch == '"':
+                    has_str = False
+            elif ch == '/' and prev == '/':
+                s = s[:-1]
+                break
+            s.append(ch)
+            if ch == '"':
+                has_str = True
+            prev = ch
+        out.append(''.join(s))
+    return '\n'.join(out)
+
+
+WHEN_RE = re.compile(r"""focusedView\s*==\s*(?:"([^"]*)"|'([^']*)')""")
+
+
+def is_stale(chunk):
+    if 'dshReview.' not in chunk or 'focusedView' not in chunk:
+        return False
+    txt = strip_line_comments(chunk).strip().rstrip(',').strip()
+    obj = None
+    try:
+        obj = json.loads(txt)
+    except Exception:
+        obj = None
+    if isinstance(obj, dict):
+        # "-command" removes a contribution, "+command" re-adds it — the name
+        # itself follows the sign, so strip it before matching our extension.
+        if not str(obj.get('command') or '').lstrip('+-').startswith('dshReview.'):
+            return False
+        m = WHEN_RE.search(str(obj.get('when') or ''))
+        if not m:
+            return False
+        val = m.group(1) if m.group(1) is not None else m.group(2)
+        return val == 'explorer' or val.startswith('"')
+    # unparseable chunk: only touch the unmistakable double-escaped form
+    return bool(re.search(r'focusedView\s*==\s*\\?"explorer\\?"', chunk))
+
+
+removed = [c for c in chunks if is_stale(c)]
+if not removed:
+    print('keybindings.json: no stale dsh rows (%d row(s) kept)' % len(chunks))
+    raise SystemExit(0)
+
+kept = [c for c in chunks if not is_stale(c) and c.strip()]
+bak = '%s.bak-%s' % (path, time.strftime('%Y%m%d%H%M%S'))
+shutil.copy2(path, bak)
+out = raw[:start] + '[' + ',\n'.join(kept) + ']' + raw[end + 1:]
+open(path, 'w', encoding='utf-8').write(out)
+print('keybindings.json: removed %d stale dsh row(s); backup %s' % (len(removed), bak))
+for c in removed:
+    print('  - ' + ' '.join(c.strip().split())[:150])
+PY
+}
+
 echo "=== [1/4] Install dsh plugin (dsh-review) ==="
 need dsh
 install_dsh_plugin
@@ -258,6 +411,7 @@ install_dsh_plugin
 echo "=== [2/4] Install VS Code extension ==="
 [ -d "$VSCODE_SRC" ] || die "missing $VSCODE_SRC"
 install_vscode_extension
+prune_stale_dsh_keybindings
 
 echo "=== [3/4] Enable editorInsets in VS Code argv.json ==="
 merge_argv "$HOME/.vscode/argv.json"

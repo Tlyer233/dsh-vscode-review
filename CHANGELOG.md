@@ -16,10 +16,43 @@
    | 日志 `openFile failed: Binary contents are not supported` | 文本通道拒二进制 | 已有 `vscode.open` 兜底,正常不该再现;再现=兜底没走到,查 `openFileFromDsh` 分支 |
    | 日志 `openFile failed: <其他>` 且右下角弹"打开失败" | `vscode.open` 也开不了 = VS Code 没装能开该类型的编辑器(如 .psd/.excalidraw) | 属**编辑器生态问题**不是插件问题:装对应 VS Code 扩展即可;若需插件特殊处理某扩展名,在 `openFileFromDsh` 按扩展名加分支 |
    | **拖文件进侧栏**:overlay 闪一下就没 / 拖放无效 | VS Code ≥1.90 的 Shift 设计:拖文件未按 Shift 时 webview 被 `pointer-events:none`(#182449 / PR#209211),非插件回归 | **实测(0.1.20 后)**:拖到**输入框/附件条区域**可直接拖入——dsh 自己的 dropzone 在 dragenter 就 preventDefault,走了官方 defaultPrevented 逃生门,不需要 Shift;拖到面板其他区域才被遮罩(那时才需 Shift)。`code.dragAndDropItemFacilitator` 配方实测失败(0.1.61,灰层卡死,0.1.62 已撤销),别再试 |
-   | **粘贴文件成空 chip**(访达 Cmd+C 复制文件→粘贴,chip 无内容) | 访达复制只放"文件引用"没有像素;webview 剪贴板桥给 0 字节占位,浏览器会实体化所以正常 | 0.1.63:客户端吞掉 0 字节 Files 粘贴 → 扩展读 `NSFilenamesPboardType` 真路径 → 走「发送到 dsh」原生引用通道插入;截图复制(有字节)不受影响。排查看扩展日志 `paste file-ref ... paths=N`(0=剪贴板没路径)与 `[paste] files[名:大小]` |
+   | **粘贴文件成空 chip**(访达 Cmd+C 复制文件→粘贴,chip 无内容) | 访达复制只放"文件引用"没有像素;webview 剪贴板桥给 0 字节占位,浏览器会实体化所以正常 | 0.1.63:客户端吞掉 0 字节 Files 粘贴 → 扩展读 `NSFilenamesPboardType` 真路径 → 走「发送到 dsh」原生引用通道插入;截图复制(有字节)不受影响。排查看扩展日志 `paste file-ref ... paths=N`(0=剪贴板没路径)与 `[paste] files[名:大小]`。**1.142 起再看这条**:若日志出现 `clipboardFilePaths electron failed`/`n=0`,是扩展宿主已无 `electron.clipboard`,0.1.24 已改走 JXA/xclip/pwsh 兜底,按 `clipboardFilePaths <platform> n=` 判断兜底是否命中 |
+   | **explorer 选中文件按快捷键全无反应**(右键可用) | 快捷键 when 永不成立:VS Code 1.142 资源管理器视图 ID 是 `workbench.explorer.fileView`,`focusedView == "explorer"` 失效;从 package.json 复制 when 还会多转义一层引号成 `focusedView == '"explorer"'` | 0.1.24:改用 `filesExplorerFocus`(不依赖视图 ID)并同时贡献 cmd+l + shift+cmd+l;install.sh 自动清理 keybindings.json 里这两类死行(先备份)。排查:命令面板跑 `dsh: 发送文件到 dsh`,日志出 `[sendFileToDsh] n=1` = 命令活着,只是键位没触发 |
+   | **chip 插入后打字跑到那个文件里**(chip 不变、文件标签页自己弹出) | 不是光标问题:点 chip 被 0.1.58 拦截成"在 VS Code 打开",`showTextDocument` 不带 `preserveFocus` → 焦点进编辑器,后续按键全打进文件 | 0.1.24/0.1.67:普通点击打开文件**不抢焦点**(`openFile … (keepFocus)`);刚插完 chip 的 800ms 保护窗内点 chip 完全不打开(`[openfile] suppressed (insert-guard)`);要"打开并聚焦"用 **⌥/Alt+点击**。若日志里**没有**弹标签页却仍吞字,才轮到 dsh 0.2.1 `TextRefNode` 光标假设,看 `[caret]` 行 |
+   | **plan 卡片「查看全文」只在 dsh 内部预览打开**(窄侧栏看不到) | 0.2.1 的 plan 是虚拟资源 `dsh-resource://plan[-review]/…`,不在盘上,`fileOpenTargetPath` 三种特征都认不到 | 0.1.67:认 `[data-plan-card]` 与 `*_reviewLink*` → fiber 取 `{callId, markdown, title}`(退资源 store / 预览 DOM)→ 扩展写 `~/.dsh/review/plans/plan-<sid>-<callId>.md` 并在编辑器聚焦打开;看 `[plan] kind=… tier=…` 与 `[planFile] wrote …` |
 3. **改哪边装哪边,版本必须递增**(服务端按 rev 缓存合并 bundle,同版本号重装=下发旧代码):
    只改 `dsh-review/client.js` → webview 右键 Reload;改 `index.js` → 侧栏 Restart dsh;改扩展 `dsh-review-vscode/**` → **Cmd+Q**(mac)/ **Ctrl+Q**(Linux)整重启,并 bump `dsh-review-vscode/package.json` 的 `version`——`install.sh` 的 `EXT_VER` 现在自动读它,不用再手改。装完重写 `~/.dsh/review/shadow/settings.json`(install.sh 会清空)。
 4. **验证**:hover/点击类 bug **不要用 ego-browser 复现**(CDP 合成鼠标事件 relatedTarget 失真,0.1.56 曾误判),以真实 VS Code webview + 扩展日志为准。
+
+## dsh-review 0.1.67 + dsh-review-vscode 0.1.24 (2026-10-22, dsh 0.2.1-rc.2 / VS Code 1.142) — 快捷键 / chip 焦点 / plan 文件 / 访达粘贴
+
+升级面:dsh 0.2.0-rc.2 → 0.2.1-rc.2。已核实 **rc.1 与 rc.2 的 `dsh-client-ui-conversation/lib/client.js` 字节相同**(774080),composer 侧的行为变更全部来自 rc.1;同期 VS Code 1.142(10-15 装的)也动了(视图 ID、扩展宿主 electron)。
+
+### 修 1:资源管理器选中文件的快捷键全无反应(右键「发送到 dsh」正常)
+- 定位:`contributes.keybindings` 里写的是 `focusedView == "explorer"`,而 1.142 的资源管理器视图 ID 是 `workbench.explorer.fileView`(已在 `workbench.desktop.main.js` 内核实,同时确认 `filesExplorerFocus`/`explorerViewletFocus`/`listFocus` 仍在导出)→ 条件永不成立。用户 keybindings.json 里手写的 shift+cmd+l 因从 package.json 复制 when 多转义了一层引号 → `focusedView == '"explorer"'`(字面量含引号)→ 同样永不成立;两条 `-dshReview.sendFileToDsh` 移除项也是死行。右键菜单 `explorer/context` 没有 when,所以照常可用 —— 这就是"只有右键能插入"的全部原因,**与 dsh 版本无关**。
+- 修法:when 换成 `filesExplorerFocus && listFocus && !editorFocus && !terminalFocus && !inputFocus`,并**同时贡献 cmd+l(mac)/shift+cmd+l(mac)**(win/linux = ctrl+alt+l / ctrl+shift+l),用户不必改自己的文件;`commandPalette` 里该命令从 `when:"false"` 放开为 `filesExplorerFocus && listFocus`,命令面板可手动触发做回归。
+- 已知限制(不算 bug):键盘触发时命令拿不到菜单注入的 uri,走 `copyFilePath` + 剪贴板兜底,只取**焦点那一个**条目;多选仍走右键。
+
+### 修 2:插入文件 chip 后打不了字,敲的全进那个文件
+- 现象核对(以用户回答为准):chip 不变、该文件的 VS Code 标签页自己弹出 → **焦点被抢**,不是光标落点问题。
+- 定位:0.1.58 的 capture-click 拦截把点 chip 转成 `dshOpenFile`,扩展 `showTextDocument(doc, { preview: false })` 不带 `preserveFocus` → 焦点进编辑器 → 之后所有按键落进文件。0.2.1 把 chip 面改成整块可点(新样式 `._reference` + `cursor:pointer`,并新增 `TextRefNode` 纯文本引用面),"点 chip 后面放光标"更容易命中 chip,才把这个老毛病暴露出来。
+- 修法(两层,不加新设置项):① 客户端插完 chip 设 **800ms 插入保护窗**,窗内点 chip 既不请求打开也不弹 dsh 预览,并把焦点交回输入框(日志 `[openfile] suppressed (insert-guard)`);② `dshOpenFile` 新增 `keepFocus` 字段,扩展默认 `preserveFocus:true`(日志 `openFile <路径> (keepFocus)`),**⌥/Alt+点击**恢复旧行为(打开并聚焦);二进制走 `vscode.open` 没有该选项,补一次 `focusDshSidebar()`。
+- 保留假设:若焦点修好后打字仍被并入 chip 文件名,则是 0.2.1 新增的纯文本引用实体转换(`registerTextRefDecoration`/`TextRefNode`,注释 "Editing continues inside")叠加我们按 detect 坐标(1 个 chip 记 1 字符)强行落光标的老逻辑(`referenceSpan` 与 `spanAfterInsert` 坐标系互相矛盾)→ 已埋 `[caret]` 诊断行,按结果再改。
+
+### 修 3:plan 卡片「查看全文」只在 dsh 右侧预览打开(窄侧栏看不到)
+- 定位:0.2.1 的 plan 是**虚拟资源** `dsh-resource://plan/<sid>/<callId>`(已提交)与 `dsh-resource://plan-review/<sid>/<requestKey>`(待审),不落盘;dsh-client-ui-plan 的 DOM 特征是 `div[data-plan-artifacts] > button[data-plan-card="<callId>"]` 与 class `*_reviewLink*`(文案 `preview.full` = 查看全文 / View full plan),`fileOpenTargetPath` 的 title / `_fileLink_` / Edited 卡片三种特征一个都不认 → dsh 原生右侧预览接管。
+- 修法:两种 plan 表面先于普通文件表面判定 → 三级取正文(逐级兜底):fiber 里的 `{callId, markdown, title}`(dsh 自己由 `submittedPlan()` 从 `exit_plan_mode` 的 tool/call 参数造)→ `ctx.resources.source(address)` → 已打开预览的 `_document` innerText。取到就 `preventDefault + stopImmediatePropagation` 吞掉点击,发 `dshOpenPlan`;扩展写 **`~/.dsh/review/plans/plan-<sid>-<callId>.md`**(插件自有目录,不进用户仓库、不产生 git 噪音)并用 `keepFocus:false` 在编辑器**聚焦**打开(点 plan 就是要读它)。三级都落空则不吞点击,dsh 原生预览照常。
+- 验证:客户端日志 `[plan] kind=card|review tier=fiber|resource|dom chars=N`,扩展日志 `[planFile] wrote …`。
+
+### 修 4:访达 Cmd+C 复制文件 → 粘贴进侧栏失效
+- 定位:VS Code 1.142 扩展宿主里 `electron.clipboard` 已不存在(Electron ≥40 起 clipboard 属主进程且改异步 API),`readBuffer('NSFilenamesPboardType')` 抛 `Cannot read properties of undefined (reading 'readBuffer')`(今天日志实证)。
+- 修法:`clipboardFilePaths()` 改三级:① 有 `electron.clipboard.readBuffer` 时照旧;② mac 用 JXA 读 pasteboard —— `ObjC.deepUnwrap(pb.propertyListForType("NSFilenamesPboardType"))`,退 `public.file-url`;③ Linux `wl-paste`/`xclip -t text/uri-list`,Windows `Get-Clipboard -Format FileDropList`。每级按路由打日志 `clipboardFilePaths electron|darwin|linux|win32 n=`。
+- **JXA 实测坑**:`String(桥对象)` 得到 `[id __NSCFString]`;`ObjC.unwrap` 对 NSArray 只解一层(元素仍是桥对象)→ 必须 `ObjC.deepUnwrap` 并按 `typeof === "string"` 过滤,否则把占位符当路径插进 chip。
+- 已实测:单文件 pasteboard 读回真路径 ✓(本机 JXA);**访达多文件**复制依赖 `NSFilenamesPboardType` 数组,与 0.1.63 同一解析路径,需真访达复制 2 个文件回归一次。
+
+### install.sh:自动清理 keybindings.json 死行(用户选的方案)
+- 新增 `prune_stale_dsh_keybindings()`(在 [2/4] 装扩展后调用):删「command 含 `dshReview.`(`-command` 移除形也认,先剥 `+/-` 前缀)且 when 是 `focusedView == "explorer"` 或 `focusedView == '"explorer"'`」的行;改前写 `keybindings.json.bak-<ts>`;存活条目**原文保留**(不改用户格式,前导 `//` 注释保留);JSONC 解析失败时只用保守正则,拿不准就不动。
+- 已在真实文件实测:删 2 行、剩 67 行仍为合法 JSON;再跑一次输出 `no stale dsh rows`(幂等);合成用例里 `focusedView == "workbench.explorer.fileView"` 的自有条目与非 dsh 条目均保留。
 
 ## dsh-review-vscode 0.1.23 (2026-10-09, dsh 0.2.0-rc.2) — 仅扩展 / `~` 路径展开
 
