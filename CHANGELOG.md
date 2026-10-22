@@ -20,9 +20,32 @@
    | **explorer 选中文件按快捷键全无反应**(右键可用) | 快捷键 when 永不成立:VS Code 1.142 资源管理器视图 ID 是 `workbench.explorer.fileView`,`focusedView == "explorer"` 失效;从 package.json 复制 when 还会多转义一层引号成 `focusedView == '"explorer"'` | 0.1.24:改用 `filesExplorerFocus`(不依赖视图 ID)并同时贡献 cmd+l + shift+cmd+l;install.sh 自动清理 keybindings.json 里这两类死行(先备份)。排查:命令面板跑 `dsh: 发送文件到 dsh`,日志出 `[sendFileToDsh] n=1` = 命令活着,只是键位没触发 |
    | **chip 插入后打字跑到那个文件里**(chip 不变、文件标签页自己弹出) | 不是光标问题:点 chip 被 0.1.58 拦截成"在 VS Code 打开",`showTextDocument` 不带 `preserveFocus` → 焦点进编辑器,后续按键全打进文件 | 0.1.24/0.1.68:普通点击打开文件**不抢焦点**(`openFile … (keepFocus)`);刚插完 chip 的 800ms 保护窗内点 chip 完全不打开(`[openfile] suppressed (insert-guard)`);要"打开并聚焦"用 **⌥/Alt+点击**。若日志里**没有**弹标签页却仍吞字,才轮到 dsh 0.2.1 `TextRefNode` 光标假设,看 `[caret]` 行 |
    | **plan 卡片「查看全文」只在 dsh 内部预览打开**(窄侧栏看不到) | 0.2.1 的 plan 是虚拟资源 `dsh-resource://plan[-review]/…`,不在盘上,`fileOpenTargetPath` 三种特征都认不到 | 0.1.68:认 `[data-plan-card]` 与 `*_reviewLink*` → fiber 取 `{callId, markdown, title}`(退资源 store / 预览 DOM)→ 扩展写 `~/.dsh/review/plans/plan-<sid>-<callId>.md` 并在编辑器聚焦打开;看 `[plan] kind=… tier=…` 与 `[planFile] wrote …` |
+   | **plan 打开了但正文是乱的**(表格压成一行、`#`/代码块标记丢失) | 打开的是预览 `innerText`:待审 plan 正文在 fiber 里是 **`review.plan` 字符串**(ui-plan 用 `params.planReview.markdown = review.plan`),0.1.68 只认 `plan.markdown` 对象形 → 三级全空退 DOM。同屏还暴露 sid 为空(dsh ≥0.1.6 不再发布 `sessions.list.current`)与每次点击新建文件(Date.now 兜底) | 0.1.69/0.1.25:认字符串形 + `requestKey`;资源兜底按真实形态读 `source(addr).getSnapshot()`(只有 `status==="live"` 带 `value`);sid 三级(快照 `retainedBy.mainView` → 插入时挂的 `window.__dshrSessionId` → 路由);文件名改 `…-<标题 slug>-<sha1 前 8>` 内容寻址(重复点 = `[planFile] reused`);DOM 兜底在文件头声明"取自渲染文本"。排查:`[plan] … tier=dom` = 字段形没认到,`sid_src=` 说明 id 来源 |
 3. **改哪边装哪边,版本必须递增**(服务端按 rev 缓存合并 bundle,同版本号重装=下发旧代码):
    只改 `dsh-review/client.js` → webview 右键 Reload;改 `index.js` → 侧栏 Restart dsh;改扩展 `dsh-review-vscode/**` → **Cmd+Q**(mac)/ **Ctrl+Q**(Linux)整重启,并 bump `dsh-review-vscode/package.json` 的 `version`——`install.sh` 的 `EXT_VER` 现在自动读它,不用再手改。装完重写 `~/.dsh/review/shadow/settings.json`(install.sh 会清空)。
 4. **验证**:hover/点击类 bug **不要用 ego-browser 复现**(CDP 合成鼠标事件 relatedTarget 失真,0.1.56 曾误判),以真实 VS Code webview + 扩展日志为准。
+
+## dsh-review 0.1.69 + dsh-review-vscode 0.1.25 (2026-10-22, dsh 0.2.1-rc.2) — 待审 plan「查看全文」正文乱
+
+### 现象(用户两张截图定案,不是猜)
+- 已提交 plan 卡片(卡右侧「打开」,`[data-plan-card]`)→ 打开的 `.md` 是**源文 markdown**(标题 `##`、表格 `|`、代码块围栏都在)→ 正常。
+- 待审弹窗右上角「查看全文 ›」(`*_reviewLink*`)→ 打开的文件里表格被压成一整行、`#`/围栏标记丢失 ⇒ 正文取自预览 **innerText**。
+- 同屏第二个缺陷:文件名 `plan-session-179268235774.md` —— sid 退成字面量 `session`、key 退成 `Date.now()` ⇒ 待审 plan **每点一次新建一个文件**。
+
+### 定位(源码级)
+1. **正文字段形两种**:已提交 plan 是 `submittedPlan()` 造的 `{callId, markdown, title}`;待审 review 是 **`review.plan`——值本身就是 markdown 字符串**(dsh-client-ui-plan/lib/client.js:683-686 `params: { planReview: { markdown: review.plan, … } }`)。0.1.68 的 `planRecordOf()` 只认 `value.plan.markdown` 对象形 ⇒ 待审卡三级正文全空 ⇒ 落 DOM innerText。
+2. **sid 恒空**:dsh ≥0.1.6 不再发布 `sessions.list.current`,当前会话由 `retainedBy.mainView > 0` 标识(本插件早有的 `currentSessionOf()` 就是这个逻辑),0.1.68 的 `currentSessionId()` 只读 `.current`。
+3. **资源兜底形态错**:`ctx.resources.source(addr)` 返回 snapshot store 的 **source**(`{getSnapshot, subscribe}`,dsh-client-resources/lib/client.js:66-100),内容只在 `getSnapshot().status === "live"` 的 `value` 里(同文件 consume:145-154);0.1.68 直接找 `src.markdown` ⇒ 永远取不到。
+
+### 修法
+1. `planRecordOf()` 认字符串形(`typeof value.plan === "string" && length > 40` → 归一 `{markdown, callId, requestKey, title}`,title 取首个 `#` 行);fiber 上溯顺手抓 `requestKey`(待审身份是 `review:<requestKey>`,PlanReviewOpen:108)。
+2. 改名 `planTextFromSource()`:读 `source(addr).getSnapshot()`,仅 `status === "live"` 时取 `value.markdown || value.plan || value`;地址两种(待审 `plan-review/<sid>/<requestKey>`、已提交 `plan/<sid>/<callId>`)。**不订阅**——订阅会 pin 记录并让点击变异步,fiber 命中已足够。
+3. `currentSessionId()` 三级:`currentSessionOf(sessions.list.getSnapshot())` → `window.__dshrSessionId`(插入 chip 时从组件 `props.sessionId` 挂上,与 `window.__dshrFocusComposer` 同手法)→ `location.pathname` 路由段;日志加 `sid_src=store|insert|route|none`。
+4. `openPlanFromDsh()` 文件名 `plan-<sid>-<callId|review+requestKey>-<标题 slug 前 24 字>-<sha1(markdown) 前 8 位>.md`:内容哈希 ⇒ 同一个 plan 重复点**复用**同一文件(日志 `[planFile] reused …`),正文变了才新建;sid 缺失退工作区目录名;新增 `node:crypto`。
+5. DOM 兜底不再静默:文件头写 `> ⚠ 正文取自渲染文本，未能读取原始 markdown，排版可能与源文有出入。`
+
+### 验证(用户侧一轮)
+`Cmd+Q` 重启 VS Code(扩展 0.1.25)→ 点待审卡「查看全文」→ 期望 `[plan] kind=review tier=fiber rk=… sid=… sid_src=store` + `[planFile] wrote …-<slug>-<hash8>.md`,打开后表格仍是 `|` 源文;再点一次 → `[planFile] reused …`,目录文件数不变。
 
 ## dsh-review 0.1.68 + dsh-review-vscode 0.1.24 (2026-10-22, dsh 0.2.1-rc.2 / VS Code 1.142) — 快捷键 / chip 焦点 / plan 文件 / 访达粘贴
 

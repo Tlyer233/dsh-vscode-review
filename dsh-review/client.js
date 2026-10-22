@@ -1303,6 +1303,10 @@ window.__ModuleLoader__.load({
               reason: !sessionId ? "no sessionId" : (!inputHub ? "no inputHub" : ((needsCustom && !refSourceRegistered) ? "no refSource" : "empty")),
             };
           }
+          // 0.1.69: the plan-export path needs a session id for file naming, and
+          // props.sessionId is the authoritative value in this component (dsh
+          // stopped publishing sessions.list `.current` in 0.1.6).
+          try { window.__dshrSessionId = String(sessionId); } catch (err) { /* noop */ }
           try {
             const shell = inputHub.shell(sessionId);
             if (!shell) throw new Error("conversation.input.shell unavailable");
@@ -3500,10 +3504,23 @@ window.__ModuleLoader__.load({
         } catch (err) { return ""; }
       }
       function currentSessionId() {
+        // 0.1.69: dsh ≥0.1.6 stopped publishing `.current` (the session is the
+        // one retained by mainView), so the old one-liner returned "" and plan
+        // files were named plan-session-<timestamp>. Three tiers, and the tier
+        // is reported in the log (`sid_src=`) so a bad name is self-explaining.
         try {
-          const ssnap = ctx.sessions.list.getSnapshot();
-          return ssnap && ssnap.current ? String(ssnap.current) : "";
-        } catch (err) { return ""; }
+          const id = currentSessionOf(ctx.sessions.list.getSnapshot());
+          if (id) { window.__dshrSidSrc = "store"; return String(id); }
+        } catch (err) { /* next tier */ }
+        try {
+          if (window.__dshrSessionId) { window.__dshrSidSrc = "insert"; return String(window.__dshrSessionId); }
+        } catch (err) { /* next tier */ }
+        try {
+          const m = /\/(session|s)\/([A-Za-z0-9_-]{6,})/.exec(String(location.pathname || ""));
+          if (m && m[2]) { window.__dshrSidSrc = "route"; return m[2]; }
+        } catch (err) { /* next tier */ }
+        try { window.__dshrSidSrc = "none"; } catch (err) { /* noop */ }
+        return "";
       }
 
       // Plan cards (0.2.1): submitted / pending plans are `dsh-resource://`
@@ -3537,13 +3554,39 @@ window.__ModuleLoader__.load({
         return null;
       }
 
+      function planFromContainer(v) {
+        // The two shapes dsh uses for plan text, normalized to one record:
+        // {callId, markdown, title} (submittedPlan) and {plan: "<markdown>"}
+        // (pending review — ui-plan passes params.planReview.markdown =
+        // review.plan, dsh-client-ui-plan/lib/client.js:683-686).
+        if (!v || typeof v !== "object") return null;
+        if (typeof v.markdown === "string" && v.markdown.length > 40) return v;
+        if (typeof v.plan === "string" && v.plan.length > 40) {
+          const m = /^#\s+(\S[^\r\n]*)/.exec(v.plan.trim());
+          return {
+            markdown: v.plan,
+            callId: typeof v.callId === "string" ? v.callId : "",
+            requestKey: typeof v.requestKey === "string" ? v.requestKey : "",
+            title: m ? m[1] : "",
+          };
+        }
+        return null;
+      }
+
       function planRecordOf(value, depth) {
-        // Recursively look for the {markdown, …} record; shallow + sampled so a
-        // click never walks the whole React tree.
+        // Shallow + sampled so a click never walks the whole React tree.
+        // Missing the string shape is exactly what made 0.1.68 fall through to
+        // the rendered innerText of a pending plan (mangled tables).
         if (!value || typeof value !== "object" || depth > 3) return null;
-        if (typeof value.markdown === "string" && value.markdown.length > 40) return value;
-        if (value.review && typeof value.review.markdown === "string" && value.review.markdown.length > 40) return value.review;
-        if (value.plan && typeof value.plan.markdown === "string" && value.plan.markdown.length > 40) return value.plan;
+        const direct = planFromContainer(value);
+        if (direct) return direct;
+        // One level into the wrappers dsh actually passes: props.review (the
+        // pending card) and the chat view-node payload fields (submitted card).
+        const wrappers = [value.review, value.state, value.data];
+        for (let i = 0; i < wrappers.length; i++) {
+          const hit = planFromContainer(wrappers[i]);
+          if (hit) return hit;
+        }
         if (Array.isArray(value)) {
           for (let i = 0; i < value.length && i < 12; i++) {
             const hit = planRecordOf(value[i], depth + 1);
@@ -3566,13 +3609,27 @@ window.__ModuleLoader__.load({
             if (keys[i].indexOf("__reactFiber$") === 0) { fk = keys[i]; break; }
           }
           let fiber = fk ? node[fk] : null;
+          // A pending review has no callId — dsh identifies it by requestKey
+          // (`review:<requestKey>`, PlanReviewOpen:108), so collect it while
+          // walking; the resource fallback needs it to build the address.
+          let requestKey = "";
           for (let hops = 0; fiber && hops < 40; hops++) {
-            const hitProps = planRecordOf(fiber.memoizedProps, 0);
-            if (hitProps) return hitProps;
+            const props = fiber.memoizedProps;
+            if (!requestKey && props && typeof props.requestKey === "string") requestKey = props.requestKey;
+            const hitProps = planRecordOf(props, 0);
+            if (hitProps) {
+              if (requestKey && !hitProps.requestKey) { try { hitProps.requestKey = requestKey; } catch (err) { /* frozen */ } }
+              return hitProps;
+            }
             let state = fiber.memoizedState;
             for (let h = 0; state && h < 30; h++) {
-              const hit = planRecordOf(state.memoizedState !== undefined ? state.memoizedState : state, 0);
-              if (hit) return hit;
+              const sv = state.memoizedState !== undefined ? state.memoizedState : state;
+              if (!requestKey && sv && typeof sv === "object" && typeof sv.requestKey === "string") requestKey = sv.requestKey;
+              const hit = planRecordOf(sv, 0);
+              if (hit) {
+                if (requestKey && !hit.requestKey) { try { hit.requestKey = requestKey; } catch (err) { /* frozen */ } }
+                return hit;
+              }
               state = state.next;
             }
             fiber = fiber.return;
@@ -3581,15 +3638,30 @@ window.__ModuleLoader__.load({
         return null;
       }
 
-      function planTextFromResources(address) {
+      function planTextFromSource(address) {
+        // `ctx.resources.source(addr)` returns a snapshot-store SOURCE, not the
+        // content (dsh-client-resources/lib/client.js:66-100); the snapshot is
+        // {status:"loading"|"none"|"live"|"failed", value} (same file, consume
+        // at 145-154) and only `live` carries the plan. Subscribing would pin
+        // the record and turn the click async, which the fiber tier makes
+        // unnecessary — read the snapshot if something already loaded it.
         try {
           const res = ctx && ctx.resources;
           if (!res || typeof res.source !== "function") return "";
           const src = res.source(address);
           if (!src) return "";
-          if (typeof src === "string") return src;
-          if (typeof src.markdown === "string") return src.markdown;
-          if (typeof src.text === "string") return src.text;
+          if (typeof src.getSnapshot !== "function") {
+            if (typeof src === "string") return src;
+            if (typeof src.markdown === "string") return src.markdown;
+            return typeof src.text === "string" ? src.text : "";
+          }
+          const snap = src.getSnapshot();
+          if (!snap || snap.status !== "live") return "";
+          const v = snap.value;
+          if (!v) return "";
+          if (typeof v === "string") return v;
+          if (typeof v.markdown === "string") return v.markdown;
+          if (typeof v.plan === "string") return v.plan;
           return "";
         } catch (err) { return ""; }
       }
@@ -3673,13 +3745,23 @@ window.__ModuleLoader__.load({
               const rec = planRecordFromFiber(planHit.node);
               const sid = currentSessionId();
               const callId = (rec && rec.callId) || planHit.callId || "";
+              const rk = (rec && rec.requestKey) || "";
               let text = rec && typeof rec.markdown === "string" ? rec.markdown : "";
               let tier = text ? "fiber" : "";
-              if (!text && sid && callId) {
-                text = planTextFromResources("dsh-resource://plan/" + encodeURIComponent(sid) + "/" + encodeURIComponent(callId));
-                if (text) tier = "resource";
+              if (!text && sid) {
+                if (rk) {
+                  text = planTextFromSource("dsh-resource://plan-review/" + encodeURIComponent(sid) + "/" + encodeURIComponent(rk));
+                  if (text) tier = "resource";
+                }
+                if (!text && callId) {
+                  text = planTextFromSource("dsh-resource://plan/" + encodeURIComponent(sid) + "/" + encodeURIComponent(callId));
+                  if (text) tier = "resource";
+                }
               }
               if (!text) { text = planTextFromPreviewDom(); if (text) tier = "dom"; }
+              // The rendered-text tier loses markdown syntax; say so in the file
+              // instead of quietly passing mangled prose off as the plan.
+              if (tier === "dom") text = "> ⚠ 正文取自渲染文本，未能读取原始 markdown，排版可能与源文有出入。\n\n" + text;
               if (!text) {
                 // Nothing readable yet: leave the click to dsh so its own
                 // preview still opens instead of the click doing nothing.
@@ -3688,11 +3770,12 @@ window.__ModuleLoader__.load({
               }
               e.preventDefault();
               try { e.stopImmediatePropagation(); } catch (err) { e.stopPropagation(); }
-              postScopeMessage("dshPasteLog", { line: "[plan] kind=" + planHit.kind + " tier=" + tier + " chars=" + text.length + " callId=" + callId });
+              postScopeMessage("dshPasteLog", { line: "[plan] kind=" + planHit.kind + " tier=" + tier + " chars=" + text.length + " callId=" + callId + " rk=" + rk + " sid=" + sid + " sid_src=" + String(window.__dshrSidSrc || "?") });
               postScopeMessage("dshOpenPlan", {
                 markdown: text,
                 title: (rec && rec.title) || "",
                 callId: callId,
+                requestKey: rk,
                 sessionId: sid,
                 cwd: currentSessionCwd(),
               });

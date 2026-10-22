@@ -14,6 +14,7 @@ const path = require('node:path')
 const os = require('node:os')
 const electron = require('electron')
 const { execFile, execFileSync } = require('node:child_process')
+const crypto = require('node:crypto')
 
 /**
  * Open a dsh-chat file reference in the editor (paired with plugin setting
@@ -126,8 +127,22 @@ async function openFileFromDsh(raw, cwd, opts) {
  * in a narrow VS Code aux bar. The client hands us the markdown; store it under
  * the plugin's own directory (never inside the user's repo) and open it in the
  * editor WITH focus, since clicking a plan is an explicit read request.
- * @param {{ markdown?: string, title?: string, callId?: string, sessionId?: string, cwd?: string }} payload
+ *
+ * 0.1.25 name = plan-<sid>-<callId|review+requestKey>-<title slug>-<sha1 md5-8>.
+ * The content hash is the point: a pending review has no callId, and 0.1.24 fell
+ * back to Date.now() — so every click minted a fresh file (two of them ended up
+ * open in the user's tab bar). Same plan ⇒ same name ⇒ reused; only a changed
+ * plan text creates a new file.
+ * @param {{ markdown?: string, title?: string, callId?: string, requestKey?: string, sessionId?: string, cwd?: string }} payload
  */
+function planFileSlug(title) {
+  // Keep CJK readable in the editor tab; drop what paths/git/VS Code dislike.
+  return String(title || '')
+    .replace(/[\\/:*?"<>|#`\s]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 24)
+}
+
 async function openPlanFromDsh(payload) {
   const md = String((payload && payload.markdown) || '')
   if (!md) { state.log('[planFile] empty markdown — skipped'); return }
@@ -135,11 +150,19 @@ async function openPlanFromDsh(payload) {
     const dir = path.join(os.homedir(), '.dsh', 'review', 'plans')
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
     const clean = (s, n) => String(s || '').replace(/[^A-Za-z0-9_-]/g, '').slice(0, n)
-    const sid = clean((payload && payload.sessionId) || 'session', 16) || 'session'
-    const key = clean((payload && payload.callId) || String(Date.now()), 12) || String(Date.now())
-    const file = path.join(dir, 'plan-' + sid + '-' + key + '.md')
-    fs.writeFileSync(file, md.endsWith('\n') ? md : md + '\n')
-    state.log('[planFile] wrote ' + file + ' chars=' + md.length +
+    const sid = clean((payload && payload.sessionId) || '', 16) ||
+      clean(path.basename(String((payload && payload.cwd) || '')), 12) || 'ws'
+    const callId = clean((payload && payload.callId) || '', 14)
+    const rk = clean((payload && payload.requestKey) || '', 10)
+    const idPart = callId || ('review' + rk)
+    const hash = crypto.createHash('sha1').update(md).digest('hex').slice(0, 8)
+    const slug = planFileSlug((payload && payload.title) || '')
+    const file = path.join(dir, ['plan', sid, idPart, slug, hash].filter(Boolean).join('-') + '.md')
+    const out = md.endsWith('\n') ? md : md + '\n'
+    let action = 'wrote'
+    if (fs.existsSync(file) && fs.readFileSync(file, 'utf8') === out) action = 'reused'
+    else fs.writeFileSync(file, out)
+    state.log('[planFile] ' + action + ' ' + file + ' chars=' + md.length +
       ' title=' + String((payload && payload.title) || '').slice(0, 60))
     await openFileFromDsh(file, String((payload && payload.cwd) || ''), { keepFocus: false })
   } catch (e) {
