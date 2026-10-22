@@ -1269,6 +1269,25 @@ window.__ModuleLoader__.load({
           return null;
         }
 
+        // 0.1.68 diagnostic: dsh 0.2.1 added a plain-text reference entity
+        // transform (TextRefNode, "editing continues inside"), which makes our
+        // detect-space caret arithmetic suspect. One log line per insert records
+        // which coordinate space the live caret actually reports.
+        function caretDiag(tag, shell) {
+          try {
+            const p = (shell && shell.projection) || {};
+            const sn = (shell && shell.snapshot) || {};
+            const occ = (sn.occurrences || []).map(function (o) {
+              return o.offset + "+" + o.length + ":" + o.source;
+            }).join(",");
+            postScopeMessage("dshPasteLog", {
+              line: "[caret] " + tag + " caret=" + p.caret + " detectLen=" + String(p.detectText || "").length +
+                " draftLen=" + String(sn.draft || "").length + " rev=" + liveRev(shell) +
+                " caretWanted=" + caretWanted + " occ=[" + occ + "]",
+            });
+          } catch (err) { /* diagnostics only */ }
+        }
+
         // Try the dsh native occurrence chip path; fall back to plain text.
         function insertRefsAtCaret(refs, fallbackText, preferred) {
           const list = (Array.isArray(refs) ? refs : []).map(formatRefForSend);
@@ -1329,6 +1348,7 @@ window.__ModuleLoader__.load({
               // 0.1.67 insert-guard: the click that follows a fresh chip is the
               // user placing the caret, not a request to open the file.
               try { window.__dshrRefGuardUntil = Date.now() + 800; } catch (err) { /* noop */ }
+              setTimeout(function () { try { caretDiag("insertReference", inputHub.shell(sessionId)); } catch (err) { /* noop */ } }, 320);
               return { mode: "chip", count: references.length, reason: "" };
             }
 
@@ -1374,6 +1394,7 @@ window.__ModuleLoader__.load({
             setTimeout(function () { focusComposer(caretAt); }, 0);
             setTimeout(function () { focusComposer(caretAt); }, 50);
             try { window.__dshrRefGuardUntil = Date.now() + 800; } catch (err) { /* noop */ }
+            setTimeout(function () { try { caretDiag("pasteBegin", inputHub.shell(sessionId)); } catch (err) { /* noop */ } }, 320);
             return { mode: "chip", count: references.length, reason: "" };
           } catch (err) {
             console.warn("[dsh-review] native chip insert failed, fallback to text:", err && err.message || err);
