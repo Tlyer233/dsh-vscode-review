@@ -1325,7 +1325,7 @@ window.__ModuleLoader__.load({
         function postState(extra) {
           // 0.1.82: only the scope-request message has ever reached the extension, so all
           // client-side events (tracked / dropped / request-received / removed) ride on it.
-          const msg = { type: "dshScopeRequest", build: "0.1.95", watching: Array.from(trackedRefs.keys()).slice(0, 3) };
+          const msg = { type: "dshScopeRequest", build: "0.1.96", watching: Array.from(trackedRefs.keys()).slice(0, 3) };
           try { Object.assign(msg, extra || {}); } catch (err) { /* noop */ }
           try { window.parent.postMessage(msg, "*"); } catch (err) { /* noop */ }
         }
@@ -1389,13 +1389,18 @@ window.__ModuleLoader__.load({
           if (r) return r;
           try { r = document.querySelector('[class*="_input"]') } catch (err) { r = null }
           if (r) return r;
-          return document.body;
+          // 0.1.96: do NOT fall back to document.body — sent messages carry the same chip
+          // markup, which made every "is it still there" answer yes forever (measured: the
+          // client reported 连着 for 3 chips while the composer held 0 references).
+          return null;
         }
         function chipNodes() {
           var list = [];
-          try { list = Array.prototype.slice.call(document.querySelectorAll('button[data-ref-chip="file"]')); } catch (err) { list = []; }
+          const root = composerRoot();
+          if (!root) return list;
+          try { list = Array.prototype.slice.call(root.querySelectorAll('button[data-ref-chip="file"]')); } catch (err) { list = []; }
           if (!list.length) {
-            try { list = Array.prototype.slice.call(document.querySelectorAll('[data-ref-chip]')).filter(function (n) { return /\.md(\b|$)/.test(String(n.getAttribute && n.getAttribute('title') || '')) }); } catch (err) { list = []; }
+            try { list = Array.prototype.slice.call(root.querySelectorAll('[data-ref-chip]')).filter(function (n) { return /\.md(\b|$)/.test(String(n.getAttribute && n.getAttribute('title') || '')) }); } catch (err) { list = []; }
           }
           return list;
         }
@@ -1404,7 +1409,9 @@ window.__ModuleLoader__.load({
         // handle for "does this reference still exist in the composer" — no text guessing.
         function refNodes() {
           var list = [];
-          try { list = Array.prototype.slice.call(document.querySelectorAll('[class*="_reference"]')) } catch (err) { list = []; }
+          const root = composerRoot();
+          if (!root) return list;
+          try { list = Array.prototype.slice.call(root.querySelectorAll('[class*="_reference"], [data-ref-chip], [class*="_refChip"]')) } catch (err) { list = []; }
           return list;
         }
         function refTexts() {
@@ -1454,7 +1461,12 @@ window.__ModuleLoader__.load({
           const text = String(scope.textContent || '');
           if (!text.trim()) return; // composer cleared = the message was sent, not deleted
           const croot = composerRoot();
-          const composerText = String((croot && croot.textContent) || '');
+          if (!croot) {
+            const n2 = Date.now();
+            if (n2 - lastDiagAt > 4000) { lastDiagAt = n2; postState({ report: "找不到 dsh 输入框元素（[class*=_input]）" }); }
+            return;
+          }
+          const composerText = String(croot.textContent || '');
           if (!composerText.trim()) return;
           // 0.1.90: say out loud why a tracked chip was or was not treated as deleted — the
           // 撤图钉 path produced no log at all, so the broken link had to be made visible.
@@ -1565,7 +1577,7 @@ window.__ModuleLoader__.load({
           if (!src || !src.tagName) return;
           let near = null;
           let n = src;
-          for (let up = 0; n && up < 12; up++) { if (/comment-\d{8}-/.test(String(n.textContent || ''))) { near = n; break } n = n.parentElement }
+                      for (let up = 0; n && up < 12; up++) { if (/comment-\d{8}-|\.md/.test(String(n.textContent || ''))) { near = n; break } n = n.parentElement }
           if (!near) {
             const chips = chipNodes();
             if (!chips.length) return;
@@ -1835,7 +1847,7 @@ window.__ModuleLoader__.load({
             setTimeout(compactNativeStatsLine, 800);
             applyZoom();
             // Scope is owned by apply()-level listener; ask again in case early posts were dropped.
-            try { window.parent.postMessage({ type: "dshScopeRequest", build: "0.1.95", watching: Array.from(trackedRefs.keys()).slice(0, 3) }, "*"); } catch (err) { /* noop */ }
+            try { window.parent.postMessage({ type: "dshScopeRequest", build: "0.1.96", watching: Array.from(trackedRefs.keys()).slice(0, 3) }, "*"); } catch (err) { /* noop */ }
             return;
           }
           if (msg.type === "dshChromeState") {
@@ -4335,13 +4347,13 @@ window.__ModuleLoader__.load({
               try { ok = !!(window.__dshrRemoveChip && window.__dshrRemoveChip(nm)); } catch (err) { ok = false; }
               let watch = [];
               try { watch = (window.__dshrTracked && window.__dshrTracked()) || []; } catch (err) { watch = []; }
-              try { window.parent.postMessage({ type: "dshScopeRequest", build: "0.1.95", watching: watch.slice(0, 3), report: "捎带删方块: " + nm + " -> " + (ok ? "已删" : "没找到方块节点") }, "*"); } catch (err) { /* noop */ }
+              try { window.parent.postMessage({ type: "dshScopeRequest", build: "0.1.96", watching: watch.slice(0, 3), report: "捎带删方块: " + nm + " -> " + (ok ? "已删" : "没找到方块节点") }, "*"); } catch (err) { /* noop */ }
             });
           }
           setVscodeScope(msg.paths, msg.rawPaths);
         }
         window.addEventListener("message", onScopeFromHost);
-        try { window.parent.postMessage({ type: "dshScopeRequest", build: "0.1.95", watching: Array.from(trackedRefs.keys()).slice(0, 3) }, "*"); } catch (err) { /* noop */ }
+        try { window.parent.postMessage({ type: "dshScopeRequest", build: "0.1.96", watching: Array.from(trackedRefs.keys()).slice(0, 3) }, "*"); } catch (err) { /* noop */ }
         const timer = setInterval(checkWorkbenchScope, 800);
         return function () {
           clearInterval(timer);
