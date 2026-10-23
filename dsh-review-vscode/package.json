@@ -205,7 +205,7 @@
         "dshReview.elementContext.nativeToDsh": {
           "type": "boolean",
           "default": true,
-          "markdownDescription": "0.1.42：把 VS Code 原生「Comment on Elements」的批注直接送进 dsh 输入框。原理：Copilot 输入框本身是一篇插件可读的文档（\`chatSessionInput:input-0\`），原生批注会以 \`@元素 文字\` 的形式写进去，我们读到就走同一条 md 文件 + 文件 chip 的管道（不自动发送）。"
+          "markdownDescription": "0.1.42：把 VS Code 原生「Comment on Elements」的批注直接送进 dsh 输入框。原理：Copilot 输入框本身是一篇插件可读的文档（chatSessionInput:input-0），原生批注会以 `@元素 文字` 的形式写进去，我们读到就走同一条 md 文件 + 文件 chip 的管道（不自动发送）。"
         },
         "dshReview.elementContext.closeNativeDoc": {
           "type": "boolean",
