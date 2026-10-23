@@ -2,7 +2,7 @@
   "name": "dsh-review-vscode",
   "displayName": "dsh review — inline diff + dsh sidebar",
   "description": "Inline review (shadow/pending) + dsh webview sidebar",
-  "version": "0.1.52",
+  "version": "0.1.53",
   "publisher": "dsn",
   "engines": {
     "vscode": "^1.85.0"
@@ -201,6 +201,11 @@
           "type": "boolean",
           "default": false,
           "markdownDescription": "0.1.42 起默认开：点一下聊天里的元素 chip 会把附件文档打开，这是「刚发生了原生批注」的可靠信号（也是页面 URL 的来源），随后我们用不会弹保存提示的方式把它关掉。"
+        },
+        "dshReview.elementContext.nativeClearCopilot": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "0.1.53：抄进 dsh 之后，把 Copilot 输入框里那一行 @元素 引用**删掉**（=批注只留在 dsh，不留在 Copilot）。默认关：那是 VS Code 自己的文档，删的动作由你决定。"
         },
         "dshReview.elementContext.nativeToDsh": {
           "type": "boolean",

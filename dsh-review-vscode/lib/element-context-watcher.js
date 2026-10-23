@@ -246,9 +246,14 @@ function startElementContextWatcher(context, log) {
     log.appendLine(TAG + ' [comment] ' + (file ? 'wrote ' + file : 'no-file') +
       ' -> dsh ok=' + ok + ' kind=' + ref.kind + ' chars=' + text.length + (nid ? ' nid=' + nid : ''))
     if (cfg('focusDshAfterCapture', true)) {
-      setTimeout(() => {
-        vscode.commands.executeCommand('dshReview.dshWebview.focus').catch(() => { /* noop */ })
-      }, 200)
+      // 0.1.53: the native flow focuses the Copilot composer right after inserting its
+      // reference, which stole the focus back from our single 200ms attempt — re-assert
+      // later too so the caret ends up in the dsh box (user's ask).
+      for (const delay of [200, 700, 1400]) {
+        setTimeout(() => {
+          vscode.commands.executeCommand('dshReview.dshWebview.focus').catch(() => { /* noop */ })
+        }, delay)
+      }
     }
     return ok
   }
@@ -404,6 +409,28 @@ function startElementContextWatcher(context, log) {
     })()
   }
 
+  // 0.1.53: optional "move instead of copy" — delete the reference line we just took,
+  // so the comment lives only in dsh. Off by default: VS Code owns that document.
+  async function clearComposerReference(label, comment) {
+    try {
+      const doc = vscode.workspace.textDocuments.filter((d) => d.uri.scheme === 'chatSessionInput')[0]
+      if (!doc) { log.appendLine(TAG + ' · 清 Copilot: 输入框文档不在了'); return }
+      const text = doc.getText()
+      const line = '@' + label + ' ' + comment
+      const idx = text.indexOf(line)
+      if (idx === -1) { log.appendLine(TAG + ' · 清 Copilot: 没找到那一行（可能你已经删了）'); return }
+      let end = text.indexOf('\n', idx)
+      end = end === -1 ? text.length : end + 1
+      const lineStart = Math.max(0, text.lastIndexOf('\n', idx) + 1)
+      const we = new vscode.WorkspaceEdit()
+      we.replace(doc.uri, new vscode.Range(doc.positionAt(lineStart), doc.positionAt(end)), '')
+      const ok = await vscode.workspace.applyEdit(we)
+      log.appendLine(TAG + ' · 已从 Copilot 输入框删掉这条引用 ok=' + ok)
+    } catch (e) {
+      log.appendLine(TAG + ' · 清 Copilot 失败: ' + String((e && e.message) || e))
+    }
+  }
+
   // ---------- 0.1.42: native ⌥⌘C comment -> dsh, read straight out of the chat input ----------
   // Proven by dshReview.dumpDocs: Copilot's input box is an extension-visible text
   // document (chatSessionInput:input-0), and a native comment lands in it as an inline
@@ -512,7 +539,8 @@ function startElementContextWatcher(context, log) {
         } else {
           log.appendLine(TAG + ' · 元素详情没拿到（探针没连上或元素已经变了）label=' + f.label)
         }
-        void sendCommentToDsh(payload)
+        const okSend = await sendCommentToDsh(payload)
+        if (okSend && cfg('nativeClearCopilot', false)) await clearComposerReference(f.label, f.comment)
       })()
     }
     if (hint && fresh === 0) log.appendLine(TAG + ' · 元素文档打开但输入框里没有新引用（可能已被抄走）')
