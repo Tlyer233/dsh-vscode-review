@@ -77,6 +77,21 @@ async function probeElement(url, query) {
   try { return await elementProbe(url, query) } catch { return null }
 }
 
+/**
+ * 0.1.57: the dsh client tells us when the user deletes one of the chips we inserted
+ * (it watches its own composer). We reply by removing the matching line from the Copilot
+ * composer, which makes VS Code drop the page pin. The handler lives in the watcher, which
+ * owns that document; here we only route.
+ */
+let referenceDroppedHandler = null
+function setReferenceDroppedHandler(fn) {
+  referenceDroppedHandler = typeof fn === 'function' ? fn : null
+}
+function referenceDropped(payload) {
+  if (!referenceDroppedHandler) return false
+  try { return !!referenceDroppedHandler(payload) } catch { return false }
+}
+
 function setDismissPrompt(fn) {
   handlers.dismissPrompt = typeof fn === 'function' ? fn : null
 }
@@ -105,7 +120,7 @@ async function deliverBrowserComment(payload) {
   }
 }
 
-module.exports = { nativeCommentPayload, setElementProbe, probeElement, setPageUrlProvider, browserPageUrl, setDismissPrompt, dismissPrompt, setBrowserCommentHandler, deliverBrowserComment, setOpenGuard, openGuarded }
+module.exports = { nativeCommentPayload, setReferenceDroppedHandler, referenceDropped, setElementProbe, probeElement, setPageUrlProvider, browserPageUrl, setDismissPrompt, dismissPrompt, setBrowserCommentHandler, deliverBrowserComment, setOpenGuard, openGuarded }
 
 async function dismissPrompt() {
   if (!handlers.dismissPrompt) return { ok: false, why: 'no-handler' }

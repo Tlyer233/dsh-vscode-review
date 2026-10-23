@@ -257,6 +257,52 @@ function startElementContextWatcher(context, log) {
     }
     return ok
   }
+  // 0.1.57: two-way binding half 2 — the dsh client reports that the user deleted one of
+  // our chips. The md file is the only durable link between the chip and the Copilot line:
+  // its first line carries the element label and the "## 批注" block carries the text.
+  // Copilot stores "@span#mv-temp 111" while our probe prints "span#mv-temp.st-metric__label
+  // 366 × 20", so match on tag + id only (classes/size differ) and prefer the line whose
+  // text is identical. Removing that line makes VS Code drop the page pin by itself — the
+  // user proved this by deleting the reference manually.
+  function dropCopilotLineForMd(file) {
+    let md = ''
+    try { md = fs.readFileSync(String(file || ''), 'utf8') } catch { return false }
+    const lm = /^#\s*元素批注\s*—\s*(.+)$/m.exec(md)
+    if (!lm) return false
+    const cm = /\n##\s*批注\s*\n+([\s\S]*?)(?:\n\n|```|$)/.exec(md)
+    const label = lm[1].trim()
+    const comment = cm ? cm[1].trim() : ''
+    const tok = label.split(/\s+/)[0]
+    const tagM = /^([a-z][a-z0-9]*)/i.exec(tok)
+    const idM = /#([^.\s[]+)/.exec(tok)
+    const tag = tagM ? tagM[1].toLowerCase() : ''
+    const id = idM ? idM[1] : ''
+    const doc = vscode.workspace.textDocuments.filter((d) => d.uri.scheme === 'chatSessionInput')[0]
+    if (!doc || !tag) return false
+    const text = doc.getText()
+    const lines = text.split('\n')
+    let pick = -1
+    for (let i = 0; i < lines.length; i++) {
+      const m = /^@([^\s]+)\s+([\s\S]*)$/.exec(lines[i])
+      if (!m) continue
+      const rt = /^([a-z][a-z0-9]*)/i.exec(m[1])
+      const rid = /#([^.\s[]+)/.exec(m[1])
+      if ((rt ? rt[1].toLowerCase() : '') !== tag) continue
+      if (id && (!rid || rid[1] !== id)) continue
+      if (comment && m[2].trim() === comment) { pick = i; break }
+      if (pick === -1) pick = i
+    }
+    if (pick === -1) return false
+    let start = 0
+    for (let i = 0; i < pick; i++) start += lines[i].length + 1
+    let end = start + lines[pick].length
+    if (text[end] === '\n') end += 1
+    else if (start > 0 && text[start - 1] === '\n') start -= 1
+    const we = new vscode.WorkspaceEdit()
+    we.replace(doc.uri, new vscode.Range(doc.positionAt(start), doc.positionAt(end)), '')
+    return !!vscode.workspace.applyEdit(we)
+  }
+
   bridge.setBrowserCommentHandler(sendCommentToDsh)
 
   // ---------- A) chatSessions jsonl: fs-watcher only (event-driven, no poll) ----------

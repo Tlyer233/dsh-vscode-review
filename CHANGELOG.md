@@ -44,6 +44,20 @@
 - 版本说明:本修复与「元素批注」同日开发,原报 0.1.70/0.1.26 与批注功能撞号,rebase 后改号 0.1.71/0.1.28
 
 
+## dsh-review 0.1.71 + dsh-review-vscode 0.1.57 (2026-10-23) — 双向绑定：dsh 里删方块 → Copilot 那行删掉 → 页面图钉消失
+
+### 前提（用户实测出来的）
+用户在 Copilot 里点 `✕ span#mv-temp` 删掉引用 → 页面上 ① 号图钉跟着消失（两张截图对比）。后来把 `dshReview.elementContext.nativeClearCopilot` 打开，插件删那行 `@元素 文字` 也同样把图钉撤掉 ⇒ **改输入框文档就能控制图钉**，不用碰 VS Code 本体。
+
+### 四处改动
+1. `dsh-review/client.js`（dsh 侧客户端补丁）：插 chip 成功后用 `trackInsertedRefs(list)` 记住每条（key = 唯一 md 文件名，例如 `comment-20261023-122301-mv-temp-jqw6.md`），`sweepDroppedRefs()` 每 900ms + MutationObserver 触发，在 composer 子树（contenteditable 往上三层）里找这个名字；**名字没了而输入框还有内容** = 用户删了方块 ⇒ `postMessage({type:"dshDropReference", path, name})`。输入框整体清空视为「已发送」不当删除（这是已知边界，写在代码注释里）。
+2. `element-bridge.js`：`setReferenceDroppedHandler / referenceDropped` 单向路由（文档归 watcher 管）。
+3. `dsh-browser.js`：webview 收到 `dshDropReference` → `bridge.referenceDropped(msg)`，日志 `[ref-drop] comment-….md -> 已同步删 Copilot 那行（图钉应随之消失）`。
+4. `element-context-watcher.js`：`dropCopilotLineForMd(file)` 读那篇 md（它是方块与 Copilot 行之间唯一持久的联系）：首行 `# 元素批注 — <label>` + `## 批注` 段取文字；Copilot 存的是 `@span#mv-temp 111` 而我们记录的是 `span#mv-temp.st-metric__label 366 × 20`，**只按 tag + id 匹配、并优先正文完全相同的那行**；用 `WorkspaceEdit` 删掉整行（含换行）。开关 `dshReview.elementContext.bindDshRemoval`（默认开）。
+
+### 离线验证
+md 解析 + 选行逻辑单独跑：`label → {tag:span, id:mv-temp, comment:按摄氏度显示}`，四条候选里精确选中 `@span#mv-temp 按摄氏度显示`；换成没有该元素的输入框时正确地「一行都不选」（不会误删别的批注）。
+
 ## dsh-review 0.1.71 + dsh-review-vscode 0.1.54 (2026-10-23) — 命令面板清理：24 条英文测试命令 → 7 条中文 + 上下文/隐藏
 
 ### 用户诉求

@@ -1137,6 +1137,11 @@ function setupDshBrowser(context) {
           reloadDshWebview(true)
           return
         }
+        if (msg.type === 'dshDropReference') {
+          const done = bridge.referenceDropped(msg)
+          state.log('[ref-drop] ' + String(msg.name || msg.path || '?').split('/').pop() + ' -> ' + (done ? '已同步删 Copilot 那行（图钉应随之消失）' : '没找到对应的那一行'))
+          return
+        }
         if (msg.type === 'dshShowCommands') {
           void vscode.commands.executeCommand('workbench.action.showCommands')
           return

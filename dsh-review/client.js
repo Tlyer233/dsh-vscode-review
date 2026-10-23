@@ -1289,6 +1289,48 @@ window.__ModuleLoader__.load({
         }
 
         // Try the dsh native occurrence chip path; fall back to plain text.
+        // 0.1.57: two-way binding with VS Code's native element comments. We cannot hook
+        // dsh's own chip-removal handler, so we remember which chips we inserted (by their
+        // unique file name) and watch the composer: when a name stops being rendered while
+        // the composer still holds text, the user deleted that chip -> tell the extension,
+        // which deletes the matching "@<element> <text>" line in the Copilot composer, and
+        // VS Code drops the page pin on its own (verified by the user's test).
+        const trackedRefs = new Map(); // file name -> { path }
+        let refSweepAt = 0;
+        function composerScope() {
+          const editor = document.querySelector('[contenteditable="true"]');
+          if (!editor) return null;
+          let node = editor;
+          for (let i = 0; i < 3 && node.parentElement; i++) node = node.parentElement;
+          return node;
+        }
+        function trackInsertedRefs(list) {
+          (Array.isArray(list) ? list : []).forEach(function (r) {
+            const path = String((r && (r.path || r.ref)) || '');
+            const name = path.split('/').pop();
+            if (name && /\.md$/.test(name)) trackedRefs.set(name, { path: path });
+          });
+        }
+        function sweepDroppedRefs() {
+          const now = Date.now();
+          if (now - refSweepAt < 500 || trackedRefs.size === 0) return;
+          refSweepAt = now;
+          const scope = composerScope();
+          if (!scope) return;
+          const text = String(scope.textContent || '');
+          if (!text.trim()) return; // composer cleared = the message was sent, not deleted
+          trackedRefs.forEach(function (info, name) {
+            if (text.indexOf(name) !== -1) return;
+            trackedRefs.delete(name);
+            try { window.parent.postMessage({ type: "dshDropReference", path: info.path, name: name }, "*"); } catch (err) { /* noop */ }
+          });
+        }
+        if (!window.__dshrRefWatch) {
+          window.__dshrRefWatch = true;
+          setInterval(sweepDroppedRefs, 900);
+          try { new MutationObserver(sweepDroppedRefs).observe(document.documentElement, { childList: true, subtree: true, characterData: true }); } catch (err) { /* noop */ }
+        }
+
         function insertRefsAtCaret(refs, fallbackText, preferred) {
           const list = (Array.isArray(refs) ? refs : []).map(formatRefForSend);
           const formattedFallback = list.map(function (r) { return r.textFallback || r.modelText; }).filter(Boolean).join("\n") || fallbackText;
@@ -1353,6 +1395,7 @@ window.__ModuleLoader__.load({
               // user placing the caret, not a request to open the file.
               try { window.__dshrRefGuardUntil = Date.now() + 800; } catch (err) { /* noop */ }
               setTimeout(function () { try { caretDiag("insertReference", inputHub.shell(sessionId)); } catch (err) { /* noop */ } }, 320);
+              trackInsertedRefs(list);
               return { mode: "chip", count: references.length, reason: "" };
             }
 
@@ -1399,6 +1442,7 @@ window.__ModuleLoader__.load({
             setTimeout(function () { focusComposer(caretAt); }, 50);
             try { window.__dshrRefGuardUntil = Date.now() + 800; } catch (err) { /* noop */ }
             setTimeout(function () { try { caretDiag("pasteBegin", inputHub.shell(sessionId)); } catch (err) { /* noop */ } }, 320);
+            trackInsertedRefs(list);
             return { mode: "chip", count: references.length, reason: "" };
           } catch (err) {
             console.warn("[dsh-review] native chip insert failed, fallback to text:", err && err.message || err);
