@@ -298,6 +298,17 @@ const pendingRaw = new Map() // 0.1.84: DOM-domain replies, resolved whole (not 
     } catch { return false }
   }
 
+  // 0.1.102: a page reload keeps the same CDP target (no created/destroyed event), so dropping
+  // the periodic rescan left us with no live connection forever after the first disconnect —
+  // that is the real cause of 有时行有时不行 / 页面没连上. Re-scan when a socket dies.
+  let scanQueued = 0
+  function scheduleScan() {
+    const n = Date.now()
+    if (n - scanQueued < 150) return
+    scanQueued = n
+    void Promise.resolve().then(() => scan()).catch(() => { /* noop */ })
+  }
+
   function closeOne(id, why) {
     const c = conns.get(id)
     if (!c) return
@@ -379,8 +390,8 @@ const pendingRaw = new Map() // 0.1.84: DOM-domain replies, resolved whole (not 
       if (d.ev === 'installed') log.appendLine(TAG + ' probe ' + VERSION + ' ready ' + String(d.url || '').slice(0, 70))
       else if (d.ev === 'err') log.appendLine(TAG + ' page error: ' + String(d.e).slice(0, 160))
     }
-    ws.onclose = () => closeOne(target.id, 'closed')
-    ws.onerror = (e) => closeOne(target.id, 'error ' + String((e && e.message) || ''))
+    ws.onclose = () => { closeOne(target.id, 'closed'); scheduleScan() }
+    ws.onerror = (e) => { closeOne(target.id, 'error ' + String((e && e.message) || '')); scheduleScan() }
   }
 
   function pickConn(url) {
@@ -645,7 +656,7 @@ const pendingRaw = new Map() // 0.1.84: DOM-domain replies, resolved whole (not 
     }
     const live = new Set(pages.map((p) => String(p.id)))
     for (const id of Array.from(conns.keys())) {
-      if (!live.has(id)) closeOne(id, 'target gone')
+      if (!live.has(id)) { closeOne(id, 'target gone'); scheduleScan() }
     }
     for (const t of pages) {
       if (!conns.has(String(t.id)) && t.webSocketDebuggerUrl) {
