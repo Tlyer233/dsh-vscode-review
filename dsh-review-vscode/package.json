@@ -2,7 +2,7 @@
   "name": "dsh-review-vscode",
   "displayName": "dsh review — inline diff + dsh sidebar",
   "description": "Inline review (shadow/pending) + dsh webview sidebar",
-  "version": "0.1.34",
+  "version": "0.1.35",
   "publisher": "dsn",
   "engines": {
     "vscode": "^1.85.0"
@@ -192,6 +192,11 @@
           "type": "boolean",
           "default": false,
           "markdownDescription": "自动捕获后把元素 chip 从 Copilot 输入框移除. Remove the element chip from the Copilot input after auto-capture."
+        },
+        "dshReview.elementContext.elementChain": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "0.1.35：旧的「元素搬运」链路（打开附件文档 → 关闭 → 往 dsh 插 element chip）。原生 Comment on Elements + 补丁已经接管，默认关掉，避免重复弹窗。"
         },
         "dshReview.elementContext.image": {
           "type": "boolean",

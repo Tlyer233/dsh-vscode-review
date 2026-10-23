@@ -44,6 +44,16 @@
 - 版本说明:本修复与「元素批注」同日开发,原报 0.1.70/0.1.26 与批注功能撞号,rebase 后改号 0.1.71/0.1.28
 
 
+## dsh-review 0.1.71 + dsh-review-vscode 0.1.35 (2026-10-23) — 砍掉旧「元素搬运」链路（用户实测的 7 步链条）
+
+### 用户报告（原话压缩）
+「回车 → 打开 Copilot → 跳回 dsh → VS Code 打开元素文件 → 提示是否保存(mac 级) → 我点不保存 → 文件关闭 → 这个 chip 插入」
+日志逐段对上：`-> element ref: name=span#mv-gpu.st-metric__value` → `-> close(save-to-tmp) sequence, then send` → `-> sent to dsh: true` → `· doc-close scheme=untitled`。
+根因：原生 Enter 已经自己把元素给 Copilot；我们 0.1.x 的 doc/jsonl 搬运工**又搬一次**，其中「打开 untitled 附件文档 + 关闭」就是那个 macOS 保存提示。同期还看到 `[cdp] dismiss-prompt: skip-not-ours: … installation appears to be corrupt`（补丁的已知副作用，弹窗要手点）。
+
+### 改动
+`element-context-watcher.js`：doc-open 入口 `handleElementDoc` 与 jsonl 扫描两处都加 `cfg('elementChain', false)` 闸门，关闭时只记一行 `老链路已关闭（0.1.35，元素走原生 + 补丁）`；新增设置 `dshReview.elementContext.elementChain`（默认 **false**，设回 true 可复活）。`sendElementToDsh` / `intercept` / `closeElementDoc` / dismissPrompt 机制保留不动，只是不再被触发。
+
 ## dsh-review 0.1.71 + dsh-review-vscode 0.1.34 (2026-10-23) — 原生「Comment on Elements」接进 dsh（补丁路线 A 起步）
 
 ### 事实（先把「能不能改」查清楚）

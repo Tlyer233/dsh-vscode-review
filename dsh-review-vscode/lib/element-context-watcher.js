@@ -266,6 +266,10 @@ function startElementContextWatcher(context, log) {
           log.appendLine(TAG + ' · jsonl dup of earlier send, skip: ' + a.name)
           continue
         }
+        if (!cfg('elementChain', false)) {
+          log.appendLine(TAG + ' · jsonl 老链路已关闭（0.1.35）name=' + a.name)
+          continue
+        }
         const nu = parseNameUrl(a.value)
         intercept(source, [
           '会话文件: ' + file,
@@ -372,6 +376,16 @@ function startElementContextWatcher(context, log) {
 
   function handleElementDoc(doc, text) {
     const nu = parseNameUrl(text)
+    // 0.1.35: the user's own chain report — Enter in the native comment box made VS
+    // Code create this attachment doc, and our old mover then opened it, closed it
+    // (the macOS "save?" prompt) and pushed a duplicate element chip. Native already
+    // delivers the element to chat, and the bundle hook now mirrors comments to dsh,
+    // so the old chain is off by default; dshReview.elementContext.elementChain=true
+    // brings it back.
+    if (!cfg('elementChain', false)) {
+      log.appendLine(TAG + ' · 老链路已关闭（0.1.35，元素走原生 + 补丁）name=' + nu.name)
+      return
+    }
     // 0.1.28: a file opened FROM dsh makes VS Code re-create this attachment doc;
     // that is our own doing, not a user chip pick — do not push an element chip back.
     if (bridge.openGuarded()) {
