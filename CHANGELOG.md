@@ -44,6 +44,15 @@
 - 版本说明:本修复与「元素批注」同日开发,原报 0.1.70/0.1.26 与批注功能撞号,rebase 后改号 0.1.71/0.1.28
 
 
+## dsh-review 0.1.71 + dsh-review-vscode 0.1.45 (2026-10-23) — 原生批注只需输入框变更：不点 chip、不开文件、不碰标签
+
+### 上一版剩下的唯一毛病
+`[comment] wrote … dsh ok=true`（**只有 1 条**，增量逻辑正确），但 `[element-context] close: save-to-tmp=false` ⇒ `doc.save(唯一临时文件)` **一直返回 false**（0.1.2x 起就没成功过，之前那句「机制上无弹框」是误判），于是 0.1.38 的规则「保存不成功就不关标签」生效 ⇒ 标签留着，用户手工关它就撞上 macOS 保存面板 = 老路。
+
+### 结论：那个元素文档我们根本不需要
+0.1.40（clickChips 关）那一版日志里就有 `[element-context] · chatInput change len=100`，输入框变更自己就是信号。所以 `clickChips` / `closeNativeDoc` 默认回到 **false**：不点 chip（不开文件）、也不去关 VS Code 自己打开的东西。`nativeToDsh` 仍 true，走 composer 增量。
+代价（明说）：md 里的 `- URL:` 只有在曾经过元素文档时才有值，默认路径下为空（值来自元素文档正文 `URL:` 行，`lastElementUrl` 缓存）。要补上就从 CDP 已连接的浏览器页取当前 URL，一行改动，等用户要不要再说。
+
 ## dsh-review 0.1.71 + dsh-review-vscode 0.1.43 (2026-10-23) — 一次原生批注送出 6 个 chip：改成「只送增量」
 
 ### 现象与根因
