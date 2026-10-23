@@ -170,7 +170,33 @@ const PROBE_JS = `(function () {
         }
       }
       walk(document, 'doc')
-      try { var h = window.__vscode_helpers; out.helpers = h ? Object.keys(h).slice(0, 20).join(',') : null } catch (e) { out.helpers = 'ERR' }
+      // 0.1.76: the real pin layer is VS Code's own host inside the page — count what is in it.
+      try {
+        var host = document.querySelector('[data-vscode-pick-host]')
+        if (!host) {
+          var all = document.querySelectorAll('*')
+          for (var z = 0; z < all.length; z++) {
+            for (var y = 0; all[z].attributes && y < all[z].attributes.length; y++) {
+              if (/vscode.*(pick|comment|element|overlay)/i.test(all[z].attributes[y].name)) { host = all[z]; break }
+            }
+            if (host) break
+          }
+        }
+        if (host) {
+          var kids = []
+          try { kids = Array.prototype.slice.call(host.querySelectorAll('*')) } catch (e) {}
+          var sample = []
+          for (var q = 0; q < kids.length && sample.length < 6; q++) {
+            var kr = null
+            try { kr = kids[q].getBoundingClientRect() } catch (e) {}
+            sample.push(kids[q].tagName.toLowerCase() + (kids[q].id ? '#' + kids[q].id : '') + ' text=' + JSON.stringify(String(kids[q].textContent || '').trim().slice(0, 10)) + (kr ? ' @' + Math.round(kr.left) + ',' + Math.round(kr.top) + ' ' + Math.round(kr.width) + 'x' + Math.round(kr.height) : ''))
+          }
+          out.pickHost = { children: kids.length, hostText: String(host.textContent || '').trim().slice(0, 40), sample: sample }
+        } else { out.pickHost = null }
+      } catch (e) { out.pickHost = 'ERR' }
+      try { var h = window.__vscode_helpers; out.helpers = h ? Object.keys(h).slice(0, 20).join(',') : null
+        if (h) { try { out.helperSrc = String(h.getElement || '').slice(0, 160) } catch (e) { out.helperSrc = '' } }
+      } catch (e) { out.helpers = 'ERR' }
       try { out.globals = Object.getOwnPropertyNames(window).filter(function (k) { return /vscode|comment|element|pin|__dsh/i.test(k) }).slice(0, 16).join(',') } catch (e) {}
       return JSON.stringify(out)
     },

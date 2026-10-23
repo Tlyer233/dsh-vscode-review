@@ -706,8 +706,14 @@ function startElementContextWatcher(context, log) {
           const st = await bridge.pageState(payload.url || '')
           if (st && typeof st === 'object') {
             const pins = Array.isArray(st.pins) ? st.pins : []
-            log.appendLine(TAG + ' · 页面图钉扫描：' + pins.length + ' 个可疑覆盖层' + (st.helpers ? ' ｜ __vscode_helpers=' + String(st.helpers).slice(0, 60) : ' ｜ 无 __vscode_helpers') + (st.globals ? ' ｜ globals=' + String(st.globals).slice(0, 70) : ''))
-            pins.slice(0, 4).forEach((x) => log.appendLine(TAG + ' ·   ' + String(x).slice(0, 150)))
+            const ph = st.pickHost
+            const phText = ph && typeof ph === 'object'
+              ? '图钉宿主层子元素 ' + ph.children + ' 个' + (ph.hostText ? '，文字=' + JSON.stringify(String(ph.hostText).slice(0, 24)) : '（空）')
+              : '宿主层=' + JSON.stringify(ph)
+            log.appendLine(TAG + ' · 页面图钉扫描：' + phText + ' ｜ 其它覆盖层 ' + pins.length + ' 个 ｜ __vscode_helpers=' + String(st.helpers || '无').slice(0, 46))
+            if (ph && typeof ph === 'object' && Array.isArray(ph.sample)) ph.sample.slice(0, 5).forEach((x) => log.appendLine(TAG + ' ·   图钉候选 ' + String(x).slice(0, 130)))
+            pins.slice(0, 3).forEach((x) => log.appendLine(TAG + ' ·   覆盖层 ' + String(x).slice(0, 130)))
+            if (st.helperSrc) log.appendLine(TAG + ' ·   helpers.getElement = ' + String(st.helperSrc).replace(/\s+/g, ' ').slice(0, 170))
           } else {
             log.appendLine(TAG + ' · 页面图钉扫描：探针没答（' + (st === null ? 'null' : typeof st) + '）')
           }
