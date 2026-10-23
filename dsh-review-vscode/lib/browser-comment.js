@@ -25,6 +25,7 @@
  */
 
 const vscode = require('vscode')
+const bridge = require('./element-bridge')
 const http = require('node:http')
 
 const CDP_PORT = 9223
@@ -514,13 +515,23 @@ function isBrowserPage(t) {
  * @param {{ context: import('vscode').ExtensionContext, log: {appendLine:(s:string)=>void},
  *          onComment: (p: object) => void }} opts
  */
+function isWorkbenchPage(t) {
+  if (!t || t.type !== 'page') return false
+  const u = String(t.url || '')
+  return u.indexOf('vscode-file://') === 0 && u.indexOf('workbench.html') !== -1
+}
+
 function startBrowserComment(opts) {
   const { context, log, onComment } = opts
   let WS
   if (typeof globalThis.WebSocket === 'function') WS = globalThis.WebSocket
   else WS = require('ws')
 
-  const conns = new Map() // targetId -> { ws, url }
+  const conns = new Map() // targetId -> { ws, url, poll }
+  let pollSeq = 950
+  // The workbench CSP drops our beacon, but the same bundle hook parks the payload on
+  // globalThis — and the workbench renderer IS a CDP target, so we read it from there.
+  const DRAIN_JS = '(function(){var a=globalThis.__dshNativeComments||[];globalThis.__dshNativeComments=[];return JSON.stringify(a)})()'
   let stopped = false
   let lastAbsent = 0
   let lastSeenCount = -1
@@ -541,11 +552,13 @@ function startBrowserComment(opts) {
     if (why) log.appendLine(TAG + ' drop ' + id.slice(0, 8) + ' (' + why + ')')
   }
 
-  function attach(target) {
+  function attach(target, inject) {
     const ws = new WS(target.webSocketDebuggerUrl)
-    conns.set(target.id, { ws, url: target.url })
+    conns.set(target.id, { ws, url: target.url, poll: !inject })
     ws.onopen = () => {
-      log.appendLine(TAG + ' attached ' + String(target.id).slice(0, 8) + ' ' + String(target.url).slice(0, 70))
+      log.appendLine(TAG + ' attached ' + String(target.id).slice(0, 8) + ' ' + String(target.url).slice(0, 70) +
+        (inject ? '' : ' [host: drain native comments]'))
+      if (!inject) return
       ws.send(JSON.stringify({ id: 1, method: 'Runtime.enable', params: {} }))
       ws.send(JSON.stringify({
         id: 2, method: 'Runtime.evaluate',
@@ -558,7 +571,18 @@ function startBrowserComment(opts) {
       let msg
       try { msg = JSON.parse(raw) } catch { return }
       // selftest replies come back as evaluate results, not console lines.
-      if (msg.id >= 900 && msg.result && msg.result.result) {
+      if (msg.id >= 950 && msg.result && msg.result.result) {
+        // native comments drained out of the workbench renderer
+        let items = []
+        try { items = JSON.parse(String(msg.result.result.value || '[]')) } catch { items = [] }
+        for (const q of items) {
+          const payload = bridge.nativeCommentPayload(q)
+          if (!payload.text) continue
+          log.appendLine(TAG + ' native comment (cdp drain) label=' + payload.label + ' chars=' + payload.text.length)
+          try { onComment(payload) } catch (e) { log.appendLine(TAG + ' onComment failed: ' + String((e && e.message) || e)) }
+        }
+      }
+      if (msg.id >= 900 && msg.id < 950 && msg.result && msg.result.result) {
         log.appendLine(TAG + ' selftest ' + String(target.id).slice(0, 8) + ': ' +
           String(msg.result.result.value == null ? '-' : msg.result.result.value).slice(0, 200))
       }
@@ -604,6 +628,10 @@ function startBrowserComment(opts) {
     }
     absentNoticed = false
     const pages = (targets || []).filter(isBrowserPage)
+    const hosts = (targets || []).filter(isWorkbenchPage)
+    for (const h of hosts) {
+      if (!conns.has(h.id)) { try { attach(h, false) } catch (e) { log.appendLine(TAG + ' host attach failed: ' + String((e && e.message) || e)) } }
+    }
     if (pages.length !== lastSeenCount) {
       lastSeenCount = pages.length
       log.appendLine(TAG + ' ' + VERSION + ' targets=' + pages.length + ' connected=' + conns.size)
@@ -650,8 +678,15 @@ function startBrowserComment(opts) {
     log.appendLine(TAG + ' selftest sent to ' + list.length + ' page(s) — 结果在 dsh review 输出')
   }))
 
+  const poller = setInterval(() => {
+    for (const [, c] of conns) {
+      if (!c.poll || !c.ws || c.ws.readyState !== 1) continue
+      const id = ++pollSeq
+      try { c.ws.send(JSON.stringify({ id: id, method: 'Runtime.evaluate', params: { expression: DRAIN_JS, returnByValue: true } })) } catch { /* dropped, next tick */ }
+    }
+  }, 900)
   const timer = setInterval(() => { void scan() }, RESCAN_MS)
-  context.subscriptions.push({ dispose: () => { stopped = true; clearInterval(timer); for (const id of Array.from(conns.keys())) closeOne(id, '') } })
+  context.subscriptions.push({ dispose: () => { stopped = true; clearInterval(timer); clearInterval(poller); for (const id of Array.from(conns.keys())) closeOne(id, '') } })
   log.appendLine(TAG + ' ' + VERSION + ' armed (sendToDsh=' + enabled() + ')')
   void scan()
 }

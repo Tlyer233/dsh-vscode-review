@@ -37,6 +37,9 @@ BEACON = (
     '(function(){var q={ev:"dsh-native-comment",url:String((f&&f.url)||(t&&t.url)||(e&&e.url)||"").slice(0,400),'
     'name:String((f&&f.name)||"").slice(0,200),comment:String(e.comment||"").slice(0,8000),'
     'elementId:String(e.elementId||"").slice(0,80)};'
+    # workbench CSP drops fetch/Image (measured: nothing ever reached the listener), so
+    # also park it on globalThis — the extension reads that back over CDP.
+    'try{(globalThis.__dshNativeComments=globalThis.__dshNativeComments||[]).push(q)}catch(_c){}'
     'var u="http://127.0.0.1:%d/dsh-comment?d="+encodeURIComponent(JSON.stringify(q));'
     'try{fetch(u,{mode:"no-cors"}).catch(function(){})}catch(_a){}'
     'try{(new Image()).src=u}catch(_b){}})();' % PORT
@@ -65,6 +68,13 @@ def apply_one(path, log):
     if BEACON in s:
         log("  already patched: " + os.path.basename(path))
         return True
+    if "dsh-native-comment" in s:
+        # an older beacon version is in place: restore the pristine file first, then patch
+        bak = path + ".dsh-bak"
+        if os.path.exists(bak):
+            shutil.copy2(bak, path)
+            log("  upgraded: restored pristine copy before re-patching")
+            s = open(path, encoding="utf-8").read()
     n = s.count(ANCHOR)
     if n != 1:
         log("  SKIP " + os.path.basename(path) + ": anchor found " + str(n) + " times (VS Code updated? re-locate the call site)")

@@ -207,6 +207,19 @@ function startElementContextWatcher(context, log) {
       return true
     }
 
+    // The bundle hook can deliver the same native comment twice (fetch + Image, or
+    // the HTTP beacon and the CDP drain). Same nid -> rewrite the file, no new chip.
+    if (nid) {
+      const known = findCommentFile(nid)
+      if (known) {
+        try {
+          fs.writeFileSync(known, md, 'utf8')
+          log.appendLine(TAG + ' [comment] 同 nid 重复投递, 只更新 ' + known + ' (不再插 chip)')
+          return true
+        } catch (e) { /* fall through and write a fresh file */ }
+      }
+    }
+
     let file = ''
     try {
       const d = new Date()

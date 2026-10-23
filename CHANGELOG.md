@@ -44,6 +44,18 @@
 - 版本说明:本修复与「元素批注」同日开发,原报 0.1.70/0.1.26 与批注功能撞号,rebase 后改号 0.1.71/0.1.28
 
 
+## dsh-review 0.1.71 + dsh-review-vscode 0.1.36 (2026-10-23) — 原生批注改走 CDP 直取（CSP 拦掉了信标）
+
+### 用户实测的两件事（都有日志/截图对应）
+1. 「这个文件怎么还弹出来??? 你砍干净了吗?」—— 截图中弹出的是 `Attached Element Context from Integrated · Untitled-1`（带脏点），同一时刻 Copilot 输入框里已有 `+ Attached Element Context from Integrated ×` 和 `@span#mv-gpu 1321312`。日志只有我们的闸门行 `[element-context] · 老链路已关闭（0.1.35…）name=span#mv-gpu.st-metric__value`（两次），没有任何 `openFile` / `close(save-to-tmp)` ⇒ **这个 untitled 文档是 VS Code 1.142 自己打开的**，0.1.35 确实已经把我们的动作砍干净了。
+2. 补丁的信标**一次都没到**：`[native-comment] listening` 在，但整个会话没有一条 `[native-comment] native comment`，也没有 `ping/no-comment` ⇒ workbench 的 CSP 把 `fetch` 和 `img` 都挡了（127.0.0.1 不在 connect-src/img-src）。
+
+### 换递送方式（不动原生行为）
+- 补丁在原地额外把 payload 塞进 `globalThis.__dshNativeComments`（`tools/patch_comment_hook.py` 的 BEACON；旧版补丁会被识别成 "upgraded"，先还原 `.dsh-bak` 再重打）。
+- `lib/browser-comment.js` 现在除了浏览器页，还 attach **`vscode-file://…workbench.html`** 这个 CDP target（`isWorkbenchPage`，`attach(target, false)` = 不注入页内脚本，只轮询），每 900ms `Runtime.evaluate` 排空数组 ⇒ 走 `bridge.nativeCommentPayload` 进同一条 md + chip 管道。日志：`attached … [host: drain native comments]` / `native comment (cdp drain) label=… chars=…`。
+- `element-bridge.nativeCommentPayload()`：两处投递（HTTP 与 CDP）共用一份映射，`nid` = `hash(url|name|elementId|text)`；watcher 里同 `nid` 的第二次到达**只重写文件、不再插 chip** ⇒ 双通道不会重复。
+- 自检：`node -e` 验同 payload nid 相同 / 改文字后 nid 不同 / payload 形状正确；页内探针仍 22/22。
+
 ## dsh-review 0.1.71 + dsh-review-vscode 0.1.35 (2026-10-23) — 砍掉旧「元素搬运」链路（用户实测的 7 步链条）
 
 ### 用户报告（原话压缩）

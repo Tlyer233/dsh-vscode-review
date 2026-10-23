@@ -56,25 +56,7 @@ module.exports = function startNativeCommentServer (deps) {
 
     // Feed the existing comment pipeline; the native UI already drew its own pin, so
     // our page script must not add a second one (it only pins its own submits anyway).
-    const payload = {
-      ev: 'comment',
-      native: true,
-      text: String(data.comment || ''),
-      label: String(data.name || 'element') + (data.elementId ? ' #' + String(data.elementId) : ''),
-      url: String(data.url || ''),
-      title: '',
-      size: '',
-      locate: 'native',
-      tag: 'element',
-      id: String(data.elementId || ''),
-      classes: [],
-      attributes: {},
-      ancestors: [],
-      selector: '',
-      innerText: '',
-      outerHTML: '',
-      bounds: { x: 0, y: 0, width: 0, height: 0 },
-    }
+    const payload = bridge.nativeCommentPayload(data)
     const r = await bridge.deliverBrowserComment(payload)
     const ok = r === true || !!(r && r.ok)
     log.appendLine(TAG + ' native comment -> dsh ok=' + ok + (r && r.why ? ' why=' + r.why : '') +
