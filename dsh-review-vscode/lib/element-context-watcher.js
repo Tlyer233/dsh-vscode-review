@@ -175,6 +175,16 @@ function startElementContextWatcher(context, log) {
     return String(s || 'element').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'element'
   }
 
+  // 0.1.74: dsh renders ref.label as the chip text, and a file name like
+  // comment-20261023-132834-mv-cpu-ksmr.md tells the user nothing. The chip now shows the
+  // annotation itself; the reference stays the same md file (content/modelText unchanged),
+  // only the display label changes.
+  function chipLabel(text, file) {
+    const one = String(text || '').replace(/\s+/g, ' ').trim()
+    if (!one) return file ? path.basename(file) : '元素批注'
+    return one.length > 48 ? one.slice(0, 48) + '…' : one
+  }
+
   function commentMarkdown(p) {
     p = p || {}
     const bits = ['# 元素批注 — ' + String(p.label || p.tag || 'element'), '']
@@ -274,7 +284,7 @@ function startElementContextWatcher(context, log) {
       log.appendLine(TAG + ' [comment] write failed: ' + String((e && e.message) || e))
     }
     const ref = file
-      ? { kind: 'file', path: file, content: md, label: path.basename(file), clipboardText: md, modelText: md }
+      ? { kind: 'file', path: file, content: md, label: chipLabel(text, file), clipboardText: md, modelText: md }
       : { kind: 'element', path: String(p.url || 'element'), content: md, label: 'element: ' + String(p.label || 'element'), clipboardText: md, modelText: md }
     // fallbackText covers both an older client bundle and a ref the client rejects
     // (text mode): the comment still arrives with its element context.
