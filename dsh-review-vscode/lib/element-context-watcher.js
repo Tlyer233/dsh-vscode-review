@@ -582,12 +582,28 @@ function startElementContextWatcher(context, log) {
   nameWatcher.onDidDelete(onName('delete'), undefined, context.subscriptions)
 
   let lastChangeLog = 0
+  let lastDumpLog = 0
+  let lastScanOk = true
   context.subscriptions.push(vscode.workspace.onDidChangeTextDocument((e) => {
     if (e.document.uri.scheme !== 'chatSessionInput') return
+    // 0.1.47: the scan must NOT sit behind the 800ms log throttle — in the 0.1.46 run the
+    // composer change fired once and the scan still saw nothing new, so we now also print
+    // the raw composer text (first 300 chars, newlines folded) to see how a native
+    // reference is actually stored.
+    try {
+      scanNativeComments('', e.document.getText())
+      const now2 = Date.now()
+      if (now2 - lastDumpLog > 1500) {
+        lastDumpLog = now2
+        const t = String(e.document.getText() || '').replace(/\n/g, ' ⏎ ')
+        log.appendLine(TAG + ' · 输入框内容[' + e.document.uri.toString() + '] = ' + t.slice(0, 300))
+      }
+    } catch (err) {
+      if (lastScanOk) { log.appendLine(TAG + ' · 扫描异常: ' + String((err && err.message) || err)); lastScanOk = false }
+    }
     const now = Date.now()
     if (now - lastChangeLog < 800) return
     lastChangeLog = now
-    if (e.document.uri.scheme === 'chatSessionInput') scanNativeComments('', e.document.getText())
     log.appendLine(TAG + ' · chatInput change len=' + e.document.getText().length)
   }))
 
