@@ -1297,6 +1297,7 @@ window.__ModuleLoader__.load({
         // VS Code drops the page pin on its own (verified by the user's test).
         const trackedRefs = new Map(); // file name -> { path }
         let refSweepAt = 0;
+        let lastDiagAt = 0;
         let sweepReported = false;
         let announceSent = false;
         // A chip matches when its text carries either the file-name tail or the annotation
@@ -1324,7 +1325,7 @@ window.__ModuleLoader__.load({
         function postState(extra) {
           // 0.1.82: only the scope-request message has ever reached the extension, so all
           // client-side events (tracked / dropped / request-received / removed) ride on it.
-          const msg = { type: "dshScopeRequest", build: "0.1.89", watching: Array.from(trackedRefs.keys()).slice(0, 3) };
+          const msg = { type: "dshScopeRequest", build: "0.1.90", watching: Array.from(trackedRefs.keys()).slice(0, 3) };
           try { Object.assign(msg, extra || {}); } catch (err) { /* noop */ }
           try { window.parent.postMessage(msg, "*"); } catch (err) { /* noop */ }
         }
@@ -1383,18 +1384,22 @@ window.__ModuleLoader__.load({
           if (!scope) return;
           const text = String(scope.textContent || '');
           if (!text.trim()) return; // composer cleared = the message was sent, not deleted
+          // 0.1.90: say out loud why a tracked chip was or was not treated as deleted — the
+          // 撤图钉 path produced no log at all, so the broken link had to be made visible.
+          const diag = [];
+          const short = function (nm) { return String(nm).replace(/^comment-\d{8}-/, '').slice(0, 14) };
           trackedRefs.forEach(function (info, name) {
             // 0.1.86: we track the chip before dsh renders it (the log order proved it:
             // 已盯上方块 -> postScope -> insert mode=chip). Without a grace period the very
             // first sweep ran in that gap, saw the name missing, declared a deletion and ate
             // the user's pin seconds after it appeared. Require: a grace period, and that we
             // actually saw the node once, before ever reporting a drop.
-            if (info.el && info.el.isConnected) return;
-            if (Date.now() - (info.since || 0) < 1500) return;
+            if (info.el && info.el.isConnected) { diag.push(short(name) + " 连着"); return; }
+            if (Date.now() - (info.since || 0) < 1500) { diag.push(short(name) + " 宽限中"); return; }
             // 0.1.84: dsh re-renders the chip and replaces its DOM node, so a disconnected
             // node alone is not a deletion. Re-resolve by name and rebind; only when the name
             // is gone from the page as well is it a real deletion.
-            if (info.el && text.indexOf(name) !== -1) {
+            if (info.el && text.indexOf(name) !== -1) { diag.push(short(name) + " 被替换后重绑");
               const nodes = composerScope().querySelectorAll('span,div,a,button');
               for (let i = 0; i < nodes.length; i++) {
                 if (!textHas(nodes[i], info)) continue;
@@ -1403,11 +1408,16 @@ window.__ModuleLoader__.load({
               }
               return;
             }
-            if (text.indexOf(name) !== -1) return;
-            if (!info.seen) return;
+            if (text.indexOf(name) !== -1) { diag.push(short(name) + " 文字还在"); return; }
+            if (!info.seen) { diag.push(short(name) + " 从没见过节点"); return; }
+            diag.push(short(name) + " 判为已删");
             trackedRefs.delete(name);
             postState({ report: "方块被删: " + name, drop: name, dropPath: info.path });
           });
+          if (diag.length && now - lastDiagAt > 2000) {
+            lastDiagAt = now;
+            postState({ report: "方块状态: " + diag.join(" | ").slice(0, 220) });
+          }
           if (trackedRefs.size && !sweepReported) {
             sweepReported = true;
             try { window.parent.postMessage({ type: "dshRefsTracked", names: Array.from(trackedRefs.keys()).slice(0, 4) }, "*"); } catch (err) { /* noop */ }
@@ -1634,7 +1644,7 @@ window.__ModuleLoader__.load({
             setTimeout(compactNativeStatsLine, 800);
             applyZoom();
             // Scope is owned by apply()-level listener; ask again in case early posts were dropped.
-            try { window.parent.postMessage({ type: "dshScopeRequest", build: "0.1.89", watching: Array.from(trackedRefs.keys()).slice(0, 3) }, "*"); } catch (err) { /* noop */ }
+            try { window.parent.postMessage({ type: "dshScopeRequest", build: "0.1.90", watching: Array.from(trackedRefs.keys()).slice(0, 3) }, "*"); } catch (err) { /* noop */ }
             return;
           }
           if (msg.type === "dshChromeState") {
@@ -4134,13 +4144,13 @@ window.__ModuleLoader__.load({
               try { ok = !!(window.__dshrRemoveChip && window.__dshrRemoveChip(nm)); } catch (err) { ok = false; }
               let watch = [];
               try { watch = (window.__dshrTracked && window.__dshrTracked()) || []; } catch (err) { watch = []; }
-              try { window.parent.postMessage({ type: "dshScopeRequest", build: "0.1.89", watching: watch.slice(0, 3), report: "捎带删方块: " + nm + " -> " + (ok ? "已删" : "没找到方块节点") }, "*"); } catch (err) { /* noop */ }
+              try { window.parent.postMessage({ type: "dshScopeRequest", build: "0.1.90", watching: watch.slice(0, 3), report: "捎带删方块: " + nm + " -> " + (ok ? "已删" : "没找到方块节点") }, "*"); } catch (err) { /* noop */ }
             });
           }
           setVscodeScope(msg.paths, msg.rawPaths);
         }
         window.addEventListener("message", onScopeFromHost);
-        try { window.parent.postMessage({ type: "dshScopeRequest", build: "0.1.89", watching: Array.from(trackedRefs.keys()).slice(0, 3) }, "*"); } catch (err) { /* noop */ }
+        try { window.parent.postMessage({ type: "dshScopeRequest", build: "0.1.90", watching: Array.from(trackedRefs.keys()).slice(0, 3) }, "*"); } catch (err) { /* noop */ }
         const timer = setInterval(checkWorkbenchScope, 800);
         return function () {
           clearInterval(timer);
