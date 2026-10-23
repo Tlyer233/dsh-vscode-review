@@ -1218,7 +1218,12 @@ function setupDshBrowser(context) {
         }
         // Client (re)asked for whitelist — answer even if Dock was not mounted earlier.
         if (msg.type === 'dshScopeRequest') {
-          state.log('[dsh-scope] scope request from client' + (msg.build ? ' — dsh 客户端构建 = ' + String(msg.build) + (Array.isArray(msg.watching) && msg.watching.length ? '，正在盯 ' + msg.watching.length + ' 个方块: ' + msg.watching.join(', ').slice(0, 90) : '，正在盯 0 个方块') : ' — dsh 客户端构建 = 旧版（没有绑定代码）'))
+          state.log('[dsh-scope] scope request from client' + (msg.build ? ' — dsh 客户端构建 = ' + String(msg.build) + (Array.isArray(msg.watching) && msg.watching.length ? '，正在盯 ' + msg.watching.length + ' 个方块: ' + msg.watching.join(', ').slice(0, 90) : '，正在盯 0 个方块') + (msg.report ? ' ｜ ' + String(msg.report) : ''))
+          if (msg.drop) {
+            const done = bridge.referenceDropped({ path: String(msg.dropPath || msg.drop), name: String(msg.drop) })
+            state.log('[ref-drop] ' + String(msg.drop) + ' -> ' + (done ? '已转给元素批注处理（删 Copilot 那行）' : '插件没接这个事件'))
+          }
+          if (msg.type === 'unused-branch') { : ' — dsh 客户端构建 = 旧版（没有绑定代码）'))
           postScope(view)
           return
         }

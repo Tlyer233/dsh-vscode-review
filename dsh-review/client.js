@@ -1312,14 +1312,19 @@ window.__ModuleLoader__.load({
           }
           return document.body || document.documentElement;
         }
+        function postState(extra) {
+          // 0.1.82: only the scope-request message has ever reached the extension, so all
+          // client-side events (tracked / dropped / request-received / removed) ride on it.
+          const msg = { type: "dshScopeRequest", build: "0.1.82", watching: Array.from(trackedRefs.keys()).slice(0, 3) };
+          try { Object.assign(msg, extra || {}); } catch (err) { /* noop */ }
+          try { window.parent.postMessage(msg, "*"); } catch (err) { /* noop */ }
+        }
         function announceTracking() {
           // 0.1.80: report right after inserting chips, over the scope-request channel —
           // the only client -> extension message proven to arrive. (dshRefsTracked never
           // showed up in the log, and a scope request fired at page load reports 0 anyway.)
           if (!trackedRefs.size) return;
-          try {
-            window.parent.postMessage({ type: "dshScopeRequest", build: "0.1.81", watching: Array.from(trackedRefs.keys()).slice(0, 3) }, "*");
-          } catch (err) { /* noop */ }
+          postState({ report: "已盯上方块" });
         }
         function trackInsertedRefs(refs, list) {
           const all = []
@@ -1362,7 +1367,7 @@ window.__ModuleLoader__.load({
           trackedRefs.forEach(function (info, name) {
             if (info.el) { if (info.el.isConnected) return; } else if (text.indexOf(name) !== -1) return;
             trackedRefs.delete(name);
-            try { window.parent.postMessage({ type: "dshDropReference", path: info.path, name: name }, "*"); } catch (err) { /* noop */ }
+            postState({ report: "方块被删: " + name, drop: name, dropPath: info.path });
           });
           if (trackedRefs.size && !sweepReported) {
             sweepReported = true;
@@ -1579,7 +1584,7 @@ window.__ModuleLoader__.load({
             setTimeout(compactNativeStatsLine, 800);
             applyZoom();
             // Scope is owned by apply()-level listener; ask again in case early posts were dropped.
-            try { window.parent.postMessage({ type: "dshScopeRequest", build: "0.1.81", watching: Array.from(trackedRefs.keys()).slice(0, 3) }, "*"); } catch (err) { /* noop */ }
+            try { window.parent.postMessage({ type: "dshScopeRequest", build: "0.1.82", watching: Array.from(trackedRefs.keys()).slice(0, 3) }, "*"); } catch (err) { /* noop */ }
             return;
           }
           if (msg.type === "dshChromeState") {
@@ -1608,9 +1613,10 @@ window.__ModuleLoader__.load({
             insertComposerText(msg.text);
           } else if (msg.type === "dshRemoveReference" && msg.name) {
             const nm = String(msg.name);
+            postState({ report: "收到删方块请求: " + nm });
             const ok = removeTrackedChipByName(nm);
             if (ok) trackedRefs.delete(nm);
-            try { window.parent.postMessage({ type: "dshRemoveReferenceAck", name: nm, ok: ok }, "*"); } catch (err) { /* noop */ }
+            postState({ report: "删方块结果: " + nm + " -> " + (ok ? "已删" : "页面上没找到") });
           } else if (msg.type === "dshInsertRefs" && Array.isArray(msg.refs)) {
             const fallback = typeof msg.fallbackText === "string" ? msg.fallbackText : "";
             const result = insertRefsAtCaret(msg.refs, fallback, null);
@@ -4072,7 +4078,7 @@ window.__ModuleLoader__.load({
           setVscodeScope(msg.paths, msg.rawPaths);
         }
         window.addEventListener("message", onScopeFromHost);
-        try { window.parent.postMessage({ type: "dshScopeRequest", build: "0.1.81", watching: Array.from(trackedRefs.keys()).slice(0, 3) }, "*"); } catch (err) { /* noop */ }
+        try { window.parent.postMessage({ type: "dshScopeRequest", build: "0.1.82", watching: Array.from(trackedRefs.keys()).slice(0, 3) }, "*"); } catch (err) { /* noop */ }
         const timer = setInterval(checkWorkbenchScope, 800);
         return function () {
           clearInterval(timer);
