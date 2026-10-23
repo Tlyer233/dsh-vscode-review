@@ -567,7 +567,11 @@ const pendingRaw = new Map() // 0.1.84: DOM-domain replies, resolved whole (not 
     }
     await cdpRequest(c, 'DOM.enable', {}, 1500)
     const nodes = await flatten()
-    const want = String(body || '').trim()
+    // 0.1.104: VS Code flattens newlines/extra spaces in the pin's aria-label, so compare both
+    // sides whitespace-collapsed (and case-insensitively) — an exact compare used to miss every
+    // multi-line annotation (it logged 没找到对应图钉 although the pin was right there).
+    const norm = (v) => String(v || '').replace(/\s+/g, ' ').trim().toLowerCase()
+    const want = norm(body)
     const rank = (n) => {
       const lm = /Element comment\s*(\d+)\s*:/.exec(String(attrOf(n, 'aria-label') || ''))
       return lm ? Number(lm[1]) : 0
@@ -579,10 +583,10 @@ const pendingRaw = new Map() // 0.1.84: DOM-domain replies, resolved whole (not 
     const loose = []
     for (const n of nodes) {
       if (!/comment-pin(\s|$)/.test(classOf(n))) continue
-      const text = String(attrOf(n, 'title') || attrOf(n, 'aria-label') || '').replace(/^Element comment\s*\d+:\s*/, '').trim()
+      const text = norm(String(attrOf(n, 'title') || attrOf(n, 'aria-label') || '').replace(/^Element comment\s*\d+:\s*/, ''))
       if (!text || !want) continue
       if (text === want) exact.push(n)
-      else if (text.indexOf(want) !== -1) loose.push(n)
+      else if (text.indexOf(want) !== -1 || want.indexOf(text) !== -1) loose.push(n)
     }
     exact.sort((a2, b2) => rank(a2) - rank(b2))
     loose.sort((a2, b2) => rank(a2) - rank(b2))
@@ -614,8 +618,7 @@ const pendingRaw = new Map() // 0.1.84: DOM-domain replies, resolved whole (not 
     await new Promise((r) => setTimeout(r, 500))
     const after = await flatten()
     const stillThere = after.filter((n) => /comment-pin(\s|$)/.test(classOf(n))).some((n) => {
-      const t = String(attrOf(n, 'title') || attrOf(n, 'aria-label') || '').replace(/^Element comment\s*\d+:\s*/, '').trim()
-      return t === want
+      return norm(String(attrOf(n, 'title') || attrOf(n, 'aria-label') || '').replace(/^Element comment\s*\d+:\s*/, '')) === want
     })
     return { ok: !stillThere, why: stillThere ? '点了删除按钮，图钉还在（可能被页面重建）' : '', opened, body: want }
   }
