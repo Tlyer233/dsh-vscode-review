@@ -1223,7 +1223,6 @@ function setupDshBrowser(context) {
             const done = bridge.referenceDropped({ path: String(msg.dropPath || msg.drop), name: String(msg.drop) })
             state.log('[ref-drop] ' + String(msg.drop) + ' -> ' + (done ? '已转给元素批注处理（删 Copilot 那行）' : '插件没接这个事件'))
           }
-          if (msg.type === 'unused-branch') { : ' — dsh 客户端构建 = 旧版（没有绑定代码）'))
           postScope(view)
           return
         }
