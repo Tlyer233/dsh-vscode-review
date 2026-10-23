@@ -4119,7 +4119,9 @@ window.__ModuleLoader__.load({
             msg.removeChips.forEach(function (nm) {
               let ok = false;
               try { ok = !!(window.__dshrRemoveChip && window.__dshrRemoveChip(nm)); } catch (err) { ok = false; }
-              try { window.parent.postMessage({ type: "dshScopeRequest", build: "0.1.88", watching: [], report: "捎带删方块: " + nm + " -> " + (ok ? "已删" : "没找到方块节点") }, "*"); } catch (err) { /* noop */ }
+              let watch = [];
+              try { watch = (window.__dshrTracked && window.__dshrTracked()) || []; } catch (err) { watch = []; }
+              try { window.parent.postMessage({ type: "dshScopeRequest", build: "0.1.88", watching: watch.slice(0, 3), report: "捎带删方块: " + nm + " -> " + (ok ? "已删" : "没找到方块节点") }, "*"); } catch (err) { /* noop */ }
             });
           }
           setVscodeScope(msg.paths, msg.rawPaths);
