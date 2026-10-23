@@ -304,6 +304,13 @@ function startElementContextWatcher(context, log) {
   }
 
   bridge.setBrowserCommentHandler(sendCommentToDsh)
+  bridge.setReferenceDroppedHandler((payload) => {
+    if (!cfg('bindDshRemoval', true)) return false
+    const file = String((payload && payload.path) || '')
+    const ok = dropCopilotLineForMd(file)
+    log.appendLine(TAG + ' · dsh 删方块 ' + file.split('/').pop() + ' -> ' + (ok ? '已删 Copilot 那行（页面图钉应随之消失）' : '没找到对应那行（可能已经删了或改过）'))
+    return ok
+  })
 
   // ---------- A) chatSessions jsonl: fs-watcher only (event-driven, no poll) ----------
   function attachmentsOf(line) {
