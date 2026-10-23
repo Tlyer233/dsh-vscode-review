@@ -1,0 +1,1 @@
+client.js 里的 build 号必须等于 package.json 的 version（改版本时一起改，两处）：0.1.78
