@@ -21,7 +21,7 @@
    | **chip 插入后打字跑到那个文件里**(chip 不变、文件标签页自己弹出) | 不是光标问题:点 chip 被 0.1.58 拦截成"在 VS Code 打开",`showTextDocument` 不带 `preserveFocus` → 焦点进编辑器,后续按键全打进文件 | 0.1.24/0.1.68:普通点击打开文件**不抢焦点**(`openFile … (keepFocus)`);刚插完 chip 的 800ms 保护窗内点 chip 完全不打开(`[openfile] suppressed (insert-guard)`);要"打开并聚焦"用 **⌥/Alt+点击**。若日志里**没有**弹标签页却仍吞字,才轮到 dsh 0.2.1 `TextRefNode` 光标假设,看 `[caret]` 行 |
    | **plan 卡片「查看全文」只在 dsh 内部预览打开**(窄侧栏看不到) | 0.2.1 的 plan 是虚拟资源 `dsh-resource://plan[-review]/…`,不在盘上,`fileOpenTargetPath` 三种特征都认不到 | 0.1.68:认 `[data-plan-card]` 与 `*_reviewLink*` → fiber 取 `{callId, markdown, title}`(退资源 store / 预览 DOM)→ 扩展写 `~/.dsh/review/plans/plan-<sid>-<callId>.md` 并在编辑器聚焦打开;看 `[plan] kind=… tier=…` 与 `[planFile] wrote …` |
    | **plan 打开了但正文是乱的**(表格压成一行、`#`/代码块标记丢失) | 打开的是预览 `innerText`:待审 plan 正文在 fiber 里是 **`review.plan` 字符串**(ui-plan 用 `params.planReview.markdown = review.plan`),0.1.68 只认 `plan.markdown` 对象形 → 三级全空退 DOM。同屏还暴露 sid 为空(dsh ≥0.1.6 不再发布 `sessions.list.current`)与每次点击新建文件(Date.now 兜底) | 0.1.69/0.1.25:认字符串形 + `requestKey`;资源兜底按真实形态读 `source(addr).getSnapshot()`(只有 `status==="live"` 带 `value`);sid 三级(快照 `retainedBy.mainView` → 插入时挂的 `window.__dshrSessionId` → 路由);文件名改 `…-<标题 slug>-<sha1 前 8>` 内容寻址(重复点 = `[planFile] reused`);DOM 兜底在文件头声明"取自渲染文本"。排查:`[plan] … tier=dom` = 字段形没认到,`sid_src=` 说明 id 来源 |
-   | **集成浏览器元素批注按 Shift+Enter 没进 dsh** | 评论框是 VS Code **注入到页面里**的(workbench bundle 里搜不到它的 DOM),扩展只能走 CDP;VS Code 不是 `--remote-debugging-port=9223` 启动就够不着 | 0.1.26:新模块 `lib/browser-comment.js` 按 target 池连每个浏览器 tab,页内捕 Shift+Enter。排查:`[browser-comment] cdp=absent` = 没开 9223;`targets=0` = tab 没被认成 http(s) page;`comment label=… locate=label|size|smallest|near-label|no-label` = 元素靠哪一级反查;命令面板 `dsh: 元素批注状态 / 自检` 当场验 |
+   | **集成浏览器元素批注按 Shift+Enter 没进 dsh** | 评论框是 VS Code **注入到页面里**的(workbench bundle 里搜不到它的 DOM),扩展只能走 CDP;VS Code 不是 `--remote-debugging-port=9223` 启动就够不着 | 0.1.26:新模块 `lib/browser-comment.js` 按 target 池连每个浏览器 tab,页内捕 Shift+Enter。排查:`[browser-comment] cdp=absent` = 9223 没开（0.1.26 起 install.sh 已把 `remote-debugging-port` 写进 argv.json，Cmd+Q 一次即可，正常启动也生效）;`targets=0` = tab 没被认成 http(s) page;`comment label=… locate=label|size|smallest|near-label|no-label` = 元素靠哪一级反查;命令面板 `dsh: 元素批注状态 / 自检` 当场验 |
 3. **改哪边装哪边,版本必须递增**(服务端按 rev 缓存合并 bundle,同版本号重装=下发旧代码):
    只改 `dsh-review/client.js` → webview 右键 Reload;改 `index.js` → 侧栏 Restart dsh;改扩展 `dsh-review-vscode/**` → **Cmd+Q**(mac)/ **Ctrl+Q**(Linux)整重启,并 bump `dsh-review-vscode/package.json` 的 `version`——`install.sh` 的 `EXT_VER` 现在自动读它,不用再手改。装完重写 `~/.dsh/review/shadow/settings.json`(install.sh 会清空)。
 4. **验证**:hover/点击类 bug **不要用 ego-browser 复现**(CDP 合成鼠标事件 relatedTarget 失真,0.1.56 曾误判),以真实 VS Code webview + 扩展日志为准。
@@ -44,13 +44,14 @@ VS Code 内置浏览器（`workbench.action.browser.*`）的 **Comment on Elemen
 4. **`lib/dsh-browser.js`**：`sendRefsToDsh(refs, fallbackText, appendText)` 多一个 `appendText` 字段（老客户端忽略它，fallbackText 里已含全部信息，向后兼容）。
 5. **`dsh-review/client.js` 0.1.70**：`dshInsertRefs` 支持 `appendText` —— chip 插入成功后 **330ms**（等 300ms 的 caret 强制落位完成）再 `insertComposerText(comment + "\n")`，评论文字就落在 chip 之后；`mode==="text"` 时不动（fallback 已带）。
 6. **`extension.js`**：activate 里无条件 `startBrowserComment(...)`，开关由模块每轮 scan 自检 → **关掉开关不用重启**。
-7. 设置：`dshReview.browserComment.sendToDsh`(default true)、`dshReview.browserComment.includeOuterHTML`(default true)；install.sh 结尾提示 `code --remote-debugging-port=9223 <目录>`。
+7. 设置：`dshReview.browserComment.sendToDsh`(default true)、`dshReview.browserComment.includeOuterHTML`(default true)。
+8. **免启动参数**（用户明确拒绝每次 `code --remote-debugging-port=9223` 启动）：VS Code 1.142 的 argv.json schema 里有 `"remote-debugging-port": {type:"string"}`（workbench bundle 内与 `inspect`/`js-flags` 同段核实）→ install.sh 新增 `merge_cdp_port()` 写 `"remote-debugging-port": "9223"` 进 argv.json（首个 `{` 后插一行、**保留原注释**、写前备份 `.bak-<ts>`、已有则跳过）。效果：**Dock/图标正常启动就有 CDP**，只在装完那次 Cmd+Q。已在真实 `~/.vscode/argv.json` 副本上实测：插入位置正确、JSONC 仍可解析、二次运行幂等、备份 1 份。
 
 ### 探针（已做，13/13）
 `/tmp/browser_comment_probe.js` 把页内脚本原文抽出来（含模板转义还原）在手写假 DOM 上跑：安装幂等、Shift+Enter 拦截、payload 文本/label/outerHTML/祖先链/URL+尺寸、**普通 Enter 放过**、**用户自己页面的输入框不被劫持**、同名多元素按宽高消歧、`selftest()` 输出。扩展侧 `sendCommentToDsh` 走的是已上线的 element ref 通道，未新写插入逻辑。
 
-### 待你实测（CDP 前置，本轮唯一未验点）
-用 `code --remote-debugging-port=9223 <项目目录>` 重启 VS Code（会 kill 我，你来做），然后：命令面板 `dsh: 元素批注状态` 应显示 `connected≥1`；打开集成浏览器 → ⌥⌘C → 选元素写评论 → **Shift+Enter** → dsh 输入框出现 `element: span#…` chip + 评论一行；**Enter** 仍进 Copilot。日志前缀 `[browser-comment]`。
+### 待你实测（只需一次 Cmd+Q，之后正常启动）
+首版把 CDP 说成「每次都要 `code --remote-debugging-port=9223` 启动」，用户不接受（就要正常启动）→ 改成 argv.json 常驻。装完后：Cmd+Q 重启一次 → `curl -s http://127.0.0.1:9223/json/list` 应返回 target 列表 → 命令面板 `dsh: 元素批注状态` 显示 `connected≥1` → 集成浏览器里 ⌥⌘C 选元素写评论 → **Shift+Enter** → dsh 输入框出现 `element: span#…` chip + 评论一行；**Enter** 仍进 Copilot。日志前缀 `[browser-comment]`。若 curl 仍连不上（argv.json 不被该版本接受），备选是 jsonl 镜像（实测：未发送的评论**不落盘**，最近 30 分钟 workspaceStorage 里搜不到 `mv-pcie`，所以镜像只能在 Enter 发送后拿到，做不到按键即时）。
 
 ## dsh-review 0.1.69 + dsh-review-vscode 0.1.25 (2026-10-22, dsh 0.2.1-rc.2) — 待审 plan「查看全文」正文乱
 

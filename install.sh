@@ -92,6 +92,37 @@ PY
   echo "updated $file"
 }
 
+# 0.1.26: element comments (Shift+Enter -> dsh) and the element-context feature
+# speak CDP to the integrated browser, which needs a debug port. VS Code 1.142's
+# argv.json schema accepts "remote-debugging-port" (verified in the workbench
+# bundle next to "inspect"/"js-flags"), so writing it here gives CDP on a NORMAL
+# Dock/Finder launch — no launch flag, no alias. Takes effect on the next full
+# restart; the file is backed up the first time we touch it.
+merge_cdp_port() {
+  local file="$1"
+  local port="${CDP_PORT:-9223}"
+  [ -f "$file" ] || return 0
+  if grep -q '"remote-debugging-port"' "$file"; then
+    echo "remote-debugging-port already set in $file"
+    return 0
+  fi
+  cp "$file" "$file.bak-$(date +%Y%m%d%H%M%S)" 2>/dev/null || true
+  local tmp="${file}.tmp"
+  awk -v port="$port" '
+    BEGIN { done = 0 }
+    {
+      if (!done && index($0, "{") > 0) {
+        print
+        print "\t\"remote-debugging-port\": \"" port "\","
+        done = 1
+        next
+      }
+      print
+    }
+  ' "$file" > "$tmp" && mv "$tmp" "$file"
+  echo "set remote-debugging-port=$port in $file (需 Cmd+Q 重启后生效)"
+}
+
 # Keep extensions.json in sync with dsn.dsh-review-vscode.
 # copy: replace other versions of EXT_ID. vsix: leave catalog rows that still exist.
 sync_vscode_extension_catalog() {
@@ -413,17 +444,21 @@ echo "=== [2/4] Install VS Code extension ==="
 install_vscode_extension
 prune_stale_dsh_keybindings
 
-echo "=== [3/4] Enable editorInsets in VS Code argv.json ==="
+echo "=== [3/4] Enable editorInsets + CDP port in VS Code argv.json ==="
 merge_argv "$HOME/.vscode/argv.json"
+merge_cdp_port "$HOME/.vscode/argv.json"
 case "$(uname -s)" in
   Darwin)
     merge_argv "$HOME/Library/Application Support/Code/argv.json"
+    merge_cdp_port "$HOME/Library/Application Support/Code/argv.json"
     if [ -d "$HOME/Library/Application Support/Code - Insiders" ]; then
       merge_argv "$HOME/Library/Application Support/Code - Insiders/argv.json"
+      merge_cdp_port "$HOME/Library/Application Support/Code - Insiders/argv.json"
     fi
     ;;
   Linux)
     merge_argv "${XDG_CONFIG_HOME:-$HOME/.config}/Code/argv.json"
+    merge_cdp_port "${XDG_CONFIG_HOME:-$HOME/.config}/Code/argv.json"
     ;;
 esac
 
@@ -434,8 +469,9 @@ echo "=== Done ==="
 echo "1. Completely quit VS Code (Cmd+Q), then reopen from Dock."
 echo "2. Restart dsh web (or use the sidebar Restart button)."
 echo "3. Shadow store was wiped (repo.git + pending/*.json). Unreviewed diffs are gone."
-echo "3b. 集成浏览器元素批注 (Shift+Enter -> dsh) 需要 CDP，请用以下命令启动 VS Code:"
-echo "    code --remote-debugging-port=9223 <项目目录>   # 与「元素上下文」功能同一个 flag"
+echo "3b. 元素批注(Shift+Enter→dsh)需要 CDP：已把 \"remote-debugging-port\": \"9223\" 写进 argv.json，"
+echo "    Cmd+Q 重启后，以后照正常方式（Dock/图标）启动即可，无需命令行参数。"
+echo "    验证: curl -s http://127.0.0.1:9223/json/list ；命令面板 dsh: 元素批注状态"
 echo "editorInsets argv.json id: $EXT_ID"
 echo "dsh-review is copied into ~/.dsh/profiles/web (source folder can be deleted)."
 echo "Re-run this script to upgrade both the dsh plugin and the VS Code extension."
