@@ -1315,7 +1315,7 @@ window.__ModuleLoader__.load({
         function postState(extra) {
           // 0.1.82: only the scope-request message has ever reached the extension, so all
           // client-side events (tracked / dropped / request-received / removed) ride on it.
-          const msg = { type: "dshScopeRequest", build: "0.1.84", watching: Array.from(trackedRefs.keys()).slice(0, 3) };
+          const msg = { type: "dshScopeRequest", build: "0.1.85", watching: Array.from(trackedRefs.keys()).slice(0, 3) };
           try { Object.assign(msg, extra || {}); } catch (err) { /* noop */ }
           try { window.parent.postMessage(msg, "*"); } catch (err) { /* noop */ }
         }
@@ -1417,7 +1417,8 @@ window.__ModuleLoader__.load({
         };
         if (!window.__dshrRefWatch) {
           window.__dshrRefWatch = true;
-          setInterval(sweepDroppedRefs, 900);
+          // 0.1.85: event driven only (the user asked for no polling) — a chip can only
+          // disappear as a result of a DOM mutation, so the observer is sufficient.
           try { new MutationObserver(sweepDroppedRefs).observe(document.documentElement, { childList: true, subtree: true, characterData: true }); } catch (err) { /* noop */ }
         }
 
@@ -1601,7 +1602,7 @@ window.__ModuleLoader__.load({
             setTimeout(compactNativeStatsLine, 800);
             applyZoom();
             // Scope is owned by apply()-level listener; ask again in case early posts were dropped.
-            try { window.parent.postMessage({ type: "dshScopeRequest", build: "0.1.84", watching: Array.from(trackedRefs.keys()).slice(0, 3) }, "*"); } catch (err) { /* noop */ }
+            try { window.parent.postMessage({ type: "dshScopeRequest", build: "0.1.85", watching: Array.from(trackedRefs.keys()).slice(0, 3) }, "*"); } catch (err) { /* noop */ }
             return;
           }
           if (msg.type === "dshChromeState") {
@@ -4099,13 +4100,13 @@ window.__ModuleLoader__.load({
             msg.removeChips.forEach(function (nm) {
               let ok = false;
               try { ok = !!(window.__dshrRemoveChip && window.__dshrRemoveChip(nm)); } catch (err) { ok = false; }
-              try { window.parent.postMessage({ type: "dshScopeRequest", build: "0.1.84", watching: [], report: "捎带删方块: " + nm + " -> " + (ok ? "已删" : "没找到方块节点") }, "*"); } catch (err) { /* noop */ }
+              try { window.parent.postMessage({ type: "dshScopeRequest", build: "0.1.85", watching: [], report: "捎带删方块: " + nm + " -> " + (ok ? "已删" : "没找到方块节点") }, "*"); } catch (err) { /* noop */ }
             });
           }
           setVscodeScope(msg.paths, msg.rawPaths);
         }
         window.addEventListener("message", onScopeFromHost);
-        try { window.parent.postMessage({ type: "dshScopeRequest", build: "0.1.84", watching: Array.from(trackedRefs.keys()).slice(0, 3) }, "*"); } catch (err) { /* noop */ }
+        try { window.parent.postMessage({ type: "dshScopeRequest", build: "0.1.85", watching: Array.from(trackedRefs.keys()).slice(0, 3) }, "*"); } catch (err) { /* noop */ }
         const timer = setInterval(checkWorkbenchScope, 800);
         return function () {
           clearInterval(timer);

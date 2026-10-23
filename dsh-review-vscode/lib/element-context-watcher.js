@@ -63,6 +63,32 @@ function startElementContextWatcher(context, log) {
   let lastScanLog = 0
   let lastSelfDelete = 0
   let lastCommentFile = ''
+  // 0.1.70: which (tag#id, 批注文字) pairs already have an md file. Loaded once at startup
+  // (one readdir + parse of the comment dir) and kept in memory — no polling. A composer
+  // reference that matches one of these is restored history; one that does not is brand new
+  // and must be delivered even if it arrived inside the very first snapshot (the Copilot
+  // panel opening late used to swallow exactly that comment: 基线：1 条旧引用 + delta=0).
+  const deliveredKeys = new Set()
+  function keyOf(labelOrTok, comment) {
+    const tok = String(labelOrTok || '').split(/\s+/)[0]
+    const tm = /^([a-z][a-z0-9]*)/i.exec(tok)
+    const im = /#([^.\s[]+)/.exec(tok)
+    return (tm ? tm[1].toLowerCase() : '') + (im ? '#' + im[1] : '') + '\u241f' + String(comment || '').replace(/\s+/g, ' ').trim()
+  }
+  function loadDeliveredKeys() {
+    const dir = bcfg('commentDir', '/tmp/dsh-comments')
+    let names = []
+    try { names = fs.readdirSync(dir).filter((f) => f.endsWith('.md')) } catch { return }
+    for (const f of names) {
+      try {
+        const md = fs.readFileSync(require('node:path').join(dir, f), 'utf8')
+        const lm = /^#\s*元素批注\s*—\s*(.+)$/m.exec(md)
+        const cm = /\n##\s*批注\s*\n+([\s\S]*?)(?:\n\n|```|$)/.exec(md)
+        if (lm && cm) deliveredKeys.add(keyOf(lm[1], cm[1]))
+      } catch { /* skip one bad file */ }
+    }
+  }
+  loadDeliveredKeys()
   const deliveredFiles = new Map() // composer key -> [md paths]
   let lastNoDocLog = 0
 
@@ -579,13 +605,11 @@ function startElementContextWatcher(context, log) {
     // MAX_DELTA refs at once is the session restoring its history, not new comments.
     const MAX_DELTA = 3
     const prev = inputBaseline.get(id)
-    if (!prev) {
-      inputBaseline.set(id, next)
-      log.appendLine(TAG + ' · chat 输入框基线：' + found.length + ' 条旧引用（不送 dsh）')
-      return
-    }
+    const first = !prev
+    inputBaseline.set(id, next)
     let deltaSeen = 0
-    for (const f of found) { if (!prev.has(f.key)) deltaSeen++ }
+    for (const f of found) { if (!prev || !prev.has(f.key)) deltaSeen++ }
+    if (first) log.appendLine(TAG + ' · chat 输入框首快照：' + found.length + ' 条，其中没落过盘的才送 dsh')
     try {
       if (Date.now() - lastScanLog > 1200) {
         lastScanLog = Date.now()
@@ -594,12 +618,10 @@ function startElementContextWatcher(context, log) {
     } catch { /* noop */ }
     let delta = 0
     for (const f of found) { if (f.nth > (prev instanceof Map ? (prev.get(f.key) || 0) : 0)) delta++ }
-    if (delta > MAX_DELTA) {
-      inputBaseline.set(id, next)
+    if (!first && delta > MAX_DELTA) {
       log.appendLine(TAG + ' · 一次出现 ' + delta + ' 条新引用（像是会话恢复），只更新基线不送 dsh')
       return
     }
-    inputBaseline.set(id, next)
     // 0.1.58: reverse binding. key -> md files we delivered for it, so when the count of a
     // key drops (the user deleted the pin / the Copilot line) we can tell dsh to drop the
     // matching chip. Suppressed for 1.5s around our own deletions to avoid echo loops.
@@ -623,8 +645,12 @@ function startElementContextWatcher(context, log) {
     for (const f of found) {
       const before = prev instanceof Map ? (prev.get(f.key) || 0) : 0
       const done = handled.get(f.key) || 0
-      if (f.nth <= before + done) continue
+      const dkey = keyOf(f.label, f.comment)
+      // first snapshot: deliver only references that never got an md file (restored history
+      // is skipped by the disk check, a late-opened panel's live comment is not)
+      if (first ? deliveredKeys.has(dkey) : f.nth <= before + done) continue
       handled.set(f.key, done + 1)
+      deliveredKeys.add(dkey)
       fresh++
       const idm = /#([A-Za-z0-9_.:-]{1,80})/.exec(f.label)
       const payload = {
