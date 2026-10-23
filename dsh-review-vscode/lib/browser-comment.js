@@ -455,11 +455,11 @@ const pendingRaw = new Map() // 0.1.84: DOM-domain replies, resolved whole (not 
       // aria-label="Element comment N: <body>" and title="<body>", so we read the text from
       // the pin itself instead of guessing which chat line it came from (hidden elements get
       // no pin, so line numbers never matched anyway).
-      const at = attrMap(n)
-      const label = String(at['aria-label'] || '')
+      const pat = attrMap(n)
+      const label = String(pat['aria-label'] || '')
       const lm = /Element comment\s*(\d+)\s*:\s*([\s\S]*)/.exec(label)
-      const num = lm ? lm[1] : (String(at['title'] || '') ? '' : (textOf(n) || '').slice(0, 4))
-      const body = (lm ? lm[2] : String(at['title'] || '')).trim().slice(0, 200)
+      const num = lm ? lm[1] : (String(pat['title'] || '') ? '' : (textOf(n) || '').slice(0, 4))
+      const body = (lm ? lm[2] : String(pat['title'] || '')).trim().slice(0, 200)
       const box = await cdpRequest(c, 'DOM.getBoxModel', { nodeId: n.nodeId }, 1200)
       const bm = box && box.model
       let at = '?', size = '?'
