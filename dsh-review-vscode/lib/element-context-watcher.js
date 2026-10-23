@@ -62,6 +62,7 @@ function startElementContextWatcher(context, log) {
   // scan logged nothing at all — which is why no [chip-watch] line ever appeared.
   let lastScanLog = 0
   let lastSelfDelete = 0
+  let lastRefs = []
   let lastCommentFile = ''
   // 0.1.70: which (tag#id, 批注文字) pairs already have an md file. Loaded once at startup
   // (one readdir + parse of the comment dir) and kept in memory — no polling. A composer
@@ -599,6 +600,7 @@ function startElementContextWatcher(context, log) {
     if (!text) return
     const REF_RE = /@([^\s@`\n]{3,120}?)\s+([^\n@]{2,400})/g
     const found = []
+    const orderedRefs = []
     const next = new Map() // key -> how many times it appears in this snapshot
     for (const m of text.matchAll(REF_RE)) {
       const label = m[1].trim()
@@ -610,6 +612,7 @@ function startElementContextWatcher(context, log) {
       // nothing reached dsh). A new comment always raises the count by one.
       const key = label + '\u241f' + comment
       next.set(key, (next.get(key) || 0) + 1)
+      orderedRefs.push({ label: String(labelTok).slice(0, 120), comment: String(comment).trim().slice(0, 200) })
       found.push({ key: key, label: label, comment: comment, nth: next.get(key) })
     }
     const id = String(input.uri)
@@ -620,6 +623,7 @@ function startElementContextWatcher(context, log) {
     // MAX_DELTA refs at once is the session restoring its history, not new comments.
     const MAX_DELTA = 3
     const prev = inputBaseline.get(id)
+    lastRefs = orderedRefs
     const first = !prev
     inputBaseline.set(id, next)
     let deltaSeen = 0
@@ -710,6 +714,16 @@ function startElementContextWatcher(context, log) {
             const phText = ph && typeof ph === 'object'
               ? '图钉宿主层子元素 ' + ph.children + ' 个' + (ph.hostText ? '，文字=' + JSON.stringify(String(ph.hostText).slice(0, 24)) : '（空）')
               : '宿主层=' + JSON.stringify(ph)
+            const cps = Array.isArray(st.commentPins) ? st.commentPins : []
+            // VS Code numbers the pins in the same order as the chat references (its own test
+            // plan), so pairing by number gives the annotation text for each pin.
+            const order = lastRefs.slice(0)
+            log.appendLine(TAG + ' · 页面图钉：' + cps.length + ' 个（封闭 shadow root ' + (st.roots || 0) + ' 个已抓到）' + (cps.length === 0 && !st.roots ? ' —— 页面需要刷新一次钩子才装上' : ''))
+            cps.forEach((x, ix) => {
+              const idx = /^[0-9]+$/.test(String(x.n)) ? Number(x.n) - 1 : ix
+              const ref = order[idx]
+              log.appendLine(TAG + ' ·   图钉 #' + (x.n || ix + 1) + ' @' + x.at + ' ' + x.size + (ref ? ' ｜ 批注：@' + ref.label + ' ' + ref.comment : ' ｜ 批注：（第 ' + (idx + 1) + ' 条对不上）'))
+            })
             const pc = Array.isArray(st.pinCandidates) ? st.pinCandidates : []
             log.appendLine(TAG + ' · 页面图钉扫描：按形状找到 ' + pc.length + ' 个疑似图钉 ｜ ' + phText + ' ｜ 其它覆盖层 ' + pins.length + ' 个 ｜ __vscode_helpers=' + String(st.helpers || '无').slice(0, 40))
             pc.slice(0, 6).forEach((x) => log.appendLine(TAG + ' ·   图钉 #' + x.n + ' @' + x.at + ' ' + x.size + ' class=' + x.cls))

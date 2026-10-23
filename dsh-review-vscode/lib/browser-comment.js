@@ -17,7 +17,7 @@ const bridge = require('./element-bridge')
 const CDP_PORT = 9223
 const TAG = '[browser-comment]'
 const PREFIX = '__DSH_BCC__'
-const VERSION = 'v8'
+const VERSION = 'v9'
 const RESCAN_MS = 2500
 
 async function fetchTargets(port) {
@@ -41,7 +41,7 @@ function isBrowserPage(t) {
  * without backticks because it lives inside a template literal here and ships as text.
  */
 const PROBE_JS = `(function () {
-  if (window.__dshProbe && window.__dshProbe.version === 'v8') return 'already'
+  if (window.__dshProbe && window.__dshProbe.version === 'v9') return 'already'
   if (window.__dshProbe) { try { delete window.__dshProbe } catch (e) { window.__dshProbe = null } } // 0.1.77: v8 replaced state(); the old guard kept the stale probe installed forever
   var CSS_KEYS = ['color', 'background-color', 'font-size', 'font-weight', 'font-family', 'line-height',
     'display', 'position', 'top', 'left', 'width', 'height', 'margin', 'padding', 'border', 'border-radius',
@@ -139,10 +139,30 @@ const PROBE_JS = `(function () {
   }
 
   window.__dshProbe = {
-    version: 'v8',
-    ping: function () { return 'v8 ' + location.href },
+    version: 'v9',
+    ping: function () { return 'v9 ' + location.href },
     state: function () {
-      var out = { url: location.href, title: document.title || '', pins: [], helpers: null, pickHost: null, helperSrc: '' }
+      var out = { url: location.href, title: document.title || '', pins: [], helpers: null, pickHost: null, helperSrc: '', commentPins: [], roots: 0 }
+      // 0.1.79: the element-comment pins live in a CLOSED shadow root (preload-browserView.js:
+      // div[data-vscode-pick-host].attachShadow({mode:'closed'})) — invisible to the page world
+      // and to CDP pierce. The bootstrap hook records every closed root into
+      // window.__dshShadowRoots, which is how we count and later click the real pins.
+      try {
+        var roots = window.__dshShadowRoots || []
+        out.roots = roots.length
+        for (var ri = 0; ri < roots.length; ri++) {
+          var rt = roots[ri]
+          if (!rt || !rt.querySelectorAll) continue
+          var ps = rt.querySelectorAll('.comment-pin')
+          for (var pi = 0; pi < ps.length && out.commentPins.length < 20; pi++) {
+            var pr = null
+            try { pr = ps[pi].getBoundingClientRect() } catch (e) {}
+            var num = ''
+            try { var nn = ps[pi].querySelector('.comment-pin-number'); num = nn ? String(nn.textContent || '').trim() : String(ps[pi].textContent || '').trim() } catch (e) {}
+            out.commentPins.push({ n: num, at: pr ? Math.round(pr.left) + ',' + Math.round(pr.top) : '?', size: pr ? Math.round(pr.width) + 'x' + Math.round(pr.height) : '?', bubbles: rt.querySelectorAll('.comment-pin-bubble').length })
+          }
+        }
+      } catch (e) { out.commentPins = 'ERR' }
       function walk(root, where) {
         var els = []
         try { els = Array.prototype.slice.call(root.querySelectorAll('*')) } catch (e) { return }
@@ -240,6 +260,22 @@ const PROBE_JS = `(function () {
   return 'installed'
 })()`
 
+// Runs before any page script on the next navigation: records closed shadow roots so the
+// pin layer becomes reachable. Pure CDP injection — no VS Code file is modified.
+const SHADOW_HOOK = \`(function () {
+  if (window.__dshShadowRoots) return 'dup'
+  window.__dshShadowRoots = []
+  var orig = Element.prototype.attachShadow
+  Element.prototype.attachShadow = function (init) {
+    var root = orig.call(this, init)
+    try {
+      if (init && init.mode === 'closed') { window.__dshShadowRoots.push(root); try { Object.defineProperty(this, '__dshClosedRoot', { value: root, configurable: true }) } catch (e) {} }
+    } catch (e) {}
+    return root
+  }
+  return 'ok'
+})()\`
+
 function startBrowserComment(opts) {
   const { context, log } = opts
   let WS
@@ -274,6 +310,10 @@ function startBrowserComment(opts) {
     ws.onopen = () => {
       log.appendLine(TAG + ' attached ' + String(target.id).slice(0, 8) + ' ' + String(target.url).slice(0, 70))
       ws.send(JSON.stringify({ id: 1, method: 'Runtime.enable', params: {} }))
+      // 0.1.79: the hook must exist before VS Code's own preload creates its closed shadow
+      // host, so it goes in as a new-document script (page reloads pick it up automatically).
+      ws.send(JSON.stringify({ id: 3, method: 'Page.enable', params: {} }))
+      ws.send(JSON.stringify({ id: 4, method: 'Page.addScriptToEvaluateOnNewDocument', params: { source: SHADOW_HOOK } }))
       ws.send(JSON.stringify({
         id: 2, method: 'Runtime.evaluate',
         params: { expression: PROBE_JS, returnByValue: true, timeout: 5000 },
