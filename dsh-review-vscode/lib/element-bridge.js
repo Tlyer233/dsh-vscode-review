@@ -62,6 +62,21 @@ function browserPageUrl() {
   try { return pageUrlProvider ? String(pageUrlProvider() || '') : '' } catch { return '' }
 }
 
+/**
+ * 0.1.49: the watcher needs the element behind a native "@span#x" reference, and only
+ * browser-comment.js holds CDP connections to the page. One provider, same one-way bridge
+ * pattern (no import cycle): the module registers probeElement(url, query), the watcher
+ * calls it and merges the answer into the markdown.
+ */
+let elementProbe = null
+function setElementProbe(fn) {
+  elementProbe = typeof fn === 'function' ? fn : null
+}
+async function probeElement(url, query) {
+  if (!elementProbe) return null
+  try { return await elementProbe(url, query) } catch { return null }
+}
+
 function setDismissPrompt(fn) {
   handlers.dismissPrompt = typeof fn === 'function' ? fn : null
 }
@@ -90,7 +105,7 @@ async function deliverBrowserComment(payload) {
   }
 }
 
-module.exports = { nativeCommentPayload, setPageUrlProvider, browserPageUrl, setDismissPrompt, dismissPrompt, setBrowserCommentHandler, deliverBrowserComment, setOpenGuard, openGuarded }
+module.exports = { nativeCommentPayload, setElementProbe, probeElement, setPageUrlProvider, browserPageUrl, setDismissPrompt, dismissPrompt, setBrowserCommentHandler, deliverBrowserComment, setOpenGuard, openGuarded }
 
 async function dismissPrompt() {
   if (!handlers.dismissPrompt) return { ok: false, why: 'no-handler' }

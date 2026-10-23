@@ -148,6 +148,10 @@ function startElementContextWatcher(context, log) {
     if (p.selector) bits.push('- CSS 定位: `' + String(p.selector) + '`')
     if (Array.isArray(p.ancestors) && p.ancestors.length) bits.push('- 祖先链: ' + p.ancestors.join(' > '))
     if (p.innerText) bits.push('- 元素文本: ' + String(p.innerText).replace(/\s+/g, ' ').trim())
+    if (p.computed && Object.keys(p.computed).length) {
+      const css = Object.keys(p.computed).filter((k) => p.computed[k] && p.computed[k] !== 'auto' && p.computed[k] !== 'normal')
+      if (css.length) bits.push('- 计算样式: ' + css.map((k) => k + '=' + p.computed[k]).join('; '))
+    }
     bits.push('', '## 批注', '', String(p.text || '').trim())
     if (bcfg('includeOuterHTML', true) && p.outerHTML) bits.push('', '```html', String(p.outerHTML), '```')
     if (p.attributes && Object.keys(p.attributes).length) {
@@ -467,7 +471,33 @@ function startElementContextWatcher(context, log) {
         innerText: '', outerHTML: '', bounds: { x: 0, y: 0, width: 0, height: 0 },
       }
       log.appendLine(TAG + ' · 原生批注 -> dsh label=' + f.label + ' chars=' + f.comment.length + (hint ? ' (元素文档触发)' : ' (输入框变更)'))
-      void sendCommentToDsh(payload)
+      // 0.1.49: the composer only tells us "@<element> <text>". Ask the connected page for
+      // the rest (outerHTML / attributes / ancestors / size / computed CSS) over CDP, so the
+      // markdown is as rich as it ever was without our own in-page UI.
+      void (async () => {
+        const bits = await bridge.probeElement(payload.url || '', f.label)
+        if (bits && bits.ok) {
+          payload.label = bits.label || payload.label
+          payload.tag = bits.tag || payload.tag
+          payload.id = bits.id || payload.id
+          payload.classes = bits.classes || []
+          payload.attributes = bits.attributes || {}
+          payload.ancestors = bits.ancestors || []
+          payload.selector = bits.selector || ''
+          payload.innerText = bits.innerText || ''
+          payload.outerHTML = bits.outerHTML || ''
+          payload.computed = bits.computed || null
+          payload.bounds = bits.bounds || payload.bounds
+          payload.size = bits.bounds ? (bits.bounds.width + 'x' + bits.bounds.height) : ''
+          payload.url = bits.url || payload.url
+          payload.title = bits.title || payload.title
+          log.appendLine(TAG + ' · 元素详情已补齐 label=' + payload.label + ' html=' + String(payload.outerHTML).length +
+            ' css=' + Object.keys(payload.computed || {}).length + ' anc=' + payload.ancestors.length)
+        } else {
+          log.appendLine(TAG + ' · 元素详情没拿到（探针没连上或元素已经变了）label=' + f.label)
+        }
+        void sendCommentToDsh(payload)
+      })()
     }
     if (hint && fresh === 0) log.appendLine(TAG + ' · 元素文档打开但输入框里没有新引用（可能已被抄走）')
   }

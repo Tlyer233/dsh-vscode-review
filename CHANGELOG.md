@@ -44,6 +44,22 @@
 - 版本说明:本修复与「元素批注」同日开发,原报 0.1.70/0.1.26 与批注功能撞号,rebase 后改号 0.1.71/0.1.28
 
 
+## dsh-review 0.1.71 + dsh-review-vscode 0.1.49 (2026-10-23) — 删掉右下角 `dsh ✎` 整条路；页内只留「元素探针」，原生批注的 md 补全 HTML/CSS/尺寸/祖先链
+
+### 用户决定
+「要, 要全! 然后把右下角的 dsh ✎ 的相关功能删除, 那条路已经完全没有意义了」——原生 ⌥⌘C 已经能进 dsh（0.1.48 实测），自建浮层就是重复品。
+
+### 改动
+- `lib/browser-comment.js` **整文件重写**（712 → 约 300 行）：页内不再有按钮 / pick 模式 / 就地输入框 / 图钉 / 卡片，只注入 `window.__dshProbe = { version, ping, lookup(query) }`。`lookup` 支持三种找法：CSS 选择器 → 标签首段（`@span#x 文字` 里的 `span#x`）→ 全页按 `tag#id.cls W × H` 文案比对（上限 4000 节点）。返回 `{ok,label,tag,id,classes,attributes,ancestors,selector,innerText||textContent,outerHTML(≤4000+截断标记),bounds,computed(21 项计算样式),url,title}`。扩展侧 `probeElement(url, query)` 走 `Runtime.evaluate` 的 RPC（id 从 401 起，`pending` 表回收，3s 超时返回 null），并保留 `dsh: 元素批注状态` / `dsh: 元素批注自检`（后者现在探 `body`）。
+- `element-bridge.js`：新增 `setElementProbe / probeElement`（单向桥，同 pageUrlProvider 套路，无循环依赖）。
+- `element-context-watcher.js`：`scanNativeComments` 送出前先 `await bridge.probeElement(url, label)` 把 bits 合进 payload（label 用页内实算的），日志 `· 元素详情已补齐 label=… html=… css=… anc=…`，拿不到就记 `· 元素详情没拿到（探针没连上或元素已经变了）`；`commentMarkdown` 多一行 `- 计算样式: color=…; font-size=…`。
+- 设置文案：`dshReview.browserComment.sendToDsh` 现在描述的是「连接页面做元素详情」，不再是自建浮层。
+
+### 验证
+- 页内脚本 jsdom 探针 **16/16**（安装/幂等/ping、按 `#id`、按标签文案、裸 `span`、缺失返回 ok:false、bounds 实测 366×20、标签格式 `span#mv-temp.st-metric__label 366 × 20`、祖先链/类名/文本、计算样式 ≥10 项、url+title、5000 字符 outerHTML 截断、**页面里没有遗留 UI 节点**）。
+- 已安装 0.1.49 的文件管道 **8/8**（命名含 nid、update 只改同一文件、未知 nid 被拒、delete 删文件、日志三态）。
+- 「详情补齐」这段只在 composer 真实路径上跑（本测试直接调 deliver 不经过它），判据在日志里：批一条后应出现 `· 元素详情已补齐 …`，md 里应能看到 `- 尺寸:` / `- 计算样式:` / ```html 块。
+
 ## dsh-review 0.1.71 + dsh-review-vscode 0.1.47–0.1.48 (2026-10-23) — 原生 ⌥⌘C 批注正式进 dsh（用户实测通过）
 
 ### 决定性证据（用户贴的日志）
