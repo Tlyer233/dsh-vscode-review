@@ -2,7 +2,7 @@
   "name": "dsh-review-vscode",
   "displayName": "dsh review — inline diff + dsh sidebar",
   "description": "Inline review (shadow/pending) + dsh webview sidebar",
-  "version": "0.1.53",
+  "version": "0.1.54",
   "publisher": "dsn",
   "engines": {
     "vscode": "^1.85.0"
@@ -24,115 +24,119 @@
   "contributes": {
     "commands": [
       {
-        "command": "dshReview.elementWatcherPing",
-        "title": "dsh: element watcher ping (test)"
-      },
-      {
-        "command": "dshReview.dumpDocs",
-        "title": "dsh: dump open documents (test)"
-      },
-      {
-        "command": "dshReview.elementStorageProbe",
-        "title": "dsh: element storage probe (test)"
-      },
-      {
-        "command": "dshReview.cdpChipDump",
-        "title": "dsh: CDP chip dump (test)"
-      },
-      {
-        "command": "dshReview.testAutoClose",
-        "title": "dsh: test auto-close untitled tab"
-      },
-      {
-        "command": "dshReview.testAutoClose2",
-        "title": "dsh: test revert-then-close untitled tab"
-      },
-      {
-        "command": "dshReview.testAutoClose3",
-        "title": "dsh: test save-to-tmp-close-untitled tab"
-      },
-      {
-        "command": "dshReview.testAutoClose4",
-        "title": "dsh: test preview-mode-close-untitled tab"
-      },
-      {
-        "command": "dshReview.cdpPing",
-        "title": "dsh: CDP ping (liveness check)"
-      },
-      {
-        "command": "dshReview.browserComment.status",
-        "title": "dsh: 元素批注状态 / browser comment status"
-      },
-      {
-          "command": "dshReview.dumpDocs",
-          "title": "dsh: 列出当前打开的文档（排障用）"
-        },
-        {
-        "command": "dshReview.browserComment.selftest",
-        "title": "dsh: 元素批注自检（先聚焦评论框再运行）"
-      },
-      {
-        "command": "dshReview.acceptAll",
-        "title": "全部接受",
-        "icon": {
-          "light": "media/dsh-accept.svg",
-          "dark": "media/dsh-accept.svg"
-        }
-      },
-      {
-        "command": "dshReview.rejectAll",
-        "title": "全部撤回",
-        "icon": {
-          "light": "media/dsh-reject.svg",
-          "dark": "media/dsh-reject.svg"
-        }
-      },
-      {
         "command": "dshReview.openDshSidebar",
-        "title": "dsh: Toggle dsh panel"
-      },
-      {
-        "command": "dshReview.sendSelectionToDsh",
-        "title": "dsh: Send editor selection"
-      },
-      {
-        "command": "dshReview.sendTerminalSelectionToDsh",
-        "title": "dsh: Send terminal selection"
-      },
-      {
-        "command": "dshReview.reloadSidebar",
-        "title": "dsh: Reload sidebar"
+        "category": "dsh",
+        "title": "打开 / 切换 dsh 侧栏"
       },
       {
         "command": "dshReview.restartDsh",
-        "title": "dsh: Restart dsh",
-        "icon": "$(debug-restart)"
-      },
-      {
-        "command": "dshReview.stopDsh",
-        "title": "dsh: Stop dsh",
-        "icon": "$(debug-stop)"
+        "category": "dsh",
+        "title": "重启 dsh"
       },
       {
         "command": "dshReview.restartDshProxy",
-        "title": "dsh: Restart dsh (proxy)",
-        "icon": {
-          "light": "media/dsh-refresh-proxy.svg",
-          "dark": "media/dsh-refresh-proxy.svg"
-        }
+        "category": "dsh",
+        "title": "重启 dsh（走代理）"
       },
       {
-        "command": "dshReview.restartDshBili",
-        "title": "dsh: Restart dsh (bili)",
-        "icon": "$(zap)"
+        "command": "dshReview.stopDsh",
+        "category": "dsh",
+        "title": "停止 dsh"
       },
       {
         "command": "dshReview.killDshJob",
-        "title": "dsh: Kill dsh job"
+        "category": "dsh",
+        "title": "停止 dsh 后台任务"
+      },
+      {
+        "command": "dshReview.browserComment.status",
+        "category": "dsh",
+        "title": "元素批注：看页面连接状态"
+      },
+      {
+        "command": "dshReview.dumpDocs",
+        "category": "dsh",
+        "title": "排障：列出当前打开的文档"
+      },
+      {
+        "command": "dshReview.sendSelectionToDsh",
+        "category": "dsh",
+        "title": "把选中的代码发给 dsh"
+      },
+      {
+        "command": "dshReview.sendTerminalSelectionToDsh",
+        "category": "dsh",
+        "title": "把终端选中的内容发给 dsh"
       },
       {
         "command": "dshReview.sendFileToDsh",
-        "title": "Send to dsh (insert reference)"
+        "category": "dsh",
+        "title": "插入文件到 dsh 输入框"
+      },
+      {
+        "command": "dshReview.acceptAll",
+        "category": "dsh",
+        "title": "全部接受"
+      },
+      {
+        "command": "dshReview.rejectAll",
+        "category": "dsh",
+        "title": "全部撤回"
+      },
+      {
+        "command": "dshReview.reloadSidebar",
+        "category": "dsh",
+        "title": "重载 dsh 侧栏"
+      },
+      {
+        "command": "dshReview.restartDshBili",
+        "category": "dsh",
+        "title": "重启 dsh（bili 环境）"
+      },
+      {
+        "command": "dshReview.browserComment.selftest",
+        "category": "dsh",
+        "title": "元素批注：探针自检（排障）"
+      },
+      {
+        "command": "dshReview.elementWatcherPing",
+        "category": "dsh",
+        "title": "排障：元素监听心跳"
+      },
+      {
+        "command": "dshReview.elementStorageProbe",
+        "category": "dsh",
+        "title": "排障：元素存储探测"
+      },
+      {
+        "command": "dshReview.cdpChipDump",
+        "category": "dsh",
+        "title": "排障：CDP 元素 chip 快照"
+      },
+      {
+        "command": "dshReview.cdpPing",
+        "category": "dsh",
+        "title": "排障：CDP 连通性"
+      },
+      {
+        "command": "dshReview.testAutoClose",
+        "category": "dsh",
+        "title": "排障：自动关闭测试 1"
+      },
+      {
+        "command": "dshReview.testAutoClose2",
+        "category": "dsh",
+        "title": "排障：自动关闭测试 2"
+      },
+      {
+        "command": "dshReview.testAutoClose3",
+        "category": "dsh",
+        "title": "排障：自动关闭测试 3"
+      },
+      {
+        "command": "dshReview.testAutoClose4",
+        "category": "dsh",
+        "title": "排障：自动关闭测试 4"
       }
     ],
     "configuration": {
@@ -252,6 +256,18 @@
     "menus": {
       "commandPalette": [
         {
+          "command": "dshReview.sendSelectionToDsh",
+          "when": "editorHasSelection"
+        },
+        {
+          "command": "dshReview.sendTerminalSelectionToDsh",
+          "when": "terminalTextSelected"
+        },
+        {
+          "command": "dshReview.sendFileToDsh",
+          "when": "filesExplorerFocus && listFocus"
+        },
+        {
           "command": "dshReview.acceptAll",
           "when": "false"
         },
@@ -264,16 +280,44 @@
           "when": "false"
         },
         {
-          "command": "dshReview.sendSelectionToDsh",
-          "when": "editorHasSelection"
+          "command": "dshReview.restartDshBili",
+          "when": "false"
         },
         {
-          "command": "dshReview.sendTerminalSelectionToDsh",
-          "when": "terminalTextSelected"
+          "command": "dshReview.browserComment.selftest",
+          "when": "false"
         },
         {
-          "command": "dshReview.sendFileToDsh",
-          "when": "filesExplorerFocus && listFocus"
+          "command": "dshReview.elementWatcherPing",
+          "when": "false"
+        },
+        {
+          "command": "dshReview.elementStorageProbe",
+          "when": "false"
+        },
+        {
+          "command": "dshReview.cdpChipDump",
+          "when": "false"
+        },
+        {
+          "command": "dshReview.cdpPing",
+          "when": "false"
+        },
+        {
+          "command": "dshReview.testAutoClose",
+          "when": "false"
+        },
+        {
+          "command": "dshReview.testAutoClose2",
+          "when": "false"
+        },
+        {
+          "command": "dshReview.testAutoClose3",
+          "when": "false"
+        },
+        {
+          "command": "dshReview.testAutoClose4",
+          "when": "false"
         }
       ],
       "editor/title": [
