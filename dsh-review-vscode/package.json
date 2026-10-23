@@ -2,7 +2,7 @@
   "name": "dsh-review-vscode",
   "displayName": "dsh review — inline diff + dsh sidebar",
   "description": "Inline review (shadow/pending) + dsh webview sidebar",
-  "version": "0.1.28",
+  "version": "0.1.29",
   "publisher": "dsn",
   "engines": {
     "vscode": "^1.85.0"
@@ -201,12 +201,17 @@
         "dshReview.browserComment.sendToDsh": {
           "type": "boolean",
           "default": true,
-          "markdownDescription": "集成浏览器「Comment on Elements」批注: **Shift+Enter** 把「元素 + 评论」送进 dsh 输入框（Enter 仍照旧进 Copilot）。关闭 = 完全不注入不监听，Shift+Enter 恢复 VS Code 原生行为。需要 VS Code 以 `--remote-debugging-port=9223` 启动。Send integrated-browser element comments to the dsh composer on Shift+Enter (Enter still goes to Copilot)."
+          "markdownDescription": "集成浏览器元素批注: 在每个页面右下角注入 **dsh ✎** 按钮 → 点选元素 → 就地弹批注框 → **Enter** 直接把「元素 + 批注」写成 md 文件并在 dsh 输入框插一个文件 chip（不自动发送、不进 Copilot、不开编辑器）。关闭 = 完全不注入，页面保持原样。需要 CDP（install.sh 已把 `remote-debugging-port` 写进 argv.json，正常启动即可）。Inject the dsh annotation box into integrated-browser pages (Enter → md file + dsh file chip, Copilot untouched)."
+        },
+        "dshReview.browserComment.commentDir": {
+          "type": "string",
+          "default": "/tmp/dsh-comments",
+          "markdownDescription": "批注 md 文件的存放目录（`~` 会展开成家目录；Linux 上可改成如 `~/.dsh/review/comments`）。Folder that annotation markdown files are written into; dsh inserts a reference to that file."
         },
         "dshReview.browserComment.includeOuterHTML": {
           "type": "boolean",
           "default": true,
-          "markdownDescription": "批注 chip 内容里带元素 outerHTML / 祖先链（关掉则只带标签、URL 与尺寸）。Include the element's outerHTML and ancestor chain in the comment chip's payload."
+          "markdownDescription": "md 文件里带元素 outerHTML / 祖先链（关掉则只带标签、URL、尺寸与 CSS 定位）。Include the element's outerHTML and ancestor chain in the markdown file."
         }
       }
     },

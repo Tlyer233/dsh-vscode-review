@@ -9,6 +9,21 @@
  */
 const handlers = { dismissPrompt: null, browserComment: null }
 
+/**
+ * 0.1.28: opening a file *from dsh* (clicking a file chip) makes VS Code
+ * re-render its chat attachment, which re-opens the "Attached Element Context"
+ * doc a moment later — the watcher then pushed a stray `element` chip back into
+ * the dsh composer. dsh-browser arms this guard on every dsh-initiated open and
+ * the watcher ignores element-doc events while it is live.
+ */
+let openGuardUntil = 0
+function setOpenGuard(ms) {
+  openGuardUntil = Date.now() + Math.max(0, Number(ms) || 0)
+}
+function openGuarded() {
+  return Date.now() < openGuardUntil
+}
+
 function setDismissPrompt(fn) {
   handlers.dismissPrompt = typeof fn === 'function' ? fn : null
 }
@@ -35,7 +50,7 @@ async function deliverBrowserComment(payload) {
   }
 }
 
-module.exports = { setDismissPrompt, dismissPrompt, setBrowserCommentHandler, deliverBrowserComment }
+module.exports = { setDismissPrompt, dismissPrompt, setBrowserCommentHandler, deliverBrowserComment, setOpenGuard, openGuarded }
 
 async function dismissPrompt() {
   if (!handlers.dismissPrompt) return { ok: false, why: 'no-handler' }

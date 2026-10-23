@@ -43,7 +43,27 @@
 - **实测提醒**:RustDesk cliprdr 会清 `/tmp` 旧图(09-31 那张 09:36 已不在),历史 chip 点开 missing 属正常
 - 版本说明:本修复与「元素批注」同日开发,原报 0.1.70/0.1.26 与批注功能撞号,rebase 后改号 0.1.71/0.1.28
 
-## dsh-review 0.1.70 + dsh-review-vscode 0.1.26 (2026-10-23) — 新功能：集成浏览器「元素批注」→ dsh 输入框
+
+## dsh-review 0.1.71 + dsh-review-vscode 0.1.29 (2026-10-23) — 批注改成「自建就地浮层」+ 修「点文件 chip 反而冒出 element chip」
+### 为什么推翻 0.1.26 的「拦 VS Code 评论框」（实测，不是猜）
+用户开着评论框输入 `998877` 的 75 秒里，我把 9223 暴露的**全部 4 个 target**（Strata 页、workbench、2 个 iframe）每 1.5s 扫一遍（含 shadowRoot 与 contentDocument 递归）：没有任何 target 节点数变化（页面 505→505、workbench 1193 不变）、**没有任何 DOM 含 `998877`**；workbench 里对框所在坐标 `elementFromPoint` = `div.browser-placeholder-screenshot`，`Page.captureScreenshot` 里根本没有评论框；`/json/list` 与 `Target.getTargets` 都固定 7 条、框开着也不新增 target。
+⇒ 集成浏览器内容与评论浮层都在 **agent host 侧的独立 native view**，CDP 只覆盖主窗口 ⇒ 拦不到按键也读不到文字；Copilot 输入框同层，一并读不到。磁盘上唯一的 browser 插件是老 `simple-browser`（7KB，只贡献 `simpleBrowser.show`），**没有可改的插件源码**。B 方案（发送后从 jsonl 镜像）被用户否决（必然先过 Copilot）→ 选 A：自建就地批注。
+
+### 实现（用户在 AskUserQuestion 定的落点：/tmp 文件 + 一个文件 chip、不跳 Copilot）
+1. `lib/browser-comment.js` **v2 重写页内脚本**：shadow-root host 挂 `<html>`（SPA 换 body 会自动重挂）→ 右下角 `dsh ✎` → pick 模式（`mouseover` 画 outline、`click` 定元素、点自己 UI 不误选）→ **就地**在元素右侧弹面板（放不下自动翻边/居中），pill 文案就是 VS Code 那种 `span#mv-vram.st-metric__value 366 × 32`，下接 textarea + `[+]` + 提示；**Enter 提交 / Shift+Enter 换行 / Esc 取消**；提交后保留元素清空文字以便连续批注。回传 `{text,label,url,title,size,tag,id,classes,attributes,ancestors,selector,innerText,outerHTML(≤4000),bounds}`；dsh 自己 GUI 的页面跳过注入。
+2. `lib/element-context-watcher.js`：`commentMarkdown()`（标题=元素标签；URL/尺寸/CSS 定位/祖先链/元素文本；`## 批注` 正文；```html 块；属性行）+ `sendCommentToDsh()` 写 **`/tmp/dsh-comments/comment-<日期-时间>-<slug>-<4位随机>.md`** → `sendRefsToDsh([{kind:'file', path}])` → dsh 走**原生文件引用**（不再有 element chip、不开 untitled 文档、不弹保存）；写文件失败才退回 `kind:'element'`。
+3. 设置：新增 `dshReview.browserComment.commentDir`（默认 `/tmp/dsh-comments`，`~` 展开；Linux 可指 `~/.dsh/review/comments`），`sendToDsh` 描述改为自建按钮，`includeOuterHTML` 保留。
+4. **探针 23/23**（`/tmp/browser_comment_probe_v2.js`，jsdom 真 DOM，`getBoundingClientRect` 用 `__rect` 覆写补布局）：安装/幂等/换 body 重挂、pick→pill 文案与就地定位、Enter 提交 + payload 全字段、连续两条、Shift+Enter 不提交、Esc 取消、空文不提交、点自己 UI 不误选、`[+]` 同样提交、dsh GUI 跳过。**顺带抓到真 bug**：面板上 `stopPropagation` 用捕获阶段会先截走事件，textarea 自己的 Enter 永远不触发（现象=「`[+]` 能提交、Enter 不动」）→ 改冒泡阶段。
+
+### 另一个 bug：点 dsh 文件 chip（文件确实打开了）反而插入 `element` chip
+原因：我们从 dsh 打开文件后，VS Code 会**重新生成**聊天附件的 `Attached Element Context` 文档；`element-context-watcher` 的 doc-open 路径把它当成「用户在 Copilot 点了元素 chip」→ 反手往 dsh 插一个 element 引用。9223 关着时这条链不响，argv.json 打开 CDP 后就暴露了。
+修：`element-bridge.js` 加 **open-guard**（`setOpenGuard/openGuarded`）；`dsh-browser.js` 的 `openFileFromDsh()` 每次打开后 `bridge.setOpenGuard(2500)` 并记 `+ open-guard 2500ms`；`handleElementDoc()` 在 guard 内忽略并记日志，另补 `alreadySent(name)` 180s 去重。排查：`[dsh] openFile … (keepFocus) + open-guard 2500ms` 后跟 `[element-context] · element doc ignored (open-guard, dsh 自己刚打开文件) name=…`。
+
+### 待你实测（改了扩展，需 Cmd+Q 一次）
+1. 浏览器页右下角出现 `dsh ✎` → 点它 → 高亮 → 点元素 → 就地弹框（pill=`span#… 366 × 32`）。2. 打字 → **Enter** → 日志 `[browser-comment] comment label=… chars=…` + `[element-context] [comment] wrote /tmp/dsh-comments/comment-….md -> dsh ok=true kind=file`，dsh 里只有**一个文件 chip**，Copilot 全程没动。3. 连两条 → 两行 chip，不自动发送。4. 点文件 chip → 文件在 VS Code 打开且**不再冒出 `element` chip**。5. 四处旧修复不回退（cmd+l/shift+cmd+l、chip 后打字、plan 查看全文、访达粘贴）。
+
+## dsh-review 0.1.70 + dsh-review-vscode 0.1.26 (2026-10-23) — 集成浏览器「元素批注」→ dsh 输入框（本节 Shift+Enter 方案已被 0.1.29 替换，保留作链路记录）
+
 
 ### 需求（用户两轮回答定稿）
 VS Code 内置浏览器（`workbench.action.browser.*`）的 **Comment on Elements**（⌥⌘C）里，**Enter 照旧进 Copilot**，**Shift+Enter 把「元素 + 评论」送进 dsh 输入框**（一个 element chip + 评论原文，不自动发送，可继续补总要求）。开关 `dshReview.browserComment.sendToDsh` **默认开**；关掉就完全不注入不监听，Shift+Enter 恢复 VS Code 原生行为。

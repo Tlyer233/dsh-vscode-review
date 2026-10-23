@@ -1,22 +1,27 @@
 'use strict'
 
 /**
- * Integrated-browser element comments -> dsh composer (Shift+Enter).
+ * Integrated-browser element annotations -> dsh (our own in-place comment box).
  *
- * VS Code's "Comment on Elements" (workbench.action.browser.addElementCommentToChat,
- * ⌥⌘C) injects its comment box INSIDE the page (the numbered pins and the input
- * are page DOM, not workbench DOM — verified: the workbench bundle has no such
- * widget classes, and issue #328518 describes pins "on the page"). So the only
- * extension-side way to read a comment is CDP into that page, the same channel
- * cdp-element-source.js already uses for the chat pane.
+ * Why our own box — measured on VS Code 1.142, not guessed: the built-in
+ * "Comment on Elements" box is unreachable. 9223 only exposes the main window's
+ * 4 targets; with the box open and the user typing, all four kept the same node
+ * counts, the typed marker text appeared nowhere in their DOM (shadow roots and
+ * child frames included), elementFromPoint over the box returned
+ * `div.browser-placeholder-screenshot`, and a workbench screenshot did not show
+ * the box at all. Copilot's own input sits in that same unreachable layer. So we
+ * can neither intercept its keypress nor read its text; the only on-disk copy of
+ * a built-in comment is the chatSessions jsonl, which exists only after the
+ * comment has been sent to Copilot.
  *
- * Keys are split on purpose (user decision): Enter stays VS Code's (goes to
- * Copilot); Shift+Enter is ours -> the comment + the element land in the dsh
- * composer as one element chip plus the comment as plain text, unsent.
+ * So this module injects its own picker + in-place box into each browser page
+ * (CDP — the same channel already proven here: attached + injected). Submitting
+ * writes a markdown file and inserts ONE native file chip into the dsh composer:
+ * Copilot is never touched, no untitled doc, no Save prompt, no launch flag.
  *
- * Every browser page target gets its own connection, so all integrated-browser
- * tabs work, not just the first one. Requires VS Code started with
- * --remote-debugging-port=9223 (same prerequisite as the element-context feature).
+ * Needs CDP on 9223; install.sh writes "remote-debugging-port" into argv.json so
+ * a normal Dock launch works. dshReview.browserComment.sendToDsh=false removes
+ * the injection entirely and leaves the page untouched.
  */
 
 const vscode = require('vscode')
@@ -25,104 +30,128 @@ const http = require('node:http')
 const CDP_PORT = 9223
 const TAG = '[browser-comment]'
 const PREFIX = '__DSH_BCC__'
-const VERSION = 'v1'
+const VERSION = 'v2'
 const RESCAN_MS = 2500
 
-/** Page-side: capture Shift+Enter in VS Code's comment box and report the payload. */
+/** Page-side: floating trigger, element picker, in-place comment box. */
 const INJECT_JS = `(() => {
-  if (window.__dshBcc) { window.__dshBcc.ping = Date.now(); return 'already' }
+  const HOST_ID = '__dsh_bcc_host'
   const P = '${PREFIX}'
-  function log(o) { try { console.log(P + JSON.stringify(o)) } catch (e) { /* noop */ } }
-  function clamp(s, n) { s = String(s == null ? '' : s); return s.length > n ? s.slice(0, n) + '…' : s }
+  const seen = window.__dshBcc
+  if (seen) {
+    seen.ping = Date.now()
+    // SPA navigations can replace <body>; re-attach if our host got dropped.
+    if (seen.host && !seen.host.isConnected && document.documentElement) document.documentElement.appendChild(seen.host)
+    return 'already'
+  }
+  if (document.documentElement && document.documentElement.classList.contains('dsh-vscode-iframe')) return 'skipped:dsh-gui'
+  if (!document.documentElement) return 'no-dom'
 
-  // VS Code labels the picked element next to the input, e.g. "span#mv-pcie 304 × 32".
-  // It doubles as our proof that this is VS Code's box (not a field of the app)
-  // and as the element identity.
-  const LABEL_RE = /([a-zA-Z][a-zA-Z0-9-]*(?:[.#][a-zA-Z0-9_-]+)*)\\s+([0-9]{1,5})\\s*[\\u00d7xX*]\\s*([0-9]{1,5})/
+  const send = (o) => { try { console.log(P + JSON.stringify(o)) } catch (e) { /* noop */ } }
+  const clamp = (s, n) => { s = String(s == null ? '' : s); return s.length > n ? s.slice(0, n) + '…' : s }
 
-  function editableOf(node) {
-    let n = node
-    for (let i = 0; i < 8 && n; i++) {
-      const tag = String(n.tagName || '').toLowerCase()
-      if (tag === 'input' || tag === 'textarea') return n
-      try { if (n.isContentEditable) return n } catch (e) { /* noop */ }
-      n = n.parentElement
-    }
-    return null
+  // ---- one shadow root: the page's CSS cannot reach us, we leak nothing back ----
+  const host = document.createElement('div')
+  host.id = HOST_ID
+  const root = host.attachShadow({ mode: 'open' })
+  const style = document.createElement('style')
+  style.textContent = [
+    ':host { all: initial; }',
+    '.btn { position: fixed; right: 14px; bottom: 14px; z-index: 2147483646; padding: 6px 10px;',
+    '  font: 12px/1.2 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #eee;',
+    '  background: rgba(30,30,30,.92); border: 1px solid #0a84ff; border-radius: 14px; cursor: pointer;',
+    '  opacity: .7; transition: opacity .15s; }',
+    '.btn:hover, .btn.on { opacity: 1; }',
+    '.btn.on { background: #0a84ff; color: #fff; }',
+    '.mark { position: fixed; z-index: 2147483645; pointer-events: none; display: none;',
+    '  border: 2px solid #0a84ff; border-radius: 3px; box-shadow: 0 0 0 1px rgba(10,132,255,.35); }',
+    '.panel { position: fixed; z-index: 2147483647; display: none; width: 320px; padding: 6px;',
+    '  background: rgba(38,38,38,.97); border: 1px solid #454545; border-radius: 6px;',
+    '  box-shadow: 0 6px 22px rgba(0,0,0,.45); font: 12px/1.35 -apple-system, BlinkMacSystemFont, sans-serif; color: #eee; }',
+    '.pill { display: block; margin-bottom: 5px; padding: 2px 6px; max-width: 100%; overflow: hidden;',
+    '  text-overflow: ellipsis; white-space: nowrap; background: #0a84ff; color: #fff; border-radius: 3px;',
+    '  font: 11px/1.4 ui-monospace, Menlo, monospace; }',
+    '.row { display: flex; gap: 6px; align-items: flex-end; }',
+    'textarea { flex: 1 1 auto; min-height: 40px; max-height: 160px; resize: vertical; padding: 5px 6px;',
+    '  background: #252526; color: #eee; border: 1px solid #454545; border-radius: 4px;',
+    '  font: 12px/1.4 -apple-system, BlinkMacSystemFont, sans-serif; outline: none; }',
+    'textarea:focus { border-color: #0a84ff; }',
+    '.go { flex: 0 0 auto; width: 28px; height: 30px; background: #0a84ff; color: #fff; border: 0;',
+    '  border-radius: 4px; font-size: 16px; cursor: pointer; }',
+    '.hint { margin-top: 4px; color: #999; font-size: 10px; }',
+  ].join('\\n')
+  const btn = document.createElement('button')
+  btn.className = 'btn'
+  btn.type = 'button'
+  btn.textContent = 'dsh \\u270e'
+  btn.title = 'dsh: \\u6279\\u6ce8\\u5143\\u7d20 \\u2192 dsh\\uff08\\u4e0d\\u8fdb Copilot\\uff09'
+  const mark = document.createElement('div')
+  mark.className = 'mark'
+  const panel = document.createElement('div')
+  panel.className = 'panel'
+  const pill = document.createElement('div')
+  pill.className = 'pill'
+  const ta = document.createElement('textarea')
+  ta.placeholder = '\\u5199\\u6279\\u6ce8'
+  const go = document.createElement('button')
+  go.className = 'go'
+  go.type = 'button'
+  go.textContent = '+'
+  const hint = document.createElement('div')
+  hint.className = 'hint'
+  hint.textContent = 'Enter \\u2192 dsh \\u00b7 Shift+Enter \\u6362\\u884c \\u00b7 Esc \\u53d6\\u6d88'
+  const row = document.createElement('div')
+  row.className = 'row'
+  row.appendChild(ta)
+  row.appendChild(go)
+  panel.appendChild(pill)
+  panel.appendChild(row)
+  panel.appendChild(hint)
+  root.appendChild(style)
+  root.appendChild(btn)
+  root.appendChild(mark)
+  root.appendChild(panel)
+  document.documentElement.appendChild(host)
+
+  // Our own UI fires document-level events retargeted to the host, so one check
+  // is enough to keep the picker from selecting the picker.
+  const inside = (node) => {
+    if (!node) return false
+    if (node === host) return true
+    const rn = node.getRootNode && node.getRootNode()
+    return rn === root
   }
 
-  function commentBox() {
-    const ed = editableOf(document.activeElement)
-    if (!ed) return null
-    let box = ed, depth = 0
-    while (box && depth < 10) {
-      let st = null
-      try { st = getComputedStyle(box) } catch (e) { /* noop */ }
-      if (st && (st.position === 'fixed' || st.position === 'absolute')) break
-      box = box.parentElement
-      depth++
-    }
-    const scope = box || null
-    if (!scope) {
-      // No floating container found: this field belongs to the page's own UI.
-      // Only treat it as VS Code's box when the element label sits directly next
-      // to it — otherwise Shift+Enter in the user's app would be hijacked while
-      // an unrelated comment box happens to be open elsewhere on the page.
-      const p1 = ed.parentElement
-      const near = String((p1 && p1.innerText) || '') + '\\n' + String((p1 && p1.parentElement && p1.parentElement.innerText) || '')
-      const nm = LABEL_RE.exec(near)
-      if (!nm) return null
-      return { ed: ed, label: nm[1], w: +nm[2], h: +nm[3], tier: 'near-label' }
-    }
-    const text = String(scope.innerText || scope.textContent || '')
-    const m = LABEL_RE.exec(text)
-    if (m) return { ed: ed, label: m[1], w: +m[2], h: +m[3], tier: 'label' }
-    // No label: only accept boxes that still look like the VS Code comment
-    // widget, otherwise Shift+Enter in the user's own app would be hijacked.
-    const looksComment = /[\\w-]*comment[\\w-]*/i.test(String(scope.className || '')) ||
-      !!scope.querySelector('[class*="comment" i], [aria-label*="comment" i]')
-    if (!looksComment) return null
-    const anyLabel = LABEL_RE.exec(String(document.body.innerText || ''))
-    return { ed: ed, label: anyLabel ? anyLabel[1] : '', w: anyLabel ? +anyLabel[2] : 0, h: anyLabel ? +anyLabel[3] : 0, tier: anyLabel ? 'body-label' : 'no-label' }
+  let mode = 'idle' // idle | pick
+  let picked = null
+
+  function labelFor(el) {
+    const r = el.getBoundingClientRect()
+    const cls = String(el.className || '').split(/\\s+/).filter(Boolean)
+    return String(el.tagName || '').toLowerCase() +
+      (el.id ? '#' + el.id : '') +
+      (cls.length ? '.' + cls[0] : '') +
+      ' ' + Math.round(r.width) + ' \\u00d7 ' + Math.round(r.height)
   }
 
-  function selectorFor(label) {
-    // "span#mv-pcie" / "div.card.metric" / "div" -> CSS selector + fallbacks.
-    const parts = String(label || '').split(/(?=[.#])/)
-    const tag = parts[0].replace(/^[.#]/, '')
-    const out = [String(label)]
-    if (tag) {
-      const rest = parts.slice(1).join('')
-      if (rest) out.push(tag + rest)
-      out.push(tag)
+  function selectorFor(el) {
+    if (el.id) return '#' + el.id
+    const parts = []
+    let n = el
+    for (let i = 0; n && i < 5 && n.tagName; i++) {
+      if (n.id) { parts.unshift(String(n.tagName).toLowerCase() + '#' + n.id); break }
+      const cls = String(n.className || '').split(/\\s+/).filter(Boolean)
+      let s = String(n.tagName).toLowerCase()
+      if (cls.length) s += '.' + cls[0]
+      const p = n.parentElement
+      if (p) {
+        const same = Array.from(p.children).filter((c) => c.tagName === n.tagName)
+        if (same.length > 1) s += ':nth-of-type(' + (same.indexOf(n) + 1) + ')'
+      }
+      parts.unshift(s)
+      n = p
     }
-    const only = parts.filter((p) => /^[.#]/.test(p)).join('')
-    if (only) out.unshift((tag || '*') + only)
-    return out
-  }
-
-  function resolveElement(label, w, h) {
-    if (!label) return null
-    let best = null, tier = ''
-    for (const sel of selectorFor(label)) {
-      let found = []
-      try { found = Array.from(document.querySelectorAll(sel)) } catch (e) { found = [] }
-      if (!found.length) continue
-      if (found.length === 1) return { el: found[0], used: sel, tier: 'unique' }
-      const sized = found.filter((e) => {
-        const r = e.getBoundingClientRect()
-        return Math.abs(r.width - w) <= 1 && Math.abs(r.height - h) <= 1
-      })
-      if (sized.length === 1) return { el: sized[0], used: sel, tier: 'size' }
-      const pool = sized.length ? sized : found
-      pool.sort((a, b) => {
-        const ra = a.getBoundingClientRect(), rb = b.getBoundingClientRect()
-        return ra.width * ra.height - rb.width * rb.height
-      })
-      if (!best) { best = pool[0]; tier = 'smallest'; }
-      if (pool.length && !best) { best = pool[0]; tier = 'first' }
-    }
-    return best ? { el: best, used: String(label), tier: tier } : null
+    return parts.join(' > ')
   }
 
   function elementBits(el) {
@@ -131,7 +160,7 @@ const INJECT_JS = `(() => {
     let n = el.parentElement
     for (let i = 0; n && i < 6; i++) {
       const cls = String(n.className || '').split(/\\s+/).filter(Boolean).slice(0, 3).join('.')
-      ancestors.push(n.tagName.toLowerCase() + (n.id ? '#' + n.id : '') + (cls ? '.' + cls : ''))
+      ancestors.push(String(n.tagName || '').toLowerCase() + (n.id ? '#' + n.id : '') + (cls ? '.' + cls : ''))
       n = n.parentElement
     }
     const attrs = {}
@@ -142,49 +171,123 @@ const INJECT_JS = `(() => {
       classes: String(el.className || '').split(/\\s+/).filter(Boolean).slice(0, 8),
       attributes: attrs,
       ancestors: ancestors,
-      innerText: clamp(el.innerText || el.textContent || '', 300),
+      selector: selectorFor(el),
+      innerText: clamp(el.innerText || el.textContent || '', 400),
       outerHTML: clamp(el.outerHTML || '', 4000),
       bounds: { x: Math.round(r.x), y: Math.round(r.y), width: Math.round(r.width), height: Math.round(r.height) },
     }
   }
 
-  function selftest() {
-    const cb = commentBox()
-    if (!cb) return { ok: false, why: 'no comment box focused (click one, then run again)' }
-    const hit = resolveElement(cb.label, cb.w, cb.h)
-    return { ok: true, label: cb.label, tier: hit ? hit.tier : cb.tier, size: cb.w + 'x' + cb.h, tag: hit && hit.el ? elementBits(hit.el).tag : '' }
+  // In-place like VS Code's own box: next to the element, flipped when clipped.
+  function place(el) {
+    const r = el.getBoundingClientRect()
+    const W = 330, H = 120
+    let x = r.right + 10
+    if (x + W > window.innerWidth) x = Math.max(8, r.left - W - 10)
+    if (x + W > window.innerWidth) x = Math.max(8, (window.innerWidth - W) / 2)
+    let y = r.top
+    if (y + H > window.innerHeight) y = Math.max(8, window.innerHeight - H - 8)
+    panel.style.left = Math.round(x) + 'px'
+    panel.style.top = Math.round(y) + 'px'
   }
 
-  window.__dshBcc = { version: '${VERSION}', ping: Date.now(), selftest: selftest }
+  function openFor(el) {
+    picked = el
+    mode = 'idle'
+    btn.classList.remove('on')
+    btn.textContent = 'dsh \\u270e'
+    mark.style.display = 'none'
+    pill.textContent = labelFor(el)
+    place(el)
+    panel.style.display = 'block'
+    ta.focus()
+  }
 
-  window.addEventListener('keydown', function (e) {
-    try {
-      if (e.key !== 'Enter' || !e.shiftKey || e.isComposing) return
-      const cb = commentBox()
-      if (!cb) return
-      const ed = cb.ed
-      const text = String(typeof ed.value === 'string' ? ed.value : (ed.innerText || ed.textContent || '')).trim()
-      e.preventDefault()
-      try { e.stopImmediatePropagation() } catch (err) { e.stopPropagation() }
-      const hit = resolveElement(cb.label, cb.w, cb.h)
-      const payload = {
-        ev: 'comment',
-        text: text,
-        label: cb.label,
-        locate: hit ? hit.tier : cb.tier,
-        selector: hit ? hit.used : cb.label,
-        url: location.href,
-        title: document.title,
-        size: cb.w + 'x' + cb.h,
-      }
-      if (hit && hit.el) Object.assign(payload, elementBits(hit.el))
-      log(payload)
-    } catch (err) {
-      log({ ev: 'err', e: String((err && err.message) || err) })
-    }
+  function closePanel() {
+    panel.style.display = 'none'
+    mark.style.display = 'none'
+    picked = null
+    ta.value = ''
+  }
+
+  function submit() {
+    if (!picked) { closePanel(); return }
+    const text = String(ta.value || '').trim()
+    if (!text) { closePanel(); return }
+    const bits = elementBits(picked)
+    send(Object.assign({
+      ev: 'comment', text: text, label: pill.textContent, locate: 'picked',
+      url: location.href, title: document.title,
+      size: bits.bounds.width + 'x' + bits.bounds.height,
+    }, bits))
+    // Same element stays selected so a second note can be typed right away.
+    ta.value = ''
+    place(picked)
+    ta.focus()
+  }
+
+  btn.addEventListener('click', function () {
+    mode = mode === 'pick' ? 'idle' : 'pick'
+    btn.classList.toggle('on', mode === 'pick')
+    btn.textContent = mode === 'pick' ? '\\u70b9\\u51fb\\u9009\\u62e9\\u5143\\u7d20\\u2026' : 'dsh \\u270e'
+    if (mode !== 'pick') closePanel()
+  })
+
+  document.addEventListener('mouseover', function (e) {
+    if (mode !== 'pick') return
+    const t = e.target
+    if (!t || inside(t) || t === document.documentElement || t === document.body) return
+    const r = t.getBoundingClientRect ? t.getBoundingClientRect() : null
+    if (!r || !r.width || !r.height) return
+    mark.style.display = 'block'
+    mark.style.left = Math.round(r.left) + 'px'
+    mark.style.top = Math.round(r.top) + 'px'
+    mark.style.width = Math.round(r.width) + 'px'
+    mark.style.height = Math.round(r.height) + 'px'
   }, true)
 
-  log({ ev: 'installed', url: location.href, title: document.title })
+  document.addEventListener('click', function (e) {
+    if (mode !== 'pick') return
+    const t = e.target
+    if (!t || inside(t)) return
+    e.preventDefault()
+    e.stopPropagation()
+    openFor(t)
+  }, true)
+
+  ta.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+      e.preventDefault()
+      e.stopPropagation()
+      submit()
+    } else if (e.key === 'Escape') {
+      e.preventDefault()
+      e.stopPropagation()
+      closePanel()
+    }
+  }, true)
+  // Keep the page's own shortcuts from eating typing inside our box — in the
+  // BUBBLE phase. Capturing on the panel stops the event before it reaches the
+  // textarea, i.e. our own Enter handler never runs (the 0.1.28 jsdom probe caught
+  // exactly that: '+' submitted, Enter did nothing).
+  for (const t of ['keydown', 'keyup', 'keypress', 'mousedown', 'pointerdown']) {
+    panel.addEventListener(t, function (e) { e.stopPropagation() })
+  }
+  go.addEventListener('click', function (e) { e.preventDefault(); e.stopPropagation(); submit() })
+
+  function selftest() {
+    return {
+      ok: !!document.getElementById(HOST_ID),
+      attached: host.isConnected,
+      mode: mode,
+      hasPicked: !!picked,
+      panelOpen: panel.style.display === 'block',
+      textChars: String(ta.value || '').length,
+    }
+  }
+
+  window.__dshBcc = { version: '${VERSION}', ping: Date.now(), host: host, selftest: selftest }
+  send({ ev: 'installed', url: location.href, title: document.title })
   return 'installed'
 })()`
 
@@ -202,7 +305,7 @@ function fetchTargets(port) {
   })
 }
 
-/** Browser tabs are http(s) pages; the workbench renderer is a file:// page. */
+/** Browser tabs are http(s) page targets; the workbench is a vscode-file:// page. */
 function isBrowserPage(t) {
   if (!t || t.type !== 'page') return false
   const url = String(t.url || '')
@@ -271,8 +374,8 @@ function startBrowserComment(opts) {
       if (d.ev === 'installed') log.appendLine(TAG + ' injected ' + String(d.url || '').slice(0, 70))
       else if (d.ev === 'err') log.appendLine(TAG + ' page error: ' + String(d.e).slice(0, 160))
       else if (d.ev === 'comment') {
-        log.appendLine(TAG + ' comment label=' + (d.label || '-') + ' locate=' + (d.locate || '-') +
-          ' chars=' + String(d.text || '').length + ' ' + String(d.url || '').slice(0, 60))
+        log.appendLine(TAG + ' comment label=' + (d.label || '-') + ' chars=' + String(d.text || '').length +
+          ' ' + String(d.url || '').slice(0, 60))
         try { onComment(d) } catch (e) { log.appendLine(TAG + ' onComment failed: ' + String((e && e.message) || e)) }
       }
     }
@@ -281,7 +384,11 @@ function startBrowserComment(opts) {
   }
 
   async function scan() {
-    if (stopped || !enabled()) return
+    if (stopped) return
+    if (!enabled()) {
+      for (const id of Array.from(conns.keys())) closeOne(id, 'sendToDsh=false')
+      return
+    }
     let targets
     try {
       targets = await fetchTargets(CDP_PORT)
@@ -289,11 +396,11 @@ function startBrowserComment(opts) {
       const now = Date.now()
       if (now - lastAbsent > 60000) {
         lastAbsent = now
-        log.appendLine(TAG + ' cdp=absent (' + String((e && e.code) || e.message) + ') — 需要 --remote-debugging-port=' + CDP_PORT)
+        log.appendLine(TAG + ' cdp=absent (' + String((e && e.code) || e.message) + ') — 需要 argv.json 里 \"remote-debugging-port\": \"9223\"（install.sh 已写，Cmd+Q 后生效）')
         if (!absentNoticed) {
           absentNoticed = true
           try {
-            void vscode.window.showInformationMessage('dsh: 元素批注需要 VS Code 以 --remote-debugging-port=' + CDP_PORT + ' 启动')
+            void vscode.window.showInformationMessage('dsh: 元素批注需要 CDP（argv.json 的 remote-debugging-port=9223，Cmd+Q 重启后生效）')
           } catch { /* noop */ }
         }
       }
@@ -303,7 +410,7 @@ function startBrowserComment(opts) {
     const pages = (targets || []).filter(isBrowserPage)
     if (pages.length !== lastSeenCount) {
       lastSeenCount = pages.length
-      log.appendLine(TAG + ' targets=' + pages.length + ' connected=' + conns.size)
+      log.appendLine(TAG + ' ' + VERSION + ' targets=' + pages.length + ' connected=' + conns.size)
     }
     for (const t of pages) {
       const c = conns.get(t.id)
@@ -323,12 +430,11 @@ function startBrowserComment(opts) {
     ]
     for (const [id, c] of conns) lines.push('  ' + id.slice(0, 8) + ' ready=' + (c.ws ? c.ws.readyState : 'null') + ' ' + String(c.url).slice(0, 80))
     log.appendLine(lines.join('\n'))
-    void vscode.window.showInformationMessage('dsh 元素批注: 开关=' + enabled() + ' 已连接页面=' + conns.size + '（详情见 dsh review 输出）')
+    void vscode.window.showInformationMessage('dsh 元素批注: 开关=' + enabled() + ' 已注入页面=' + conns.size + '（页面右下角 dsh ✎）')
   }))
 
-  context.subscriptions.push(vscode.commands.registerCommand('dshReview.browserComment.selftest', async () => {
-    // Runs window.__dshBcc.selftest() in every attached page: tells us whether
-    // the comment box is detected and how the element was located.
+  context.subscriptions.push(vscode.commands.registerCommand('dshReview.browserComment.selftest', () => {
+    // Asks each injected page whether the box is attached / open / holding text.
     const list = Array.from(conns.entries()).filter(([, c]) => c.ws && c.ws.readyState === 1)
     if (!list.length) {
       log.appendLine(TAG + ' selftest: no connected page (开关关 / cdp=absent / 浏览器 tab 未开)')
@@ -345,7 +451,7 @@ function startBrowserComment(opts) {
         } catch { /* noop */ }
       }, i * 120)
     })
-    log.appendLine(TAG + ' selftest sent to ' + list.length + ' page(s) — 结果在 console 回传（把评论框聚焦后再跑一次最准）')
+    log.appendLine(TAG + ' selftest sent to ' + list.length + ' page(s) — 结果在 dsh review 输出')
   }))
 
   const timer = setInterval(() => { void scan() }, RESCAN_MS)

@@ -117,45 +117,71 @@ function startElementContextWatcher(context, log) {
     return ok
   }
 
-  // ---------- browser element comments (Shift+Enter inside the page) ----------
+  // ---------- browser element annotations (our in-place box, v2) ----------
   /**
-   * 0.1.26: browser-comment.js (CDP, page side) hands us {text, label, url,
-   * outerHTML, ancestors, innerText, locate}. Reuse the element ref shape the
-   * element-context feature already proved — one chip carrying the element, plus
-   * the comment as editable plain text (appendText) so the user can add their
-   * overall instruction before pressing send in dsh.
+   * 0.1.28: browser-comment.js injects its own picker/box into the page (VS Code's
+   * built-in comment box is unreachable — see that file's header) and hands us
+   * {text, label, url, title, size, selector, ancestors, innerText, outerHTML,
+   * attributes, bounds}. Per the user's call the note becomes a real markdown FILE
+   * (no untitled editor, so no Save prompt) and dsh gets one native file chip;
+   * Copilot is never involved.
    */
   function bcfg(key, def) {
     try { return vscode.workspace.getConfiguration('dshReview.browserComment').get(key, def) } catch { return def }
   }
 
-  function commentRef(p) {
-    const label = String((p && p.label) || (p && p.tag) || 'element')
-    const bits = ['[元素批注] ' + label + ' @ ' + String((p && p.url) || '') +
-      (p && p.size ? '  (' + p.size + (p.locate ? ' 定位=' + p.locate : '') + ')' : '')]
-    if (bcfg('includeOuterHTML', true) && p && p.outerHTML) bits.push('```html\n' + String(p.outerHTML) + '\n```')
-    if (p && Array.isArray(p.ancestors) && p.ancestors.length) bits.push('祖先链: ' + p.ancestors.join(' > '))
-    if (p && p.innerText) bits.push('元素文本: ' + String(p.innerText))
-    const model = bits.join('\n')
-    return {
-      kind: 'element',
-      path: String((p && p.url) || label),
-      content: model,
-      label: 'element: ' + label,
-      clipboardText: model,
-      modelText: model,
+  function commentFileDir() {
+    const raw = String(bcfg('commentDir', '/tmp/dsh-comments') || '/tmp/dsh-comments')
+    return raw.charAt(0) === '~' ? path.join(os.homedir(), raw.slice(1)) : raw
+  }
+
+  function slug(s) {
+    return String(s || 'element').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'element'
+  }
+
+  function commentMarkdown(p) {
+    p = p || {}
+    const bits = ['# 元素批注 — ' + String(p.label || p.tag || 'element'), '']
+    bits.push('- URL: ' + String(p.url || ''))
+    if (p.title) bits.push('- 页面标题: ' + String(p.title))
+    if (p.size) bits.push('- 尺寸: ' + String(p.size) + (p.bounds ? ' @ (' + p.bounds.x + ', ' + p.bounds.y + ')' : ''))
+    if (p.selector) bits.push('- CSS 定位: `' + String(p.selector) + '`')
+    if (Array.isArray(p.ancestors) && p.ancestors.length) bits.push('- 祖先链: ' + p.ancestors.join(' > '))
+    if (p.innerText) bits.push('- 元素文本: ' + String(p.innerText).replace(/\s+/g, ' ').trim())
+    bits.push('', '## 批注', '', String(p.text || '').trim())
+    if (bcfg('includeOuterHTML', true) && p.outerHTML) bits.push('', '```html', String(p.outerHTML), '```')
+    if (p.attributes && Object.keys(p.attributes).length) {
+      bits.push('', '属性: ' + Object.keys(p.attributes).map((k) => k + '="' + String(p.attributes[k]) + '"').join(' '))
     }
+    bits.push('')
+    return bits.join('\n')
   }
 
   async function sendCommentToDsh(p) {
-    const text = String((p && p.text) || '').trim()
-    const ref = commentRef(p || {})
-    // fallbackText keeps working for an older client bundle (no appendText):
-    // the chip path failing then still yields comment + element context.
-    const fallback = (text ? text + '\n' : '') + ref.content
-    const ok = await sendRefsToDsh([ref], fallback, text)
-    log.appendLine(TAG + ' [comment] -> dsh ok=' + ok + ' ' + ref.label +
-      ' comment=' + JSON.stringify(text.slice(0, 60)))
+    p = p || {}
+    const md = commentMarkdown(p)
+    const text = String(p.text || '').trim()
+    let file = ''
+    try {
+      const dir = commentFileDir()
+      const d = new Date()
+      const pad = (n) => String(n).padStart(2, '0')
+      const stamp = String(d.getFullYear()) + pad(d.getMonth() + 1) + pad(d.getDate()) + '-' + pad(d.getHours()) + pad(d.getMinutes()) + pad(d.getSeconds())
+      fs.mkdirSync(dir, { recursive: true })
+      file = path.join(dir, 'comment-' + stamp + '-' + slug(p.id || p.tag || p.label) + '-' + Math.random().toString(36).slice(2, 6) + '.md')
+      fs.writeFileSync(file, md, 'utf8')
+    } catch (e) {
+      file = ''
+      log.appendLine(TAG + ' [comment] write failed: ' + String((e && e.message) || e))
+    }
+    const ref = file
+      ? { kind: 'file', path: file, content: md, label: path.basename(file), clipboardText: md, modelText: md }
+      : { kind: 'element', path: String(p.url || 'element'), content: md, label: 'element: ' + String(p.label || 'element'), clipboardText: md, modelText: md }
+    // fallbackText covers both an older client bundle and a ref the client rejects
+    // (text mode): the comment still arrives with its element context.
+    const ok = await sendRefsToDsh([ref], text ? text + '\n' + md : md, '')
+    log.appendLine(TAG + ' [comment] ' + (file ? 'wrote ' + file : 'no-file') +
+      ' -> dsh ok=' + ok + ' kind=' + ref.kind + ' chars=' + text.length)
     if (cfg('focusDshAfterCapture', true)) {
       setTimeout(() => {
         vscode.commands.executeCommand('dshReview.dshWebview.focus').catch(() => { /* noop */ })
@@ -300,6 +326,16 @@ function startElementContextWatcher(context, log) {
 
   function handleElementDoc(doc, text) {
     const nu = parseNameUrl(text)
+    // 0.1.28: a file opened FROM dsh makes VS Code re-create this attachment doc;
+    // that is our own doing, not a user chip pick — do not push an element chip back.
+    if (bridge.openGuarded()) {
+      log.appendLine(TAG + ' · element doc ignored (open-guard, dsh 自己刚打开文件) name=' + nu.name)
+      return
+    }
+    if (alreadySent(nu.name)) {
+      log.appendLine(TAG + ' · element doc ignored (already sent <180s) name=' + nu.name)
+      return
+    }
     markCapture(nu.name)
     log.appendLine(TAG + ' -> element ref: name=' + nu.name + ' url=' + nu.url)
 

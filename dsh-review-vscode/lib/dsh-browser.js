@@ -12,6 +12,7 @@ const vscode = require('vscode')
 const fs = require('node:fs')
 const path = require('node:path')
 const os = require('node:os')
+const bridge = require('./element-bridge')
 const electron = require('electron')
 const { execFile, execFileSync } = require('node:child_process')
 const crypto = require('node:crypto')
@@ -161,7 +162,12 @@ async function openFileFromDsh(raw, cwd, opts) {
       await vscode.commands.executeCommand('vscode.open', uri)
       if (keepFocus) setTimeout(() => { void focusDshSidebar() }, 30)
     }
-    state.log('openFile ' + p + (keepFocus ? ' (keepFocus)' : ''))
+    // 0.1.28: VS Code re-creates the chat "Attached Element Context" doc right
+    // after we open something from dsh; without this guard the element watcher
+    // reads that event as a user chip pick and pushes a stray `element` chip
+    // back into the dsh composer.
+    bridge.setOpenGuard(2500)
+    state.log('openFile ' + p + (keepFocus ? ' (keepFocus)' : '') + ' + open-guard 2500ms')
   } catch (e) {
     state.log('openFile failed: ' + String((e && e.message) || e))
     dshFileToast('dsh: 打开失败 ' + raw)
