@@ -451,6 +451,9 @@ function startElementContextWatcher(context, log) {
     // where no pin matched (a hidden element never gets a pin).
     const pinOk = file && fs.existsSync(file) ? await removeNativePinForFile(file) : false
     const ok = pinOk || (file ? await dropCopilotLineForMd(file) : false)
+    // 0.1.103: editing the Copilot composer document makes VS Code focus the chat input, which
+    // the user reads as "又去 Copilot 了" — take the focus back whenever that edit happens.
+    if (!pinOk && ok) refocusDsh()
     log.appendLine(TAG + ' · dsh 删方块 ' + file.split('/').pop() + ' -> ' + (pinOk
       ? '已点掉图钉的删除按钮（原生图钉+附件+那行由 VS Code 自己清）'
       : ok ? '已删 Copilot 那行（没匹配到图钉，走文档兜底）' : '没找到对应那行（可能已经删了或改过）'))
