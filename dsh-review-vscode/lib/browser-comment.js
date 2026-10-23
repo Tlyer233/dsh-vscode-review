@@ -30,7 +30,7 @@ const http = require('node:http')
 const CDP_PORT = 9223
 const TAG = '[browser-comment]'
 const PREFIX = '__DSH_BCC__'
-const VERSION = 'v3'
+const VERSION = 'v4'
 const RESCAN_MS = 2500
 
 /** Page-side: floating trigger, element picker, in-place comment box. */
@@ -129,6 +129,17 @@ const INJECT_JS = `(() => {
   // the element, the panel confirms the send, and the button shows the count.
   const notes = []
   const pins = []
+  const pageTok = Math.random().toString(36).slice(2, 6)
+  // 0.1.31 the user asked: (a) leave the page alone once sent, (b) clicking a pin
+  // must show and let me fix the note. So a note carries a stable nid: 更新 rewrites
+  // the SAME markdown file (dsh keeps its single chip), 删除 removes it, and
+  // 另存为新一条 sends a fresh one. The element payload is kept on the note so a
+  // resend needs no re-pick.
+  function nidFor(n) { return pageTok + n }
+
+  function sendNote(kind, n, text) {
+    send(Object.assign({ ev: kind, nid: n.nid, text: text, label: n.label, url: location.href, title: document.title, size: (n.bits && n.bits.bounds ? n.bits.bounds.width + 'x' + n.bits.bounds.height : '') }, n.bits))
+  }
   const pinStyle = document.createElement('style')
   pinStyle.textContent = '.pin { position: fixed; z-index: 2147483647; width: 18px; height: 18px;' +
     ' border-radius: 50%; background: #0a84ff; color: #fff; border: 1px solid #fff;' +
@@ -147,14 +158,116 @@ const INJECT_JS = `(() => {
     }
   }
 
-  function addPin(el, text) {
+  function addPin(n) {
     const b = document.createElement('div')
     b.className = 'pin'
-    b.textContent = String(notes.length)
-    b.title = '#' + notes.length + ' ' + text
+    b.textContent = String(n.n)
+    b.title = '#' + n.n + ' ' + n.text
+    b.addEventListener('click', function (e) { e.preventDefault(); e.stopPropagation(); showCard(notes.indexOf(n)) })
     root.appendChild(b)
-    pins.push({ el: el, node: b })
+    n.node = b
+    pins.push({ el: n.el, node: b, note: n })
     positionPins()
+  }
+
+  let card = null
+  function ensureCard() {
+    if (card) return card
+    const st = document.createElement('style')
+    st.textContent = '.card { position: fixed; z-index: 2147483647; width: 330px; padding: 8px; display: none;' +
+      ' background: rgba(38,38,38,.98); border: 1px solid #454545; border-radius: 6px;' +
+      ' box-shadow: 0 6px 22px rgba(0,0,0,.45); color: #eee; font: 12px/1.4 -apple-system, sans-serif; }' +
+      '.card h4 { margin: 0 0 4px; font: 11px/1.4 ui-monospace, Menlo, monospace; color: #0a84ff; font-weight: 400; word-break: break-all; }' +
+      '.card textarea { width: 100%; min-height: 62px; max-height: 200px; box-sizing: border-box; background: #252526;' +
+      ' color: #eee; border: 1px solid #454545; border-radius: 4px; padding: 5px; font: 12px/1.4 -apple-system, sans-serif; resize: vertical; }' +
+      '.btns { display: flex; gap: 6px; margin-top: 6px; }' +
+      '.btns button { flex: 1 1 auto; padding: 4px 6px; border: 1px solid #454545; border-radius: 4px; background: #2d2d30;' +
+      ' color: #eee; font: 11px/1.3 -apple-system, sans-serif; cursor: pointer; }' +
+      '.btns button.pri { background: #0a84ff; border-color: #0a84ff; color: #fff; }'
+    root.appendChild(st)
+    const c = document.createElement('div')
+    c.className = 'card'
+    const h = document.createElement('h4')
+    const t = document.createElement('textarea')
+    const bar = document.createElement('div')
+    bar.className = 'btns'
+    const mk = (label, cls) => { const x = document.createElement('button'); x.type = 'button'; x.textContent = label; if (cls) x.className = cls; bar.appendChild(x); return x }
+    const save = mk('更新到同一文件', 'pri')
+    const again = mk('另存为新一条')
+    const del = mk('删除')
+    const cls = mk('关闭')
+    c.appendChild(h); c.appendChild(t); c.appendChild(bar)
+    root.appendChild(c)
+    card = { c: c, h: h, t: t, idx: -1 }
+    save.addEventListener('click', function () { updateNote(card.idx, card.t.value) })
+    again.addEventListener('click', function () { resendNote(card.idx, card.t.value) })
+    del.addEventListener('click', function () { deleteNote(card.idx) })
+    cls.addEventListener('click', function () { hideCard() })
+    for (const ty of ['keydown', 'keyup', 'keypress', 'mousedown', 'pointerdown']) {
+      c.addEventListener(ty, function (e) { e.stopPropagation() })
+    }
+    return card
+  }
+
+  function showCard(idx) {
+    const n = notes[idx]
+    if (!n) return
+    const c = ensureCard()
+    c.idx = idx
+    c.h.textContent = '#' + n.n + '  ' + n.label
+    c.t.value = n.text
+    const r = n.el.getBoundingClientRect()
+    let x = r.left
+    if (x + 340 > window.innerWidth) x = Math.max(8, window.innerWidth - 340)
+    let y = r.bottom + 10
+    if (y + 200 > window.innerHeight) y = Math.max(8, r.top - 200)
+    c.c.style.left = Math.round(x) + 'px'
+    c.c.style.top = Math.round(y) + 'px'
+    c.c.style.display = 'block'
+    c.t.focus()
+  }
+
+  function hideCard() { if (card) { card.c.style.display = 'none'; card.idx = -1 } }
+
+  function updateNote(idx, text) {
+    const n = notes[idx]
+    if (!n) return
+    const v = String(text || '').trim()
+    if (!v) return
+    n.text = v
+    if (n.node) n.node.title = '#' + n.n + ' ' + v
+    sendNote('update', n, v)
+    hint.textContent = '已更新 #' + n.n + '（dsh 里那个 chip 指向同一文件）'
+    hideCard()
+  }
+
+  function resendNote(idx, text) {
+    const n = notes[idx]
+    if (!n) return
+    const v = String(text || '').trim()
+    if (!v) return
+    const nn = { text: v, label: n.label, n: notes.length + 1, nid: nidFor(notes.length + 1), el: n.el, bits: n.bits }
+    notes.push(nn)
+    addPin(nn)
+    sendNote('comment', nn, v)
+    btn.textContent = 'dsh ' + String.fromCharCode(0x270e) + ' ' + notes.length
+    hint.textContent = '已送 dsh #' + nn.n
+    hideCard()
+  }
+
+  function deleteNote(idx) {
+    const n = notes[idx]
+    if (!n) return
+    sendNote('delete', n, '')
+    try { if (n.node) n.node.remove() } catch (e) { /* noop */ }
+    for (let i = pins.length - 1; i >= 0; i--) { if (pins[i].note === n) pins.splice(i, 1) }
+    notes.splice(idx, 1)
+    for (let i = 0; i < notes.length; i++) {
+      notes[i].n = i + 1
+      if (notes[i].node) { notes[i].node.textContent = String(i + 1); notes[i].node.title = '#' + (i + 1) + ' ' + notes[i].text }
+    }
+    btn.textContent = 'dsh ' + String.fromCharCode(0x270e) + (notes.length ? ' ' + notes.length : '')
+    hideCard()
   }
 
   document.addEventListener('scroll', positionPins, true)
@@ -251,19 +364,13 @@ const INJECT_JS = `(() => {
     const text = String(ta.value || '').trim()
     if (!text) { closePanel(); return }
     const bits = elementBits(picked)
-    send(Object.assign({
-      ev: 'comment', text: text, label: pill.textContent, locate: 'picked',
-      url: location.href, title: document.title,
-      size: bits.bounds.width + 'x' + bits.bounds.height,
-    }, bits))
-    // Same element stays selected so a second note can be typed right away.
-    notes.push({ text: text, label: pill.textContent })
-    addPin(picked, text)
-    hint.textContent = '已送 dsh #' + notes.length + '（内容已存文件，dsh 里是文件 chip）'
-    btn.textContent = 'dsh \\u270e ' + notes.length
-    ta.value = ''
-    place(picked)
-    ta.focus()
+    const n = { text: text, label: pill.textContent, n: notes.length + 1, nid: nidFor(notes.length + 1), el: picked, bits: bits }
+    notes.push(n)
+    addPin(n)
+    sendNote('comment', n, text)
+    btn.textContent = 'dsh ' + String.fromCharCode(0x270e) + ' ' + notes.length
+    hint.textContent = '已送 dsh #' + n.n + '（点图钉可展开查看/修改；内容已存文件）'
+    closePanel()
   }
 
   btn.addEventListener('click', function () {
@@ -325,6 +432,7 @@ const INJECT_JS = `(() => {
       textChars: String(ta.value || '').length,
       notes: notes.length,
       pins: pins.length,
+      cardOpen: !!(card && card.c.style.display === 'block'),
     }
   }
 

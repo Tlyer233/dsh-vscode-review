@@ -157,19 +157,65 @@ function startElementContextWatcher(context, log) {
     return bits.join('\n')
   }
 
+  // 0.1.31: a pin can be re-opened to fix or delete its note, so a note needs a
+  // stable file. The page sends nid (page token + index); the file name ends with
+  // -<nid>.md, 更新 rewrites that same file (the chip already in dsh keeps pointing
+  // at it, so no duplicate chip) and 删除 unlinks it.
+  const commentFiles = new Map()
+  function findCommentFile(nid) {
+    const key = String(nid || '')
+    if (!key) return ''
+    if (commentFiles.has(key)) return commentFiles.get(key)
+    try {
+      const hit = fs.readdirSync(commentFileDir()).filter((f) => f.endsWith('-' + key + '.md'))
+      if (hit.length) {
+        const f = path.join(commentFileDir(), hit[0])
+        commentFiles.set(key, f)
+        return f
+      }
+    } catch { /* the dir may not exist yet */ }
+    return ''
+  }
+
   async function sendCommentToDsh(p) {
     p = p || {}
+    const ev = String(p.ev || 'comment')
+    const nid = String(p.nid || '')
     const md = commentMarkdown(p)
     const text = String(p.text || '').trim()
+    try { fs.mkdirSync(commentFileDir(), { recursive: true }) } catch (e) { /* first write will report it */ }
+
+    if (ev === 'update' || ev === 'delete') {
+      const known = findCommentFile(nid)
+      if (!known) {
+        log.appendLine(TAG + ' [comment] ' + ev + ' — 找不到 nid=' + nid + ' 对应的文件, 忽略')
+        return false
+      }
+      try {
+        if (ev === 'update') {
+          fs.writeFileSync(known, md, 'utf8')
+          log.appendLine(TAG + ' [comment] updated ' + known + ' — dsh 里的 chip 不变 (chars=' + text.length + ')')
+        } else {
+          fs.unlinkSync(known)
+          commentFiles.delete(nid)
+          log.appendLine(TAG + ' [comment] deleted ' + known)
+        }
+      } catch (e) {
+        log.appendLine(TAG + ' [comment] ' + ev + ' failed: ' + String((e && e.message) || e))
+        return false
+      }
+      return true
+    }
+
     let file = ''
     try {
-      const dir = commentFileDir()
       const d = new Date()
       const pad = (n) => String(n).padStart(2, '0')
       const stamp = String(d.getFullYear()) + pad(d.getMonth() + 1) + pad(d.getDate()) + '-' + pad(d.getHours()) + pad(d.getMinutes()) + pad(d.getSeconds())
-      fs.mkdirSync(dir, { recursive: true })
-      file = path.join(dir, 'comment-' + stamp + '-' + slug(p.id || p.tag || p.label) + '-' + Math.random().toString(36).slice(2, 6) + '.md')
+      const tail = nid ? nid : Math.random().toString(36).slice(2, 6)
+      file = path.join(commentFileDir(), 'comment-' + stamp + '-' + slug(p.id || p.tag || p.label) + '-' + tail + '.md')
       fs.writeFileSync(file, md, 'utf8')
+      if (nid) commentFiles.set(nid, file)
     } catch (e) {
       file = ''
       log.appendLine(TAG + ' [comment] write failed: ' + String((e && e.message) || e))
@@ -181,7 +227,7 @@ function startElementContextWatcher(context, log) {
     // (text mode): the comment still arrives with its element context.
     const ok = await sendRefsToDsh([ref], text ? text + '\n' + md : md, '')
     log.appendLine(TAG + ' [comment] ' + (file ? 'wrote ' + file : 'no-file') +
-      ' -> dsh ok=' + ok + ' kind=' + ref.kind + ' chars=' + text.length)
+      ' -> dsh ok=' + ok + ' kind=' + ref.kind + ' chars=' + text.length + (nid ? ' nid=' + nid : ''))
     if (cfg('focusDshAfterCapture', true)) {
       setTimeout(() => {
         vscode.commands.executeCommand('dshReview.dshWebview.focus').catch(() => { /* noop */ })

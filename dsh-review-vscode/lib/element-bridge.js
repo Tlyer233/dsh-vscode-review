@@ -44,7 +44,9 @@ async function deliverBrowserComment(payload) {
   if (!handlers.browserComment) return { ok: false, why: 'no-handler (功能未挂载/开关关闭)' }
   try {
     const r = await handlers.browserComment(payload)
-    return r === undefined ? { ok: true } : (r || { ok: false, why: 'null-result' })
+    if (r === undefined) return { ok: true }
+    if (r === false) return { ok: false, why: 'handler refused（见 [element-context] 日志）' }
+    return r || { ok: false, why: 'null-result' }
   } catch (e) {
     return { ok: false, why: String((e && e.message) || e) }
   }

@@ -44,6 +44,19 @@
 - 版本说明:本修复与「元素批注」同日开发,原报 0.1.70/0.1.26 与批注功能撞号,rebase 后改号 0.1.71/0.1.28
 
 
+## dsh-review 0.1.71 + dsh-review-vscode 0.1.31 (2026-10-23) — 批注：发完就收框 + 图钉可展开修改
+
+### 用户两点
+1. 「输入完为什么还在这里」→ 0.1.30 提交后我特意保留面板好连续批注，用户不接受：`submit()` 现在 **发完即 `closePanel()`**（元素留在图钉里，要再批就再点按钮）。
+2. 「点击图钉, 为什么不会展开给我看, 或者修改」→ 图钉变成可点：展开就地卡片（标题 = `#N span#mv-temp…`，正文 textarea，按钮 **更新到同一文件 / 另存为新一条 / 删除 / 关闭**）。
+
+### 协议（页内 v4）
+每条批注带稳定 `nid = <页面 4 位 token><序号>`；文件名以 `-<nid>.md` 结尾。`ev:'comment'` 写新文件+插 chip；`ev:'update'` 用 `findCommentFile(nid)`（内存 Map，未命中再扫 commentDir）**重写同一个文件且不插 chip** ⇒ dsh 里那个 chip 自动读到新内容；`ev:'delete'` 删文件（页内同步移除图钉并把后面的编号重排）。元素载荷 `bits` 存在 note 上，所以「另存为新一条」不用重新选元素。`selftest()` 多出 `cardOpen`。
+`element-bridge.deliverBrowserComment` 把 handler 返回 `false` 如实报成 `handler refused`（原来误报 `null-result`）。
+
+### 验证
+页内 jsdom 探针 **15/15**（发完即关框、nid 正确、卡片展开/文案/四个按钮、更新同 nid 重发、标题反映改后文字、另存生成新 nid 与第二钉、删除发 delete 且钉号重排）；对**已安装 0.1.31** 的管道测试 8/8（写文件命名含 nid → 更新只改同一文件不新增 → 日志 `updated … dsh 里的 chip 不变` → 未知 nid 被拒不产生文件 → 删除清掉文件）。
+
 ## dsh-review 0.1.71 + dsh-review-vscode 0.1.30 (2026-10-23) — 批注「看不见」：加编号图钉 + 已送确认
 
 ### 现象与定性（日志先证明链路是通的）
