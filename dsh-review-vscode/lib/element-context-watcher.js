@@ -386,6 +386,25 @@ function startElementContextWatcher(context, log) {
   }
 
   bridge.setBrowserCommentHandler(sendCommentToDsh)
+        // 0.1.88: find the pin whose annotation matches this md's 批注 text and click its delete
+  // button over CDP. The md file we wrote carries both the text and the page URL.
+  async function removeNativePinForFile(file) {
+    try {
+      const md = fs.readFileSync(file, 'utf8')
+      const cm = /\n##\s*批注\s*\n+([\s\S]*?)(?:\n\n|```|$)/.exec(md)
+      const um = /^-\s*URL:\s*(\S+)/m.exec(md)
+      const body = cm ? String(cm[1]).trim() : ''
+      if (!body) { log.appendLine(TAG + ' · 撤图钉：md 里没有批注文字，跳过'); return false }
+      const url = (um && um[1]) || bridge.browserPageUrl() || ''
+      const r = await bridge.removePin(url, body)
+      log.appendLine(TAG + ' · 撤图钉：' + (r && r.ok ? '已点到删除按钮' : '没成：' + String((r && r.why) || '?')) + ' ｜ 批注=' + JSON.stringify(body).slice(0, 40))
+      return !!(r && r.ok)
+    } catch (e) {
+      log.appendLine(TAG + ' · 撤图钉失败: ' + String((e && e.message) || e))
+      return false
+    }
+  }
+
   bridge.setReferenceDroppedHandler(async (payload) => {
     if (!cfg('bindDshRemoval', true)) return false
     const file = String((payload && payload.path) || '')
@@ -725,25 +744,15 @@ function startElementContextWatcher(context, log) {
         } else {
           log.appendLine(TAG + ' · 元素详情没拿到（探针没连上或元素已经变了）label=' + f.label)
         }
-        // 0.1.88: find the pin whose annotation matches this md's 批注 text and click its delete
-  // button over CDP. The md file we wrote carries both the text and the page URL.
-  async function removeNativePinForFile(file) {
-    try {
-      const md = fs.readFileSync(file, 'utf8')
-      const cm = /\n##\s*批注\s*\n+([\s\S]*?)(?:\n\n|```|$)/.exec(md)
-      const um = /^-\s*URL:\s*(\S+)/m.exec(md)
-      const body = cm ? String(cm[1]).trim() : ''
-      if (!body) { log.appendLine(TAG + ' · 撤图钉：md 里没有批注文字，跳过'); return false }
-      const url = (um && um[1]) || bridge.browserPageUrl() || ''
-      const r = await bridge.removePin(url, body)
-      log.appendLine(TAG + ' · 撤图钉：' + (r && r.ok ? '已点到删除按钮' : '没成：' + String((r && r.why) || '?')) + ' ｜ 批注=' + JSON.stringify(body).slice(0, 40))
-      return !!(r && r.ok)
-    } catch (e) {
-      log.appendLine(TAG + ' · 撤图钉失败: ' + String((e && e.message) || e))
-      return false
-    }
-  }
-
+        // 0.1.91: VS Code only paints a pin for a visible element, so a 0×0 target can never
+        // have one. Skipping those keeps the dsh chip count equal to the page pin count (the
+        // user's rule) and stops the flood of stale references restored into the composer.
+        const bb = payload.bounds
+        if (bits && bits.ok && bb && (Number(bb.width) <= 0 || Number(bb.height) <= 0)) {
+          try { deliveredKeys.delete(dkey) } catch (e) { /* noop */ }
+          log.appendLine(TAG + ' · 跳过：元素 0×0（VS Code 不画图钉，所以不建方块）label=' + f.label + ' ｜ 批注=' + JSON.stringify(f.comment).slice(0, 30))
+          return
+        }
   // 0.1.75: report the page's actual pin/overlay situation, so it is visible in the log
         // whether VS Code's pin is a DOM node we can reach at all.
         try {
