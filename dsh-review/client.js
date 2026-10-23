@@ -1318,7 +1318,7 @@ window.__ModuleLoader__.load({
           // showed up in the log, and a scope request fired at page load reports 0 anyway.)
           if (!trackedRefs.size) return;
           try {
-            window.parent.postMessage({ type: "dshScopeRequest", build: "0.1.80", watching: Array.from(trackedRefs.keys()).slice(0, 3) }, "*");
+            window.parent.postMessage({ type: "dshScopeRequest", build: "0.1.81", watching: Array.from(trackedRefs.keys()).slice(0, 3) }, "*");
           } catch (err) { /* noop */ }
         }
         function trackInsertedRefs(refs, list) {
@@ -1328,8 +1328,27 @@ window.__ModuleLoader__.load({
           all.forEach(function (r) {
             const path = String((r && (r.path || r.ref || r.label)) || '');
             const name = path.split('/').pop();
-            if (name && /\.md$/.test(name)) { trackedRefs.set(name, { path: path }); announceSent = false; }
+            if (name && /\.md$/.test(name)) { trackedRefs.set(name, { path: path, el: null }); announceSent = false; }
           });
+          // 0.1.81: remember the chip's own node. Text scanning the body was useless — the
+          // file name also appears elsewhere in the page, so a deleted chip still looked
+          // present. Node identity (isConnected) is exact.
+          setTimeout(function () {
+            const scope = composerScope();
+            if (!scope) return;
+            const nodes = scope.querySelectorAll('span,div,a,button');
+            trackedRefs.forEach(function (info, nm) {
+              if (info.el) return;
+              for (let i = 0; i < nodes.length; i++) {
+                const el = nodes[i];
+                if (String(el.textContent || '').trim() !== nm) continue;
+                const parent = el.parentElement;
+                if (parent && parent !== scope && String(parent.textContent || '').trim() === nm) continue;
+                info.el = el;
+                break;
+              }
+            });
+          }, 400);
           announceTracking();
         }
         function sweepDroppedRefs() {
@@ -1341,7 +1360,7 @@ window.__ModuleLoader__.load({
           const text = String(scope.textContent || '');
           if (!text.trim()) return; // composer cleared = the message was sent, not deleted
           trackedRefs.forEach(function (info, name) {
-            if (text.indexOf(name) !== -1) return;
+            if (info.el) { if (info.el.isConnected) return; } else if (text.indexOf(name) !== -1) return;
             trackedRefs.delete(name);
             try { window.parent.postMessage({ type: "dshDropReference", path: info.path, name: name }, "*"); } catch (err) { /* noop */ }
           });
@@ -1560,7 +1579,7 @@ window.__ModuleLoader__.load({
             setTimeout(compactNativeStatsLine, 800);
             applyZoom();
             // Scope is owned by apply()-level listener; ask again in case early posts were dropped.
-            try { window.parent.postMessage({ type: "dshScopeRequest", build: "0.1.80", watching: Array.from(trackedRefs.keys()).slice(0, 3) }, "*"); } catch (err) { /* noop */ }
+            try { window.parent.postMessage({ type: "dshScopeRequest", build: "0.1.81", watching: Array.from(trackedRefs.keys()).slice(0, 3) }, "*"); } catch (err) { /* noop */ }
             return;
           }
           if (msg.type === "dshChromeState") {
@@ -4053,7 +4072,7 @@ window.__ModuleLoader__.load({
           setVscodeScope(msg.paths, msg.rawPaths);
         }
         window.addEventListener("message", onScopeFromHost);
-        try { window.parent.postMessage({ type: "dshScopeRequest", build: "0.1.80", watching: Array.from(trackedRefs.keys()).slice(0, 3) }, "*"); } catch (err) { /* noop */ }
+        try { window.parent.postMessage({ type: "dshScopeRequest", build: "0.1.81", watching: Array.from(trackedRefs.keys()).slice(0, 3) }, "*"); } catch (err) { /* noop */ }
         const timer = setInterval(checkWorkbenchScope, 800);
         return function () {
           clearInterval(timer);

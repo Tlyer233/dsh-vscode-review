@@ -1128,15 +1128,21 @@ function setupDshBrowser(context) {
 
       // 0.1.58: the watcher calls this when a native comment disappears from the Copilot
       // composer (the user deleted the pin), so the chip we inserted goes away too.
-      try {
-        vscode.commands.registerCommand('dshReview.removeDshChip', (name) => {
-          const n = String(name || '')
-          if (!n) return false
-          try { view.webview.postMessage({ type: 'dshRemoveReference', name: n }) } catch { return false }
-          state.log('[chip-remove] 请求删 dsh 方块 ' + n)
-          return true
-        })
-      } catch { /* already registered */ }
+      // 0.1.81: register once and post through state.dshView. The old version captured this
+      // resolve's `view` and re-registered on every re-show; the surviving handler pointed at
+      // a disposed webview, so the request was logged but silently went nowhere.
+      if (!state.removeDshChipRegistered) {
+        state.removeDshChipRegistered = true
+        try {
+          vscode.commands.registerCommand('dshReview.removeDshChip', (name) => {
+            const n = String(name || '')
+            if (!n || !state.dshView) return false
+            try { state.dshView.webview.postMessage({ type: 'dshRemoveReference', name: n }) } catch { return false }
+            state.log('[chip-remove] 请求删 dsh 方块 ' + n)
+            return true
+          })
+        } catch { /* registered elsewhere */ }
+      }
       view.webview.onDidReceiveMessage((msg) => {
         if (msg.type === 'dshClientBuild') {
           state.log('[client] 正在运行的 dsh 客户端构建 = ' + String(msg.version || '?'))
