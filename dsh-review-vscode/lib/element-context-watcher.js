@@ -450,7 +450,16 @@ function startElementContextWatcher(context, log) {
     try {
       input = vscode.workspace.textDocuments.filter((d) => d.uri.scheme === 'chatSessionInput').sort((a, b) => String(b.uri).length - String(a.uri).length)[0]
     } catch { return }
-    if (!input) return
+    if (!input) {
+      // 0.1.55: this is the silent failure the user hit in a second window — no
+      // chatSessionInput document at all means that window never opened the Copilot
+      // chat, so there is nothing to read the native comment from.
+      if (Date.now() - lastNoDocLog > 10000) {
+        lastNoDocLog = Date.now()
+        log.appendLine(TAG + ' · 这个窗口没有 Copilot 输入框文档（chatSessionInput）——先在侧栏打开 Copilot 聊天面板，批注才收得到')
+      }
+      return
+    }
     let text = ''
     try { text = input.getText() } catch { return }
     if (!text) return
@@ -603,6 +612,15 @@ function startElementContextWatcher(context, log) {
 
   const onDocOpen = (doc) => {
     const u = doc.uri
+    // 0.1.55: our own sources literally contain the marker text ("Attached Element
+    // Context"), so opening the plugin's files in the editor used to dump hundreds of
+    // code lines into the log and bury the useful lines.
+    try {
+      const fs0 = u.fsPath || ''
+      if (fs0.indexOf('dsh-review-vscode') !== -1 || fs0.indexOf('dsh-review-plugin') !== -1 || /(^|[\/])(CHANGELOG|package)\.md?$/.test(fs0)) {
+        return
+      }
+    } catch { /* noop */ }
     if (u.toString() === TMP_URI) {
       log.appendLine(TAG + ' · doc-open TMP echo (我们自己存的, skip)')
       return
@@ -690,6 +708,7 @@ function startElementContextWatcher(context, log) {
   // why the user's comment was swallowed as "基线：12 条旧引用".
   seedBaseline()
   let lastScanLog = 0
+  let lastNoDocLog = 0
   context.subscriptions.push(vscode.commands.registerCommand('dshReview.dumpDocs', () => {
     const docs = vscode.workspace.textDocuments
     log.appendLine(TAG + ' --- dump ' + docs.length + ' docs ---')
