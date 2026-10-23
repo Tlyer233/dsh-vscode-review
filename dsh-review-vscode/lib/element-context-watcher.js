@@ -745,9 +745,12 @@ function startElementContextWatcher(context, log) {
       const before = prev instanceof Map ? (prev.get(f.key) || 0) : 0
       const done = handled.get(f.key) || 0
       const dkey = keyOf(f.label, f.comment)
-      // first snapshot: deliver only references that never got an md file (restored history
-      // is skipped by the disk check, a late-opened panel's live comment is not)
-      if (first ? deliveredKeys.has(dkey) : f.nth <= before + done) continue
+      // 0.1.105: the disk-based "already archived" skip used to swallow a brand-new comment
+      // just because the user reused an old annotation text (log: 快照 refs=1 delta=1 then no
+      // 原生批注 -> dsh, and the dsh focus was never taken back either). Stale references are
+      // cleared at start now, so the occurrence count alone decides; a big replay is still
+      // swallowed by MAX_DELTA above.
+      if (f.nth <= before + done) continue
       handled.set(f.key, done + 1)
       deliveredKeys.add(dkey)
       fresh++
