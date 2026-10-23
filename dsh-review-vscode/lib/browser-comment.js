@@ -30,7 +30,7 @@ const http = require('node:http')
 const CDP_PORT = 9223
 const TAG = '[browser-comment]'
 const PREFIX = '__DSH_BCC__'
-const VERSION = 'v2'
+const VERSION = 'v3'
 const RESCAN_MS = 2500
 
 /** Page-side: floating trigger, element picker, in-place comment box. */
@@ -124,6 +124,42 @@ const INJECT_JS = `(() => {
 
   let mode = 'idle' // idle | pick
   let picked = null
+  // 0.1.30: a successful send used to look like nothing happened ("页面也没有标注,
+  // 输入的内容也没有了" — we clear the box). Every note now leaves a numbered pin on
+  // the element, the panel confirms the send, and the button shows the count.
+  const notes = []
+  const pins = []
+  const pinStyle = document.createElement('style')
+  pinStyle.textContent = '.pin { position: fixed; z-index: 2147483647; width: 18px; height: 18px;' +
+    ' border-radius: 50%; background: #0a84ff; color: #fff; border: 1px solid #fff;' +
+    ' font: 11px/16px -apple-system, BlinkMacSystemFont, sans-serif; text-align: center;' +
+    ' cursor: help; box-shadow: 0 1px 4px rgba(0,0,0,.5); }'
+  root.appendChild(pinStyle)
+
+  function positionPins() {
+    for (let i = pins.length - 1; i >= 0; i--) {
+      const p = pins[i]
+      if (!p.el || !p.el.isConnected) { try { p.node.remove() } catch (e) { /* noop */ } pins.splice(i, 1); continue }
+      const r = p.el.getBoundingClientRect()
+      p.node.style.left = Math.round(Math.max(0, r.left - 7)) + 'px'
+      p.node.style.top = Math.round(Math.max(0, r.top - 9)) + 'px'
+      p.node.style.display = (r.width || r.height) ? 'block' : 'none'
+    }
+  }
+
+  function addPin(el, text) {
+    const b = document.createElement('div')
+    b.className = 'pin'
+    b.textContent = String(notes.length)
+    b.title = '#' + notes.length + ' ' + text
+    root.appendChild(b)
+    pins.push({ el: el, node: b })
+    positionPins()
+  }
+
+  document.addEventListener('scroll', positionPins, true)
+  window.addEventListener('resize', positionPins)
+  setInterval(positionPins, 1000) // SPA re-renders move elements without scrolling
 
   function labelFor(el) {
     const r = el.getBoundingClientRect()
@@ -221,6 +257,10 @@ const INJECT_JS = `(() => {
       size: bits.bounds.width + 'x' + bits.bounds.height,
     }, bits))
     // Same element stays selected so a second note can be typed right away.
+    notes.push({ text: text, label: pill.textContent })
+    addPin(picked, text)
+    hint.textContent = '已送 dsh #' + notes.length + '（内容已存文件，dsh 里是文件 chip）'
+    btn.textContent = 'dsh \\u270e ' + notes.length
     ta.value = ''
     place(picked)
     ta.focus()
@@ -283,6 +323,8 @@ const INJECT_JS = `(() => {
       hasPicked: !!picked,
       panelOpen: panel.style.display === 'block',
       textChars: String(ta.value || '').length,
+      notes: notes.length,
+      pins: pins.length,
     }
   }
 

@@ -44,6 +44,17 @@
 - 版本说明:本修复与「元素批注」同日开发,原报 0.1.70/0.1.26 与批注功能撞号,rebase 后改号 0.1.71/0.1.28
 
 
+## dsh-review 0.1.71 + dsh-review-vscode 0.1.30 (2026-10-23) — 批注「看不见」：加编号图钉 + 已送确认
+
+### 现象与定性（日志先证明链路是通的）
+`[browser-comment] injected` → `[browser-comment] comment label=span.st-metric__label 366 × 20 chars=14` → `[element-context] [comment] wrote /tmp/dsh-comments/comment-20261023-095049-span-6ip0.md -> dsh ok=true kind=file`，随后用户点 chip：`openFile fs-scan: …` + `openFile … (keepFocus) + open-guard 2500ms`（0.1.29 的 guard 也顺便验到了）。⇒ 批注确实进了 dsh；用户的抱怨「输入完就卡这里 / 内容也没有了 / 页面也没有标注」是**可见性**问题：提交后我们清空输入框，页面上没有任何留下物。
+
+### 改动（只在页内脚本）
+- 每条批注在元素左上角留一个**蓝色编号圆钉**（`.pin`，独立 `<style>`，hover/click 有 `title` 显示该条文字），`notes[]`/`pins[]` 记账；钉随 `scroll`(capture)/`resize`/`setInterval(1000)` 重算位置，元素被 SPA 换掉自动移除（`isConnected` 判定）。
+- 提交后面板提示改成 `已送 dsh #N（内容已存文件，dsh 里是文件 chip）`，按钮文案带计数 `dsh ✎ N`。
+- `selftest()` 增加 `notes` / `pins` 计数（命令面板 `dsh: 元素批注自检` 能当场看到）。
+- 页内脚本版本 v2 → **v3**。探针加 5 项（钉存在/编号/title 文字/已送提示/按钮计数）→ **28/28 通过**。
+
 ## dsh-review 0.1.71 + dsh-review-vscode 0.1.29 (2026-10-23) — 批注改成「自建就地浮层」+ 修「点文件 chip 反而冒出 element chip」
 ### 为什么推翻 0.1.26 的「拦 VS Code 评论框」（实测，不是猜）
 用户开着评论框输入 `998877` 的 75 秒里，我把 9223 暴露的**全部 4 个 target**（Strata 页、workbench、2 个 iframe）每 1.5s 扫一遍（含 shadowRoot 与 contentDocument 递归）：没有任何 target 节点数变化（页面 505→505、workbench 1193 不变）、**没有任何 DOM 含 `998877`**；workbench 里对框所在坐标 `elementFromPoint` = `div.browser-placeholder-screenshot`，`Page.captureScreenshot` 里根本没有评论框；`/json/list` 与 `Target.getTargets` 都固定 7 条、框开着也不新增 target。
