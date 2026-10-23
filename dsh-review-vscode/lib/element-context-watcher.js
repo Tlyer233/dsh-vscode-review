@@ -319,6 +319,22 @@ function startElementContextWatcher(context, log) {
     return lastCommentFile
   }
 
+  // 0.1.85: one-shot re-census after an annotation, logged only when the number changed.
+  async function recensusPins(url, before) {
+    try {
+      const pr = await bridge.pagePins(url)
+      if (!pr || !Array.isArray(pr.pins)) return
+      if (pr.pins.length === before) return
+      const order = lastRefs.slice(0)
+      log.appendLine(TAG + ' · 图钉补查：' + before + ' -> ' + pr.pins.length + ' 个')
+      pr.pins.forEach((x, ix) => {
+        const idx = /^[0-9]+$/.test(String(x.n)) ? Number(x.n) - 1 : ix
+        const ref = order[idx]
+        log.appendLine(TAG + ' ·   图钉 #' + (x.n || ix + 1) + ' @' + x.at + ' ' + x.size + (ref ? ' ｜ 批注：@' + ref.label + ' ' + ref.comment : ' ｜ 批注：（第 ' + (idx + 1) + ' 条对不上）'))
+      })
+    } catch { /* noop */ }
+  }
+
   async function dropCopilotLineForMd(file) {
     let md = ''
     try { md = fs.readFileSync(String(file || ''), 'utf8') } catch { return false }
@@ -719,6 +735,9 @@ function startElementContextWatcher(context, log) {
               const pr = await bridge.pagePins(payload.url || '')
               if (pr && Array.isArray(pr.pins)) cps = pr.pins
               log.appendLine(TAG + ' · 图钉普查（CDP 穿透封闭层）：' + (pr ? pr.pins.length + ' 个' : '不可用'))
+              // one-shot re-check: VS Code adds the pin a moment after the composer line, so
+              // the first census is always one short for the annotation just made. Not a poll.
+              if (payload.url) setTimeout(() => { void recensusPins(payload.url, cps.length) }, 900)
             }
             // VS Code numbers the pins in the same order as the chat references (its own test
             // plan), so pairing by number gives the annotation text for each pin.
