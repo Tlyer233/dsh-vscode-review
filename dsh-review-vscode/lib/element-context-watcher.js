@@ -451,6 +451,14 @@ function startElementContextWatcher(context, log) {
       log.appendLine(TAG + ' · chat 输入框基线：' + found.length + ' 条旧引用（不送 dsh）')
       return
     }
+    let deltaSeen = 0
+    for (const f of found) { if (!prev.has(f.key)) deltaSeen++ }
+    try {
+      if (Date.now() - lastScanLog > 1200) {
+        lastScanLog = Date.now()
+        log.appendLine(TAG + ' · chat 快照 refs=' + found.length + ' delta=' + deltaSeen + (hint ? ' (元素文档)' : ''))
+      }
+    } catch { /* noop */ }
     let delta = 0
     for (const f of found) { if (!prev.has(f.key)) delta++ }
     if (delta > MAX_DELTA) {
@@ -641,6 +649,11 @@ function startElementContextWatcher(context, log) {
   // opens, when it is still empty) — otherwise the first comment after a restart is
   // swallowed as part of the baseline.
   const seedBaseline = () => { try { scanNativeComments('', '') } catch { /* noop */ } }
+  // 0.1.50: snapshot at activation too. The composer document usually already exists by
+  // then (Copilot restored it), and the doc-open seed never fires for it — that race is
+  // why the user's comment was swallowed as "基线：12 条旧引用".
+  seedBaseline()
+  let lastScanLog = 0
   context.subscriptions.push(vscode.commands.registerCommand('dshReview.dumpDocs', () => {
     const docs = vscode.workspace.textDocuments
     log.appendLine(TAG + ' --- dump ' + docs.length + ' docs ---')
