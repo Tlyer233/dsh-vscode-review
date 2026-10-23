@@ -2,7 +2,7 @@
   "name": "dsh-review-vscode",
   "displayName": "dsh review — inline diff + dsh sidebar",
   "description": "Inline review (shadow/pending) + dsh webview sidebar",
-  "version": "0.1.44",
+  "version": "0.1.45",
   "publisher": "dsn",
   "engines": {
     "vscode": "^1.85.0"
@@ -199,7 +199,7 @@
         },
         "dshReview.elementContext.clickChips": {
           "type": "boolean",
-          "default": true,
+          "default": false,
           "markdownDescription": "0.1.42 起默认开：点一下聊天里的元素 chip 会把附件文档打开，这是「刚发生了原生批注」的可靠信号（也是页面 URL 的来源），随后我们用不会弹保存提示的方式把它关掉。"
         },
         "dshReview.elementContext.nativeToDsh": {
@@ -209,7 +209,7 @@
         },
         "dshReview.elementContext.closeNativeDoc": {
           "type": "boolean",
-          "default": true,
+          "default": false,
           "markdownDescription": "0.1.37：VS Code 每次加元素批注都会自己打开一个 untitled 的 Attached Element Context 标签。开着时我们用「存到临时文件 → 关闭 → 删临时文件」的方式把它静默关掉（不会弹保存提示），不往 dsh 插任何东西。"
         },
         "dshReview.elementContext.elementChain": {
