@@ -30,7 +30,7 @@ const http = require('node:http')
 const CDP_PORT = 9223
 const TAG = '[browser-comment]'
 const PREFIX = '__DSH_BCC__'
-const VERSION = 'v4'
+const VERSION = 'v5'
 const RESCAN_MS = 2500
 
 /** Page-side: floating trigger, element picker, in-place comment box. */
@@ -147,14 +147,35 @@ const INJECT_JS = `(() => {
     ' cursor: help; box-shadow: 0 1px 4px rgba(0,0,0,.5); }'
   root.appendChild(pinStyle)
 
+  function placeAt(p, rect) {
+    p.node.style.left = Math.round(Math.max(0, rect.left - 7)) + 'px'
+    p.node.style.top = Math.round(Math.max(0, rect.top - 9)) + 'px'
+    p.node.style.display = 'block'
+    // Page-space memory: a re-render that replaces the node must not eat the pin.
+    p.last = { left: rect.left + window.scrollX, top: rect.top + window.scrollY, width: rect.width, height: rect.height }
+  }
+
+  // 0.1.32: Strata re-renders its metric spans on every data tick, which detached
+  // the picked node and made pins silently vanish (user: "①怎么不见了"). Re-resolve
+  // the element by its selector, otherwise park the pin at its last known spot.
   function positionPins() {
     for (let i = pins.length - 1; i >= 0; i--) {
       const p = pins[i]
-      if (!p.el || !p.el.isConnected) { try { p.node.remove() } catch (e) { /* noop */ } pins.splice(i, 1); continue }
-      const r = p.el.getBoundingClientRect()
-      p.node.style.left = Math.round(Math.max(0, r.left - 7)) + 'px'
-      p.node.style.top = Math.round(Math.max(0, r.top - 9)) + 'px'
-      p.node.style.display = (r.width || r.height) ? 'block' : 'none'
+      if (!p.el || !p.el.isConnected) {
+        let found = null
+        try { found = p.note && p.note.bits && p.note.bits.selector ? document.querySelector(p.note.bits.selector) : null } catch (e) { found = null }
+        if (found && found !== p.el) { p.el = found; if (p.note) p.note.el = found }
+      }
+      if (p.el && p.el.isConnected) {
+        const r = p.el.getBoundingClientRect()
+        if (r.width || r.height) placeAt(p, r)
+        else if (p.last) placeAt(p, { left: p.last.left - window.scrollX, top: p.last.top - window.scrollY, width: p.last.width, height: p.last.height })
+      } else if (p.last) {
+        placeAt(p, { left: p.last.left - window.scrollX, top: p.last.top - window.scrollY, width: p.last.width, height: p.last.height })
+      } else {
+        try { p.node.remove() } catch (e) { /* noop */ }
+        pins.splice(i, 1)
+      }
     }
   }
 
@@ -166,7 +187,8 @@ const INJECT_JS = `(() => {
     b.addEventListener('click', function (e) { e.preventDefault(); e.stopPropagation(); showCard(notes.indexOf(n)) })
     root.appendChild(b)
     n.node = b
-    pins.push({ el: n.el, node: b, note: n })
+    const r0 = n.el && n.el.getBoundingClientRect ? n.el.getBoundingClientRect() : null
+    pins.push({ el: n.el, node: b, note: n, last: r0 ? { left: r0.left + window.scrollX, top: r0.top + window.scrollY, width: r0.width, height: r0.height } : null })
     positionPins()
   }
 
@@ -216,7 +238,11 @@ const INJECT_JS = `(() => {
     c.idx = idx
     c.h.textContent = '#' + n.n + '  ' + n.label
     c.t.value = n.text
-    const r = n.el.getBoundingClientRect()
+    let r = n.el && n.el.isConnected ? n.el.getBoundingClientRect() : null
+    if (!r || !(r.width || r.height)) {
+      const cpin = pins.filter((q) => q.note === n)[0]
+      r = cpin && cpin.last ? { left: cpin.last.left - window.scrollX, top: cpin.last.top - window.scrollY, width: cpin.last.width, height: cpin.last.height, bottom: cpin.last.top - window.scrollY + cpin.last.height, right: cpin.last.left - window.scrollX + cpin.last.width } : { left: 20, top: 20, width: 0, height: 0, bottom: 20, right: 20 }
+    }
     let x = r.left
     if (x + 340 > window.innerWidth) x = Math.max(8, window.innerWidth - 340)
     let y = r.bottom + 10

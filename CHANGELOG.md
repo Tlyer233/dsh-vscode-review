@@ -44,6 +44,17 @@
 - 版本说明:本修复与「元素批注」同日开发,原报 0.1.70/0.1.26 与批注功能撞号,rebase 后改号 0.1.71/0.1.28
 
 
+## dsh-review 0.1.71 + dsh-review-vscode 0.1.32 (2026-10-23) — 图钉被 SPA 重渲染吃掉（"①怎么不见了"）
+
+### 原因（不是用户点太快）
+Strata 每秒刷新监控卡片的 span，`v4` 的 `positionPins()` 一见 `!el.isConnected` 就 `node.remove()` ⇒ 元素被重建 = 图钉消失（4 条批注都写进了 `/tmp/dsh-comments/comment-…-i4ii{1..4}.md`，命名带 nid 已生效，只是钉子活不过一次数据刷新）。
+
+### 修法（页内脚本 v5）
+- `placeAt()` 每次定位都把位置换算成**页面坐标**存进 `p.last`（`rect + scrollX/Y`）。
+- 定位时元素已脱离文档 ⇒ 先用 `note.bits.selector`（`#mv-temp` 这类，`selectorFor()` 早就生成了）**重新认新节点**并 rebind（`p.el`/`note.el` 一起换）；认不到就退回 `p.last` 换算回视口坐标**原地停着**；只有连 `last` 都没有才删钉。
+- `showCard()` 同样：节点脱离就用 `p.last` 定位卡片（否则点钉没反应）。
+- 探针加 4 项（重渲染后钉还在并按新节点位置 493px、能 re-resolve、元素彻底没了停在原位、脱离态也能展开卡片）→ **19/19 通过**。
+
 ## dsh-review 0.1.71 + dsh-review-vscode 0.1.31 (2026-10-23) — 批注：发完就收框 + 图钉可展开修改
 
 ### 用户两点
