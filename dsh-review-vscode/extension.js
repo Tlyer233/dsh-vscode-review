@@ -72,7 +72,11 @@ function activate(context) {
   // Neither side feature may abort activate(): in 0.1.26 a bad module export threw
   // in here, activate() died before registering commands, and EVERY dsh command
   // answered "not found" (whole sidebar dead). Keep them isolated.
-  for (const [name, fn] of [['element-context', startElementContextWatcher], ['cdp', startCdpProbe]]) {
+  // 0.1.34: native-comment receiver. VS Code's own comment box is unreachable from
+  // CDP, so tools/patch_comment_hook.py adds a beacon inside the shipped bundles that
+  // POSTs each comment here; the payload goes through the same md-file + chip pipeline.
+  const startNativeComment = (ctx, lg) => require('./lib/native-comment-server')({ context: ctx, log: lg })
+  for (const [name, fn] of [['element-context', startElementContextWatcher], ['cdp', startCdpProbe], ['native-comment', startNativeComment]]) {
     try {
       fn(context, log)
     } catch (e) {

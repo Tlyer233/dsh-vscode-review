@@ -44,6 +44,24 @@
 - 版本说明:本修复与「元素批注」同日开发,原报 0.1.70/0.1.26 与批注功能撞号,rebase 后改号 0.1.71/0.1.28
 
 
+## dsh-review 0.1.71 + dsh-review-vscode 0.1.34 (2026-10-23) — 原生「Comment on Elements」接进 dsh（补丁路线 A 起步）
+
+### 事实（先把「能不能改」查清楚）
+- `Contents/Resources/app/out/` 是普通目录（只有 `node_modules.asar`）⇒ bundle 可直接编辑；workbench 20.7MB / sessions 21.8MB 都是明文 minified。
+- 原生评论链路在 bundle 里可见：`_revealChatWidgetForAttachment` → `attachmentModel.addContext(...)` → `_insertElementCommentReference(v,t,f,ids,elementId,comment)` → `v.focusInput()`（这就是「跳到 Copilot」）；图钉/双向同步由 `inputEditor.onDidChangeModelContent` ↔ `browserViewService.setElementComments()` 驱动，VS Code 自己用 `browserViewCDPService` 往页面注入。
+- 第三方扩展进不去：Marketplace 上 `codex-browser-bridge` 作者明说集成浏览器是内部 UI、无公开 API，只能自己开 Playwright 窗口。
+- 探针实验：把 `F(10211,"Comment on Elements")` 的 original 改成 `⟨WBK⟩/⟨SES⟩`，用户实测菜单文字**没变** ⇒ 界面文字取自总表 `out/nls.messages.json`（该串只 1 份，两个 bundle 共用）⇒ 想靠文案区分渲染者不可行；好在**两个 bundle 的补丁锚点字节完全相同**，直接两处都打，扩展侧去重即可。
+
+### 实现
+- `tools/patch_comment_hook.py`：在锚点 `!1;t.elementSelectionState.active?this._commentSessionsWithComments.add(t):v.focusInput()}`（两文件各出现 1 次）后插一段 IIFE，把 `{url,name,comment,elementId}` 以 GET query 送到 `http://127.0.0.1:43167/dsh-comment`，`fetch(mode:no-cors)` 与 `new Image()` 双发（CSP 只允许 img 时也能通）；`.dsh-bak` 备份、锚点数≠1 就跳过并提示「VS Code 升级了，重新定位锚点」，`--check` / `--revert` 可查可撤。
+- `lib/native-comment-server.js`：固定端口 43167 的 http 监听（补丁是静态文本，读不到设置，所以端口写死），4s 内同一 `(elementId|name|comment)` 去重（双发只算一条），再把 payload 灌进**已有**的批注管道 `bridge.deliverBrowserComment`（`ev:'comment'`, `locate:'native'`）⇒ 原生评论也会生成 `/tmp/dsh-comments/*.md` + dsh 一个文件 chip。
+- `extension.js`：把 `native-comment` 加进那条逐个 try/catch 的启动列表（0.1.26 那次教训：一个启动失败不能吃光全部命令）。
+
+### 验证
+- 锚点唯一性：workbench / sessions 各 1 次（脚本先 `--check` 后 apply，apply 后 `patched=True anchor=0 backup=True`）。
+- 服务自检（不依赖 VS Code）：连续三次 GET ⇒ 状态码 `204 204 204`、handler 只收到 **1** 次（去重生效）、未知路径 404、端口占用会记 `listen failed`。
+- **待你实测**：原生 ⌥⌘C 批一条 → 日志 `[native-comment] native comment -> dsh ok=true` + dsh 出现文件 chip。没有这行 = CSP 把 fetch/img 都拦了，退路是改锚点写成 `postMessage`/`localStorage` 或换端口。
+
 ## dsh-review 0.1.71 + dsh-review-vscode 0.1.33 (2026-10-23) — 提交时节点已被重渲染 → md 里尺寸 0x0、祖先链只剩一层
 
 ### 触发文件
