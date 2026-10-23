@@ -893,8 +893,12 @@ function startElementContextWatcher(context, log) {
   // and each became a new dsh chip. Clear them once per start — a fresh composer means no
   // replay, and VS Code drops the matching pins/attachments itself.
   let startCleared = false
+  const activatedAt = Date.now()
   async function clearComposerOnStart() {
     if (!cfg('clearStaleOnStart', true) || startCleared) return
+    // 0.1.100: only within the first moments after activation, so a late call can never eat a
+    // comment the user is working on.
+    if (Date.now() - activatedAt > 2500) { startCleared = true; return }
     let doc = null
     try {
       doc = vscode.workspace.textDocuments.filter((d) => d.uri && d.uri.scheme === 'chatSessionInput')[0] || null
@@ -919,7 +923,10 @@ function startElementContextWatcher(context, log) {
 
   const onDocOpenSeed = (doc) => {
     try {
-      if (doc && doc.uri && doc.uri.scheme === 'chatSessionInput') { void clearComposerOnStart(); seedBaseline() }
+      // 0.1.100: do NOT clear on doc-open — the composer document can appear a second after the
+      // user's first comment, and clearing then deleted the comment they had just written (dsh
+      // got nothing) while the edit pulled focus into Copilot. Activation-time clearing only.
+      if (doc && doc.uri && doc.uri.scheme === 'chatSessionInput') seedBaseline()
     } catch { /* noop */ }
   }
 
