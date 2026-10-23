@@ -386,7 +386,16 @@ function startElementContextWatcher(context, log) {
   }
 
   bridge.setBrowserCommentHandler(sendCommentToDsh)
-        // 0.1.88: find the pin whose annotation matches this md's 批注 text and click its delete
+        function refocusDsh() {
+    if (!cfg('focusDshAfterCapture', true)) return
+    for (const delay of [200, 700, 1400]) {
+      setTimeout(() => {
+        vscode.commands.executeCommand('dshReview.dshWebview.focus').catch(() => { /* noop */ })
+      }, delay)
+    }
+  }
+
+  // 0.1.88: find the pin whose annotation matches this md's 批注 text and click its delete
   // button over CDP. The md file we wrote carries both the text and the page URL.
   async function removeNativePinForFile(file) {
     try {
@@ -420,6 +429,10 @@ function startElementContextWatcher(context, log) {
         else if (r2) r = r2
       }
       log.appendLine(TAG + ' · 撤图钉：' + (r && r.ok ? '已点到删除按钮' : '没成：' + String((r && r.why) || '?')) + ' ｜ 批注=' + JSON.stringify(body).slice(0, 40))
+      // 0.1.94: closing a comment preview makes VS Code move focus into the Copilot input
+      // (its own test plan: "when disabled, focus should move into the chat input if there are
+      // any comments"), which is what looked like "sometimes it opens Copilot". Take it back.
+      if (r && r.ok) refocusDsh()
       return !!(r && r.ok)
     } catch (e) {
       log.appendLine(TAG + ' · 撤图钉失败: ' + String((e && e.message) || e))
