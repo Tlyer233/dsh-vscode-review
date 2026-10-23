@@ -249,7 +249,7 @@ function startElementContextWatcher(context, log) {
       // 0.1.53: the native flow focuses the Copilot composer right after inserting its
       // reference, which stole the focus back from our single 200ms attempt — re-assert
       // later too so the caret ends up in the dsh box (user's ask).
-      for (const delay of [250]) {
+      for (const delay of [200, 700, 1400]) {
         setTimeout(() => {
           vscode.commands.executeCommand('dshReview.dshWebview.focus').catch(() => { /* noop */ })
         }, delay)
@@ -551,24 +551,6 @@ function startElementContextWatcher(context, log) {
     // live comment (log: 基线：8 条旧引用, dsh got 0). A change that brings in more than
     // MAX_DELTA refs at once is the session restoring its history, not new comments.
     const MAX_DELTA = 3
-    // 0.1.58: reverse binding. key -> md files we delivered for it, so when the count of a
-    // key drops (the user deleted the pin / the Copilot line) we can tell dsh to drop the
-    // matching chip. Suppressed for 1.5s around our own deletions to avoid echo loops.
-    if (Date.now() - lastSelfDelete > 1500 && prev) {
-      const missing = []
-      prev.forEach((count, key) => {
-        const nowCount = next.get(key) || 0
-        for (let i = nowCount; i < count; i++) missing.push(key)
-      })
-      for (const key of missing) {
-        const files = deliveredFiles.get(key)
-        if (!files || !files.length) continue
-        const name = String(files.pop() || '').split('/').pop()
-        if (!name || !cfg('bindDshRemoval', true)) continue
-        log.appendLine(TAG + ' · Copilot 那行没了 -> 请求删 dsh 方块 ' + name)
-        void vscode.commands.executeCommand('dshReview.removeDshChip', name).then(undefined, () => { /* noop */ })
-      }
-    }
     const prev = inputBaseline.get(id)
     if (!prev) {
       inputBaseline.set(id, next)
@@ -591,6 +573,24 @@ function startElementContextWatcher(context, log) {
       return
     }
     inputBaseline.set(id, next)
+    // 0.1.58: reverse binding. key -> md files we delivered for it, so when the count of a
+    // key drops (the user deleted the pin / the Copilot line) we can tell dsh to drop the
+    // matching chip. Suppressed for 1.5s around our own deletions to avoid echo loops.
+    if (Date.now() - lastSelfDelete > 1500 && prev) {
+      const missing = []
+      prev.forEach((count, key) => {
+        const nowCount = next.get(key) || 0
+        for (let i = nowCount; i < count; i++) missing.push(key)
+      })
+      for (const key of missing) {
+        const files = deliveredFiles.get(key)
+        if (!files || !files.length) continue
+        const name = String(files.pop() || '').split('/').pop()
+        if (!name || !cfg('bindDshRemoval', true)) continue
+        log.appendLine(TAG + ' · Copilot 那行没了 -> 请求删 dsh 方块 ' + name)
+        void vscode.commands.executeCommand('dshReview.removeDshChip', name).then(undefined, () => { /* noop */ })
+      }
+    }
     const handled = new Map() // deliver only the newly appeared copies of each key
     let fresh = 0
     for (const f of found) {
