@@ -256,7 +256,7 @@ const PROBE_JS = `(function () {
       return JSON.stringify(b)
     },
   }
-  try { console.log('${PREFIX}' + JSON.stringify({ ev: 'installed', url: location.href, probe: VERSION })) } catch (e) { /* noop */ }
+  try { console.log('\${PREFIX}' + JSON.stringify({ ev: 'installed', url: location.href, probe: VERSION })) } catch (e) { /* noop */ }
   return 'installed'
 })()`
 
@@ -333,6 +333,16 @@ function startBrowserComment(opts) {
         let parsed = null
         try { parsed = typeof v === 'string' ? JSON.parse(v) : v } catch { parsed = null }
         cb(parsed)
+        return
+      }
+      // 0.1.82: an injection sent while the page is reloading is thrown away, and we only
+      // sent it once per attach — that is why the log showed 元素详情没拿到 / 探针没答（null）
+      // after the user refreshed the browser page. Each new execution context means a fresh
+      // document, so re-send the probe then (no polling).
+      if (msg.method === 'Runtime.executionContextCreated') {
+        try {
+          ws.send(JSON.stringify({ id: 5, method: 'Page.addScriptToEvaluateOnNewDocument', params: { source: PROBE_JS } }))
+        } catch { /* noop */ }
         return
       }
       if (msg.method !== 'Runtime.consoleAPICalled') return
