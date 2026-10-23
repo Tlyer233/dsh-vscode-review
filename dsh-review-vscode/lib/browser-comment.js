@@ -553,13 +553,31 @@ const pendingRaw = new Map() // 0.1.84: DOM-domain replies, resolved whole (not 
       log.appendLine(TAG + ' 同名批注 ' + take.length + ' 个（' + JSON.stringify(want).slice(0, 24) + '），按图钉编号取第 ' + (want2 + 1) + ' 个')
     }
     if (!pin) return { ok: false, why: '没找到对应图钉（可能这个元素没有图钉，或文字已被改过）', body: want, total: nodes.filter((n) => /comment-pin(\s|$)/.test(classOf(n))).length }
-    const opened = await clickNode(pin)
+    // 0.1.99: the removal was intermittently successful and the log could not say which stage
+    // failed. Split the cases (no pin / preview never opened / click rejected / pin rebuilt
+    // after the click), give the first two one delayed retry each, and finally verify the pin
+    // really disappeared instead of trusting the click's return value.
+    let opened = await clickNode(pin)
     await new Promise((r) => setTimeout(r, 700))
-    const nodes2 = await flatten()
-    const btn = nodes2.filter((n) => /comment-preview-remove/.test(classOf(n)))[0]
-    if (!btn) return { ok: false, why: '预览没出删除按钮', opened }
-    const clicked = await clickNode(btn)
-    return { ok: clicked, why: clicked ? '' : '点删除按钮失败', opened, body: want }
+    let nodes2 = await flatten()
+    let btn = nodes2.filter((n) => /comment-preview-remove/.test(classOf(n)))[0]
+    if (!btn) {
+      opened = await clickNode(pin)
+      await new Promise((r) => setTimeout(r, 700))
+      nodes2 = await flatten()
+      btn = nodes2.filter((n) => /comment-preview-remove/.test(classOf(n)))[0]
+    }
+    if (!btn) return { ok: false, why: '预览没出删除按钮（重试一次也没有）', opened, body: want }
+    let clicked = await clickNode(btn)
+    if (!clicked) { await new Promise((r) => setTimeout(r, 400)); clicked = await clickNode(btn) }
+    if (!clicked) return { ok: false, why: '点了删除按钮但页面没接受', opened, body: want }
+    await new Promise((r) => setTimeout(r, 500))
+    const after = await flatten()
+    const stillThere = after.filter((n) => /comment-pin(\s|$)/.test(classOf(n))).some((n) => {
+      const t = String(attrOf(n, 'title') || attrOf(n, 'aria-label') || '').replace(/^Element comment\s*\d+:\s*/, '').trim()
+      return t === want
+    })
+    return { ok: !stillThere, why: stillThere ? '点了删除按钮，图钉还在（可能被页面重建）' : '', opened, body: want }
   }
   bridge.setPinRemover(removePinForBody)
   bridge.setPagePinsProbe(probePins)
