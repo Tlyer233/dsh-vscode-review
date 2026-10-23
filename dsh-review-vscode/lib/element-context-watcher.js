@@ -299,9 +299,10 @@ function startElementContextWatcher(context, log) {
       // 0.1.53: the native flow focuses the Copilot composer right after inserting its
       // reference, which stole the focus back from our single 200ms attempt — re-assert
       // later too so the caret ends up in the dsh box (user's ask).
-      for (const delay of [200, 700, 1400]) {
+      for (const delay of [200, 700, 1400, 2400]) {
         setTimeout(() => {
           vscode.commands.executeCommand('dshReview.dshWebview.focus').catch(() => { /* noop */ })
+          vscode.commands.executeCommand('dshReview.focusDshComposer').catch(() => { /* noop */ })
         }, delay)
       }
     }
@@ -390,9 +391,10 @@ function startElementContextWatcher(context, log) {
   bridge.setBrowserCommentHandler(sendCommentToDsh)
         function refocusDsh() {
     if (!cfg('focusDshAfterCapture', true)) return
-    for (const delay of [200, 700, 1400]) {
+    for (const delay of [200, 700, 1400, 2400]) {
       setTimeout(() => {
         vscode.commands.executeCommand('dshReview.dshWebview.focus').catch(() => { /* noop */ })
+        vscode.commands.executeCommand('dshReview.focusDshComposer').catch(() => { /* noop */ })
       }, delay)
     }
   }

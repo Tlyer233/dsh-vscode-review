@@ -770,6 +770,16 @@ function noticeScopeEmpty(reason) {
   void vscode.window.showWarningMessage('当前窗口未打开工作区，无法进入 dsh 工作区')
 }
 
+// 0.1.106: VS Code moves focus into the Copilot input when element-commenting ends and the
+// webview-level focus sometimes loses that race, so ask the client to focus its own composer.
+// One-shot flag, delivered on the next scope answer.
+let focusComposerPending = false
+function takeFocusComposer() {
+  const v = focusComposerPending
+  focusComposerPending = false
+  return v
+}
+
 const pendingChipRemovals = []
 function takePendingChips() {
   return pendingChipRemovals.splice(0)
@@ -784,7 +794,7 @@ function postScope(view) {
     + ' paths=' + JSON.stringify(scope.paths)
     + ' raw=' + JSON.stringify(scope.rawPaths),
   )
-  void view.webview.postMessage({ type: 'dshSetScope', paths: scope.paths, rawPaths: scope.rawPaths, removeChips: takePendingChips() })
+  void view.webview.postMessage({ type: 'dshSetScope', paths: scope.paths, rawPaths: scope.rawPaths, removeChips: takePendingChips(), focusComposer: takeFocusComposer() })
   // Toast on transition into empty (closing last folder), not on every hello.
   if (empty && state.lastScopeEmpty === false) {
     noticeScopeEmpty('folders-cleared')
@@ -1138,6 +1148,13 @@ function setupDshBrowser(context) {
       // a disposed webview, so the request was logged but silently went nowhere.
       if (!state.removeDshChipRegistered) {
         state.removeDshChipRegistered = true
+        try {
+          vscode.commands.registerCommand('dshReview.focusDshComposer', () => {
+            focusComposerPending = true
+            if (state.dshView) postScope(state.dshView)
+            return true
+          })
+        } catch { /* registered elsewhere */ }
         try {
           vscode.commands.registerCommand('dshReview.removeDshChip', (name) => {
             const n = String(name || '')
