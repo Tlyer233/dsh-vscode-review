@@ -1497,6 +1497,15 @@ window.__ModuleLoader__.load({
           } else if (msg.type === "dshInsertRefs" && Array.isArray(msg.refs)) {
             const fallback = typeof msg.fallbackText === "string" ? msg.fallbackText : "";
             const result = insertRefsAtCaret(msg.refs, fallback, null);
+            // 0.1.70 (browser element comments): the comment text must sit NEXT
+            // TO the element chip, not inside it. Wait out the chip's caret
+            // placement (the 300ms caret force) so the text splices right after
+            // the chip. mode==="text" needs nothing here — fallbackText already
+            // carries comment + element context.
+            const append = typeof msg.appendText === "string" ? msg.appendText : "";
+            if (append && result.mode === "chip") {
+              setTimeout(function () { insertComposerText(append + "\n"); }, 330);
+            }
             postToParent({
               type: "dshInsertResult",
               source: "selection",

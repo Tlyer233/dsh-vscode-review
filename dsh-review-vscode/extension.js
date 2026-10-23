@@ -72,6 +72,27 @@ function activate(context) {
   startElementContextWatcher(context, log)
   startCdpProbe(context, log)
 
+  // 0.1.26: Integrated-browser element comments. Shift+Enter inside VS Code's
+  // in-page comment box sends {element chip + comment text} into the dsh
+  // composer; Enter stays VS Code's (still goes to Copilot). The module owns the
+  // dshReview.browserComment.sendToDsh switch and re-reads it every scan, so
+  // turning it off stops all CDP work without restarting VS Code.
+  try {
+    const { startBrowserComment } = require('./lib/browser-comment.js')
+    const bridge = require('./lib/element-bridge.js')
+    startBrowserComment({
+      context,
+      log: { appendLine: (m) => log.appendLine(String(m)) },
+      onComment: (p) => {
+        void bridge.deliverBrowserComment(p).then((r) => {
+          if (r && r.ok === false) log.appendLine('[browser-comment] deliver failed: ' + r.why)
+        })
+      },
+    })
+  } catch (e) {
+    log.appendLine('[browser-comment] start failed: ' + String((e && e.message) || e))
+  }
+
   // Persist enable-proposed-api in user-data argv.json so Dock launches get editorInsets.
   const argvResult = ensureProposedApi(context.extension.id)
   const insetsOn = typeof vscode.window.createWebviewTextEditorInset === 'function'

@@ -2,7 +2,7 @@
   "name": "dsh-review-vscode",
   "displayName": "dsh review — inline diff + dsh sidebar",
   "description": "Inline review (shadow/pending) + dsh webview sidebar",
-  "version": "0.1.25",
+  "version": "0.1.26",
   "publisher": "dsn",
   "engines": {
     "vscode": "^1.85.0"
@@ -58,6 +58,14 @@
       {
         "command": "dshReview.cdpPing",
         "title": "dsh: CDP ping (liveness check)"
+      },
+      {
+        "command": "dshReview.browserComment.status",
+        "title": "dsh: 元素批注状态 / browser comment status"
+      },
+      {
+        "command": "dshReview.browserComment.selftest",
+        "title": "dsh: 元素批注自检（先聚焦评论框再运行）"
       },
       {
         "command": "dshReview.acceptAll",
@@ -189,6 +197,16 @@
           "type": "boolean",
           "default": false,
           "markdownDescription": "发送时附带元素截图 base64(尽力而为, 取决于 VS Code 是否已落盘, 通常需 ~30s). Best-effort element screenshot (base64) attached when sending to dsh."
+        },
+        "dshReview.browserComment.sendToDsh": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "集成浏览器「Comment on Elements」批注: **Shift+Enter** 把「元素 + 评论」送进 dsh 输入框（Enter 仍照旧进 Copilot）。关闭 = 完全不注入不监听，Shift+Enter 恢复 VS Code 原生行为。需要 VS Code 以 `--remote-debugging-port=9223` 启动。Send integrated-browser element comments to the dsh composer on Shift+Enter (Enter still goes to Copilot)."
+        },
+        "dshReview.browserComment.includeOuterHTML": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "批注 chip 内容里带元素 outerHTML / 祖先链（关掉则只带标签、URL 与尺寸）。Include the element's outerHTML and ancestor chain in the comment chip's payload."
         }
       }
     },

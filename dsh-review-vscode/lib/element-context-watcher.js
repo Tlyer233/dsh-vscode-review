@@ -117,6 +117,54 @@ function startElementContextWatcher(context, log) {
     return ok
   }
 
+  // ---------- browser element comments (Shift+Enter inside the page) ----------
+  /**
+   * 0.1.26: browser-comment.js (CDP, page side) hands us {text, label, url,
+   * outerHTML, ancestors, innerText, locate}. Reuse the element ref shape the
+   * element-context feature already proved — one chip carrying the element, plus
+   * the comment as editable plain text (appendText) so the user can add their
+   * overall instruction before pressing send in dsh.
+   */
+  function bcfg(key, def) {
+    try { return vscode.workspace.getConfiguration('dshReview.browserComment').get(key, def) } catch { return def }
+  }
+
+  function commentRef(p) {
+    const label = String((p && p.label) || (p && p.tag) || 'element')
+    const bits = ['[元素批注] ' + label + ' @ ' + String((p && p.url) || '') +
+      (p && p.size ? '  (' + p.size + (p.locate ? ' 定位=' + p.locate : '') + ')' : '')]
+    if (bcfg('includeOuterHTML', true) && p && p.outerHTML) bits.push('```html\n' + String(p.outerHTML) + '\n```')
+    if (p && Array.isArray(p.ancestors) && p.ancestors.length) bits.push('祖先链: ' + p.ancestors.join(' > '))
+    if (p && p.innerText) bits.push('元素文本: ' + String(p.innerText))
+    const model = bits.join('\n')
+    return {
+      kind: 'element',
+      path: String((p && p.url) || label),
+      content: model,
+      label: 'element: ' + label,
+      clipboardText: model,
+      modelText: model,
+    }
+  }
+
+  async function sendCommentToDsh(p) {
+    const text = String((p && p.text) || '').trim()
+    const ref = commentRef(p || {})
+    // fallbackText keeps working for an older client bundle (no appendText):
+    // the chip path failing then still yields comment + element context.
+    const fallback = (text ? text + '\n' : '') + ref.content
+    const ok = await sendRefsToDsh([ref], fallback, text)
+    log.appendLine(TAG + ' [comment] -> dsh ok=' + ok + ' ' + ref.label +
+      ' comment=' + JSON.stringify(text.slice(0, 60)))
+    if (cfg('focusDshAfterCapture', true)) {
+      setTimeout(() => {
+        vscode.commands.executeCommand('dshReview.dshWebview.focus').catch(() => { /* noop */ })
+      }, 200)
+    }
+    return ok
+  }
+  bridge.setBrowserCommentHandler(sendCommentToDsh)
+
   // ---------- A) chatSessions jsonl: fs-watcher only (event-driven, no poll) ----------
   function attachmentsOf(line) {
     let o

@@ -984,7 +984,7 @@ function pruneOldReviewLogs () {
   } catch (e) { /* best effort */ }
 }
 
-async function sendRefsToDsh(refs, fallbackText) {
+async function sendRefsToDsh(refs, fallbackText, appendText) {
   if (!Array.isArray(refs) || refs.length === 0) return sendTextToDsh(fallbackText)
   await focusDshSidebar()
   if (!state.dshView) {
@@ -996,6 +996,10 @@ async function sendRefsToDsh(refs, fallbackText) {
       type: 'dshInsertRefs',
       refs,
       fallbackText: String(fallbackText ?? ''),
+      // 0.1.70 client: text that must land in the composer NEXT TO the chips
+      // (browser element comments: chip = the element, text = the instruction).
+      // Older clients ignore it and still receive everything via fallbackText.
+      appendText: String(appendText ?? ''),
     })
     return ok
   } catch (e) {
