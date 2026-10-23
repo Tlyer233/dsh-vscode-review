@@ -563,11 +563,16 @@ function startElementContextWatcher(context, log) {
     if (m) lastElementUrl = m[1]
     return lastElementUrl
   }
-  function scanNativeComments(hint, docText) {
+  function scanNativeComments(hint, docText, pickDoc) {
     if (!cfg('nativeToDsh', true)) return
     let input = null
     try {
-      input = vscode.workspace.textDocuments.filter((d) => d.uri.scheme === 'chatSessionInput').sort((a, b) => String(b.uri).length - String(a.uri).length)[0]
+      const all = vscode.workspace.textDocuments.filter((d) => d.uri.scheme === 'chatSessionInput')
+      // 0.1.71: use the document the change event actually came from. Picking "the longest
+      // uri" read a different, stale composer (the log showed 输入框内容 empty while the scan
+      // reported refs=1), which silently stopped deliveries with several windows/sessions.
+      input = (pickDoc && String(pickDoc.uri).indexOf('chatSessionInput') !== -1 ? pickDoc : null)
+        || all.sort((a, b) => String(b.uri).length - String(a.uri).length)[0]
     } catch { return }
     if (!input) {
       // 0.1.55: this is the silent failure the user hit in a second window — no
@@ -824,7 +829,7 @@ function startElementContextWatcher(context, log) {
     // the raw composer text (first 300 chars, newlines folded) to see how a native
     // reference is actually stored.
     try {
-      scanNativeComments('', e.document.getText())
+      scanNativeComments('', e.document.getText(), e.document)
       const now2 = Date.now()
       if (now2 - lastDumpLog > 1500) {
         lastDumpLog = now2
