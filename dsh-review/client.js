@@ -3689,6 +3689,50 @@ window.__ModuleLoader__.load({
         return "";
       }
 
+      let chipProbeLogged = false
+      function chipAbsPath(btn, want) {
+        // 0.1.70: user-message attachment chips label with the BASENAME only;
+        // the absolute path survives in the chip's React props (or an <img>
+        // src for image previews). Without this, the extension receives a bare
+        // name and its workspace-scoped findFiles misses files outside the
+        // workspace (e.g. /tmp/RustDesk-1000/cliprdr-server/*.png screenshots).
+        try {
+          const img = btn.querySelector && btn.querySelector("img[src]")
+          if (img) {
+            let s = String(img.getAttribute("src") || "").split("#")[0].split("?")[0]
+            if (s.indexOf("file://") === 0) s = s.slice(7)
+            try { s = decodeURIComponent(s) } catch (err) { /* keep raw */ }
+            if (s.charAt(0) === "/" && s.slice(s.lastIndexOf("/") + 1) === want) return s
+          }
+          const keys = Object.keys(btn)
+          let fk = null
+          for (let i = 0; i < keys.length; i++) {
+            if (keys[i].indexOf("__reactFiber$") === 0) { fk = keys[i]; break }
+          }
+          let fiber = fk ? btn[fk] : null
+          for (let hops = 0; fiber && hops < 24; hops++) {
+            const props = fiber.memoizedProps
+            if (props && typeof props === "object") {
+              const names = Object.keys(props)
+              if (!chipProbeLogged) {
+                chipProbeLogged = true
+                try {
+                  const dbg = names.filter(function (n) { return typeof props[n] === "string" })
+                    .slice(0, 8).map(function (n) { return n + "=" + String(props[n]).slice(0, 90) }).join(" ")
+                  postScopeMessage("dshPasteLog", { line: "[chip] props " + (dbg || "(no string props)") })
+                } catch (err) { /* noop */ }
+              }
+              for (let i = 0; i < names.length; i++) {
+                const v = props[names[i]]
+                if (typeof v === "string" && v.charAt(0) === "/" &&
+                    v.slice(v.lastIndexOf("/") + 1) === want) return v
+              }
+            }
+            fiber = fiber.return
+          }
+        } catch (err) { /* fiber shape changed */ }
+        return null
+      }
       function fileOpenTargetPath(btn) {
         const title = btn.getAttribute && btn.getAttribute("title");
         if (typeof title === "string" && title.charAt(0) === "/") return title;
@@ -3721,6 +3765,12 @@ window.__ModuleLoader__.load({
               cand.indexOf("?") < 0 && cand.indexOf("<") < 0 && cand.indexOf(">") < 0 &&
               cand.indexOf("|") < 0 && cand.charAt(0) !== "/" &&
               /\.[A-Za-z][A-Za-z0-9]{0,7}$/.test(cand)) {
+            // 0.1.70: bare-basename labels (user-message chips) lost their
+            // directory — recover the absolute path from the chip's own data.
+            if (cand.indexOf("/") < 0) {
+              const abs = chipAbsPath(btn, cand)
+              if (abs) return abs
+            }
             return cand;
           }
         }
@@ -3734,6 +3784,10 @@ window.__ModuleLoader__.load({
             const name = m[1].trim();
             if (name.indexOf("*") < 0 && name.indexOf("?") < 0 && name.indexOf("<") < 0 &&
                 name.indexOf(">") < 0 && name.indexOf("|") < 0) {
+              if (name.indexOf("/") < 0) {
+                const abs = chipAbsPath(btn, name)
+                if (abs) return abs
+              }
               return name;
             }
           }

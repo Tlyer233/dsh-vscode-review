@@ -38,6 +38,39 @@ const crypto = require('node:crypto')
  *   deliberate document opens (plan full-text) pass keepFocus:false to get the
  *   old focus-the-editor behaviour.
  */
+/**
+ * 0.1.26 last-resort resolver for labels that lost their directory (chip
+ * basenames): bounded walk of ~/.dsh (attachments / plans / shadow settings)
+ * and /tmp (screenshot & clipboard relay drop dirs). Exact-name match only,
+ * depth <= 4, node_modules/.git skipped, visit cap keeps worst case ~0.5 s.
+ * @param {string} base
+ * @param {number} cap
+ * @returns {string[]}
+ */
+function fsScanForBase (base, cap) {
+  const roots = [path.join(os.homedir(), '.dsh'), '/tmp']
+  const hits = []
+  let visited = 0
+  const queue = roots.map((r) => [r, 0])
+  while (queue.length && hits.length < 6 && visited < cap) {
+    const item = queue.shift()
+    if (item[1] > 4) continue
+    let ents
+    try { ents = fs.readdirSync(item[0], { withFileTypes: true }) } catch (e) { continue }
+    for (const ent of ents) {
+      if (++visited > cap) break
+      const fp = path.join(item[0], ent.name)
+      if (ent.isDirectory()) {
+        if (ent.name === 'node_modules' || ent.name === '.git' || ent.name === 'Cache') continue
+        queue.push([fp, item[1] + 1])
+        continue
+      }
+      if (ent.name === base) hits.push(fp)
+    }
+  }
+  return hits
+}
+
 async function openFileFromDsh(raw, cwd, opts) {
   const keepFocus = (!opts || opts.keepFocus === undefined) ? true : !!opts.keepFocus
   try {
@@ -84,6 +117,20 @@ async function openFileFromDsh(raw, cwd, opts) {
           }
         }
         hit = best || ''
+        if (!hit) {
+          // 0.1.26: workspace findFiles cannot reach files outside the
+          // workspace (RustDesk screenshots in /tmp, plan files in ~/.dsh).
+          const alt = fsScanForBase(base, 30000)
+          if (alt.length === 1) { hit = alt[0]; state.log('openFile fs-scan: ' + hit) }
+          else if (alt.length > 1) {
+            let pick = null
+            for (const fp of alt) {
+              if (fp.endsWith(path.sep + want) && (!pick || fp.length < pick.length)) pick = fp
+            }
+            if (!pick) for (const fp of alt) if (!pick || fp.length < pick.length) pick = fp
+            if (pick) { hit = pick; state.log('openFile fs-scan-multi n=' + alt.length + ' -> ' + hit) }
+          }
+        }
       }
       if (!hit) { state.log('openFile missing: ' + raw); dshFileToast('dsh: 文件未找到 ' + raw); return }
       p = hit

@@ -12,7 +12,7 @@
    | 现象 | 结论 | 处理 |
    | --- | --- | --- |
    | 完全无日志(客户端没发 `dshOpenFile`) | 客户端拦截面没覆盖这个新表面 | 对照社区拦截表面表(dsh-artifact-viewer:工具行→textContent、chip/提及→title、md链接→href),在 client.js `fileOpenTargetPath` 加对应 DOM 特征;类名 token 两种 CSS-module 命名都要认(`_X_<hash>` 与 `<hash>_X`) |
-   | 日志 `openFile missing: X` | X 解析不到文件 | `:行号` 已剥、basename 截短标签已全库搜;仍没有 = 文件确实不存在,右下角已自动弹提示。**例外(0.1.23 已修)**:X 以 `~` 开头(如 `~/dsh/skills/...`)时文件其实在家目录——`path.isAbsolute("~/…")` 为 false,曾按 `<工作区>/~/…` 解析且工作区搜不到家目录;现 `openFileFromDsh` 开头用 `os.homedir()` 展开行首 `~` 再判断。若再现 missing 且**不是** `~` 开头 = 真没了 |
+   | 日志 `openFile missing: X` | X 解析不到文件 | `:行号` 已剥、basename 截短标签已全库搜;仍没有 = 文件确实不存在,右下角已自动弹提示。**例外(0.1.23 已修)**:X 以 `~` 开头(如 `~/dsh/skills/...`)时文件其实在家目录——`path.isAbsolute("~/…")` 为 false,曾按 `<工作区>/~/…` 解析且工作区搜不到家目录;现 `openFileFromDsh` 开头用 `os.homedir()` 展开行首 `~` 再判断。若再现 missing 且**不是** `~` 开头,先看 X 是否**纯文件名**(用户消息附件 chip):0.1.26/0.1.70 已双层修——客户端从 chip 的 React props/`img.src` 取绝对路径(`[chip] props …` 探针行),扩展 workspace 搜空后有界扫 `~/.dsh`+`/tmp`(深≤4、精确名、实测最坏 18ms,日志 `openFile fs-scan:`)。仍 missing = 真没了(**RustDesk/PixPin 类剪贴板中继会清 /tmp 旧图**,历史截图 chip 点开 missing 属正常) |
    | 日志 `openFile failed: Binary contents are not supported` | 文本通道拒二进制 | 已有 `vscode.open` 兜底,正常不该再现;再现=兜底没走到,查 `openFileFromDsh` 分支 |
    | 日志 `openFile failed: <其他>` 且右下角弹"打开失败" | `vscode.open` 也开不了 = VS Code 没装能开该类型的编辑器(如 .psd/.excalidraw) | 属**编辑器生态问题**不是插件问题:装对应 VS Code 扩展即可;若需插件特殊处理某扩展名,在 `openFileFromDsh` 按扩展名加分支 |
    | **拖文件进侧栏**:overlay 闪一下就没 / 拖放无效 | VS Code ≥1.90 的 Shift 设计:拖文件未按 Shift 时 webview 被 `pointer-events:none`(#182449 / PR#209211),非插件回归 | **实测(0.1.20 后)**:拖到**输入框/附件条区域**可直接拖入——dsh 自己的 dropzone 在 dragenter 就 preventDefault,走了官方 defaultPrevented 逃生门,不需要 Shift;拖到面板其他区域才被遮罩(那时才需 Shift)。`code.dragAndDropItemFacilitator` 配方实测失败(0.1.61,灰层卡死,0.1.62 已撤销),别再试 |
@@ -26,6 +26,22 @@
 3. **改哪边装哪边,版本必须递增**(服务端按 rev 缓存合并 bundle,同版本号重装=下发旧代码):
    只改 `dsh-review/client.js` → webview 右键 Reload;改 `index.js` → 侧栏 Restart dsh;改扩展 `dsh-review-vscode/**` → **Cmd+Q**(mac)/ **Ctrl+Q**(Linux)整重启,并 bump `dsh-review-vscode/package.json` 的 `version`——`install.sh` 的 `EXT_VER` 现在自动读它,不用再手改。装完重写 `~/.dsh/review/shadow/settings.json`(install.sh 会清空)。
 4. **验证**:hover/点击类 bug **不要用 ego-browser 复现**(CDP 合成鼠标事件 relatedTarget 失真,0.1.56 曾误判),以真实 VS Code webview + 扩展日志为准。
+
+## dsh-review 0.1.71 + dsh-review-vscode 0.1.28 (2026-10-23, dsh 0.2.1-rc.2 / VS Code 1.141 Linux) — 工作区外文件 chip 点了打不开
+
+### 现象(Ubuntu 实测,日志定罪)
+- 点用户消息里的图片 chip(`PixPin_…png`,原件在 `/tmp/RustDesk-1000/cliprdr-server/`)→ toast「文件未找到」,日志只有 `[paste] fileOpen raw=<basename>` + `openFile missing: <basename>`
+- 同 plan 卡片在 Linux 已验证全通(`[plan] tier=fiber`→`[planFile] wrote`→`openFile`),与 Mac 差异**不在 OS**,在文件位置
+
+### 根因
+1. 客户端 `fileOpenTargetPath` 对无 title 的 chip 落到 basename 规则,发出去的永远是**纯文件名**
+2. 扩展 basename 兜底 = `workspace.findFiles`(**工作区内**),`/tmp` 与 `~/.dsh` 永远搜不到
+
+### 修法(双层)
+- client 0.1.71 `chipAbsPath(btn, want)`:chip 的 `<img src>`(file:// 或裸绝对路径,去 query/hash)→ fiber 上行 24 层扫 `memoizedProps` 字符串值,**要求 basename 精确等于标签**才认(防误抓 cwd 类路径);首次命中打 `[chip] props k=v …` 探针行。basename 规则与 Edited-折叠卡规则都先过它
+- ext 0.1.28 `fsScanForBase`:workspace 搜空后**有界扫** `~/.dsh` + `/tmp`(精确名、深≤4、跳 node_modules/.git/Cache、访问上限 3 万,实测最坏 18ms);唯一命中直接开(`openFile fs-scan:`),多命中按标签尾段+最短择优(`fs-scan-multi n=`),仍无才 toast。单测:RustDesk 截图、`settings.json` 均命中
+- **实测提醒**:RustDesk cliprdr 会清 `/tmp` 旧图(09-31 那张 09:36 已不在),历史 chip 点开 missing 属正常
+- 版本说明:本修复与「元素批注」同日开发,原报 0.1.70/0.1.26 与批注功能撞号,rebase 后改号 0.1.71/0.1.28
 
 ## dsh-review 0.1.70 + dsh-review-vscode 0.1.26 (2026-10-23) — 新功能：集成浏览器「元素批注」→ dsh 输入框
 
