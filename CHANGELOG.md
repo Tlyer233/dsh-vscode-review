@@ -44,6 +44,15 @@
 - 版本说明:本修复与「元素批注」同日开发,原报 0.1.70/0.1.26 与批注功能撞号,rebase 后改号 0.1.71/0.1.28
 
 
+## dsh-review 0.1.71 + dsh-review-vscode 0.1.51–0.1.52 (2026-10-23) — 重复文字的批注不再被吞；SVG 元素标签不再显示 [object
+
+### 0.1.51 去重写错了（用户实测抓到）
+`chat 快照 refs=14 delta=0` ⇒ 不送 dsh。用户这次打的文字是「测试」，而输入框里已有两条 `@span 测试`（早先测试留下的），我按「这个 label+文字 出现过没有」去重 ⇒ 新引用被判成旧的。改成**按出现次数**：基线是 `Map<key, 次数>`，某条引用的第 n 次出现 > 旧快照的次数 才算新（同一次扫描里还要加上已投递的份数）。离线重放三个场景：新元素重复文字 → delta 1；再来一条完全相同 → 1；没有改动 → 0。旧的 `seenNative` 集合删除。
+用户复测（0.1.51）：两条批注都进 dsh，且 `元素详情已补齐 label=span#mv-speed.st-metric__value 106 × 20 html=75 css=21 anc=6` ⇒ 原生 ⌥⌘C → dsh 方块 + 全套元素细节成立。
+
+### 0.1.52 显示错
+第二条 label 是 SVG 里的 `path`，日志成了 `path.[object 377 × 28`：SVG 的 `className` 是 `SVGAnimatedString` 对象，`String(el.className)` = `[object SVGAnimatedString]`。页内脚本加 `clsOf(el)`（优先 `getAttribute('class')`），labelFor / selectorFor / classes / ancestors 全部走它。新增 jsdom 检查 4/4：SVG path 的 label 无 `[object`、classes 取到 `st-arc`/`fill`、祖先链干净、HTML 元素不受影响。
+
 ## dsh-review 0.1.71 + dsh-review-vscode 0.1.49 (2026-10-23) — 删掉右下角 `dsh ✎` 整条路；页内只留「元素探针」，原生批注的 md 补全 HTML/CSS/尺寸/祖先链
 
 ### 用户决定
