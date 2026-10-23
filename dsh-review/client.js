@@ -1325,6 +1325,29 @@ window.__ModuleLoader__.load({
             try { window.parent.postMessage({ type: "dshDropReference", path: info.path, name: name }, "*"); } catch (err) { /* noop */ }
           });
         }
+        function removeTrackedChipByName(name) {
+          // 0.1.58: reverse half of the binding — the user deleted the pin/reference in
+          // Copilot, so drop the chip we inserted. Chips are dsh's own React nodes, so the
+          // only safe way is to click the control inside the chip that matches the name.
+          const scope = composerScope();
+          if (!scope || !name) return false;
+          const nodes = scope.querySelectorAll('span,div,a,button');
+          for (let i = 0; i < nodes.length; i++) {
+            const el = nodes[i];
+            if (String(el.textContent || '').trim() !== name) continue;
+            const parent = el.parentElement;
+            if (parent && parent !== scope && String(parent.textContent || '').trim() === name) continue;
+            let target = null;
+            try { target = el.querySelector('button,[role="button"],svg,[class*="remove"],[class*="close"]'); } catch (err) { target = null; }
+            if (!target && el.matches && el.matches('button,[role="button"]')) target = el;
+            if (!target) target = el;
+            try {
+              target.dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+              return true;
+            } catch (err) { return false; }
+          }
+          return false;
+        }
         if (!window.__dshrRefWatch) {
           window.__dshrRefWatch = true;
           setInterval(sweepDroppedRefs, 900);
@@ -1538,6 +1561,11 @@ window.__ModuleLoader__.load({
             // Explicit VSCode action: always the composer, never a settings
             // input; append to draft only when no composer has been focused.
             insertComposerText(msg.text);
+          } else if (msg.type === "dshRemoveReference" && msg.name) {
+            const nm = String(msg.name);
+            const ok = removeTrackedChipByName(nm);
+            if (ok) trackedRefs.delete(nm);
+            try { window.parent.postMessage({ type: "dshRemoveReferenceAck", name: nm, ok: ok }, "*"); } catch (err) { /* noop */ }
           } else if (msg.type === "dshInsertRefs" && Array.isArray(msg.refs)) {
             const fallback = typeof msg.fallbackText === "string" ? msg.fallbackText : "";
             const result = insertRefsAtCaret(msg.refs, fallback, null);

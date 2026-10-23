@@ -1126,7 +1126,22 @@ function setupDshBrowser(context) {
       view.title = 'dsh'
       view.description = ''
 
+      // 0.1.58: the watcher calls this when a native comment disappears from the Copilot
+      // composer (the user deleted the pin), so the chip we inserted goes away too.
+      try {
+        vscode.commands.registerCommand('dshReview.removeDshChip', (name) => {
+          const n = String(name || '')
+          if (!n) return false
+          try { view.webview.postMessage({ type: 'dshRemoveReference', name: n }) } catch { return false }
+          state.log('[chip-remove] 请求删 dsh 方块 ' + n)
+          return true
+        })
+      } catch { /* already registered */ }
       view.webview.onDidReceiveMessage((msg) => {
+        if (msg.type === 'dshRemoveReferenceAck') {
+          state.log('[chip-remove] ' + String(msg.name || '?') + ' -> ' + (msg.ok ? '已删掉' : '页面上没找到这个方块（可能已经删了）'))
+          return
+        }
         if (!msg) return
         if (msg.type === 'dshChromeState') {
           saveIframeChrome(msg)
