@@ -515,10 +515,11 @@ function isBrowserPage(t) {
  * @param {{ context: import('vscode').ExtensionContext, log: {appendLine:(s:string)=>void},
  *          onComment: (p: object) => void }} opts
  */
-function isWorkbenchPage(t) {
+function isHostPage(t) {
+  // Anything that is a renderer we can attach to but is NOT one of our browser pages:
+  // the workbench (vscode-file://…workbench.html) is where the bundle hook runs.
   if (!t || t.type !== 'page') return false
-  const u = String(t.url || '')
-  return u.indexOf('vscode-file://') === 0 && u.indexOf('workbench.html') !== -1
+  return !isBrowserPage(t)
 }
 
 function startBrowserComment(opts) {
@@ -554,7 +555,7 @@ function startBrowserComment(opts) {
 
   function attach(target, inject) {
     const ws = new WS(target.webSocketDebuggerUrl)
-    conns.set(target.id, { ws, url: target.url, poll: !inject })
+    conns.set(target.id, { ws, url: target.url, poll: true })
     ws.onopen = () => {
       log.appendLine(TAG + ' attached ' + String(target.id).slice(0, 8) + ' ' + String(target.url).slice(0, 70) +
         (inject ? '' : ' [host: drain native comments]'))
@@ -628,11 +629,11 @@ function startBrowserComment(opts) {
     }
     absentNoticed = false
     const pages = (targets || []).filter(isBrowserPage)
-    const hosts = (targets || []).filter(isWorkbenchPage)
+    const hosts = (targets || []).filter(isHostPage)
     for (const h of hosts) {
       if (!conns.has(h.id)) { try { attach(h, false) } catch (e) { log.appendLine(TAG + ' host attach failed: ' + String((e && e.message) || e)) } }
     }
-    if (pages.length !== lastSeenCount) {
+    if ((targets || []).length !== lastSeenCount) {
       lastSeenCount = pages.length
       log.appendLine(TAG + ' ' + VERSION + ' targets=' + pages.length + ' connected=' + conns.size)
     }
@@ -640,7 +641,7 @@ function startBrowserComment(opts) {
       const c = conns.get(t.id)
       if (c && c.ws && (c.ws.readyState === 1 || c.ws.readyState === 0)) continue
       if (c) closeOne(t.id, '')
-      if (t.webSocketDebuggerUrl) attach(t)
+      if (t.webSocketDebuggerUrl) attach(t, true)
     }
     for (const id of Array.from(conns.keys())) {
       if (!pages.some((p) => p.id === id)) closeOne(id, 'target gone')

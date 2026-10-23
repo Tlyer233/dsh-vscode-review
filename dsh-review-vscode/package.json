@@ -2,7 +2,7 @@
   "name": "dsh-review-vscode",
   "displayName": "dsh review — inline diff + dsh sidebar",
   "description": "Inline review (shadow/pending) + dsh webview sidebar",
-  "version": "0.1.36",
+  "version": "0.1.37",
   "publisher": "dsn",
   "engines": {
     "vscode": "^1.85.0"
@@ -192,6 +192,11 @@
           "type": "boolean",
           "default": false,
           "markdownDescription": "自动捕获后把元素 chip 从 Copilot 输入框移除. Remove the element chip from the Copilot input after auto-capture."
+        },
+        "dshReview.elementContext.closeNativeDoc": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "0.1.37：VS Code 每次加元素批注都会自己打开一个 untitled 的 Attached Element Context 标签。开着时我们用「存到临时文件 → 关闭 → 删临时文件」的方式把它静默关掉（不会弹保存提示），不往 dsh 插任何东西。"
         },
         "dshReview.elementContext.elementChain": {
           "type": "boolean",

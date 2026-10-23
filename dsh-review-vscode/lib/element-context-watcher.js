@@ -396,7 +396,16 @@ function startElementContextWatcher(context, log) {
     // so the old chain is off by default; dshReview.elementContext.elementChain=true
     // brings it back.
     if (!cfg('elementChain', false)) {
-      log.appendLine(TAG + ' · 老链路已关闭（0.1.35，元素走原生 + 补丁）name=' + nu.name)
+      // 0.1.37: the user asked to get rid of the tab VS Code opens by itself. Closing is
+      // the proven save-to-tmp → close → delete-tmp sequence, which never prompts; no
+      // chip, no dsh traffic. 180s per name so a re-render cannot spam it.
+      if (cfg('closeNativeDoc', true) && !alreadySent(nu.name)) {
+        markCapture(nu.name)
+        log.appendLine(TAG + ' · 老链路已关闭，只关掉 VS Code 自己打开的附件标签 name=' + nu.name)
+        setTimeout(() => closeElementDoc(doc), 400)
+      } else {
+        log.appendLine(TAG + ' · 老链路已关闭（0.1.35，元素走原生 + 补丁）name=' + nu.name)
+      }
       return
     }
     // 0.1.28: a file opened FROM dsh makes VS Code re-create this attachment doc;
