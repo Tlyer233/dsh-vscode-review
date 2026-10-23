@@ -1331,7 +1331,7 @@ window.__ModuleLoader__.load({
           if (trackedRefs.size && !sweepReported) {
             sweepReported = true;
             try { window.parent.postMessage({ type: "dshRefsTracked", names: Array.from(trackedRefs.keys()).slice(0, 4) }, "*"); } catch (err) { /* noop */ }
-          });
+          }
         }
         function removeTrackedChipByName(name) {
           // 0.1.58: reverse half of the binding — the user deleted the pin/reference in
