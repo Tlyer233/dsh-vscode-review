@@ -256,7 +256,7 @@ const PROBE_JS = `(function () {
       return JSON.stringify(b)
     },
   }
-  try { console.log('\${PREFIX}' + JSON.stringify({ ev: 'installed', url: location.href, probe: VERSION })) } catch (e) { /* noop */ }
+  try { console.log('${PREFIX}' + JSON.stringify({ ev: 'installed', url: location.href, probe: VERSION })) } catch (e) { /* noop */ }
   return 'installed'
 })()`
 
