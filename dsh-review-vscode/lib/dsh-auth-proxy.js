@@ -110,6 +110,13 @@ function startAuthProxy(opts) {
   const forward = (req, res) => {
     const headers = Object.assign({}, req.headers)
     if (cookie) headers.cookie = cookie
+    // 0.1.63: the sidebar webview keeps Electron's persistent cache, and after an upgrade it
+    // only revalidated and got a 304 — so the plugin's client.js on the page stayed old for
+    // every round (that is why the binding code never ran even though the file was new).
+    // Drop the conditional request headers so upstream returns fresh bytes...
+    delete headers['if-none-match']
+    delete headers['if-modified-since']
+    delete headers['if-unmodified-since']
     const up = http.request({
       host: '127.0.0.1',
       port: targetPort,
@@ -125,7 +132,12 @@ function startAuthProxy(opts) {
           log('re-mint failed: ' + String((e && e.message) || e))
         }
       }
-      res.writeHead(upRes.statusCode || 502, upRes.headers)
+      // ...and tell the page not to cache this response at all.
+      const rh = Object.assign({}, upRes.headers)
+      rh['cache-control'] = 'no-store'
+      delete rh.etag
+      delete rh['last-modified']
+      res.writeHead(upRes.statusCode || 502, rh)
       upRes.pipe(res)
     })
     up.on('error', (e) => {
