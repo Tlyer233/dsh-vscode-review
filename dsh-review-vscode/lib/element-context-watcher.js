@@ -355,18 +355,31 @@ function startElementContextWatcher(context, log) {
         log.appendLine(TAG + ' close: skip — element doc 不是活动编辑器(安全)')
         return
       }
+      // 0.1.38: the sheet the user keeps seeing is macOS' native save dialog, and its
+      // cause is a name collision — saving onto an existing dsh-element-context.txt
+      // makes VS Code ask "overwrite?" through that native sheet, doc.save() resolves
+      // false, the doc stays dirty, and closeActiveEditor raises the sheet again
+      // (our DOM clicker sees "no-dialog" because it is a native sheet). Unique file
+      // name per attempt, and if the save did not succeed we simply leave the tab
+      // open rather than fight a dialog we cannot see.
+      const tmp = path.join(os.tmpdir(), 'dsh-element-context-' + Date.now() + '.txt')
       let saved = false
       try {
-        saved = !!(await doc.save(vscode.Uri.file(TMP_FILE)))
+        saved = !!(await doc.save(vscode.Uri.file(tmp)))
       } catch (e) {
         log.appendLine(TAG + ' close: save-to-tmp 失败: ' + ((e && e.message) || e))
       }
-      log.appendLine(TAG + ' close: save-to-tmp=' + saved + ' file=' + TMP_FILE)
+      log.appendLine(TAG + ' close: save-to-tmp=' + saved + ' file=' + tmp)
+      if (!saved) {
+        log.appendLine(TAG + ' close: 保存没成功 -> 不关标签（避免 macOS 原生保存面板），可设 closeNativeDoc=false 静音')
+        return
+      }
       await sleep(300)
       let dismissResult = null
       if (isActive()) {
         await vscode.commands.executeCommand('workbench.action.closeActiveEditor')
       }
+      try { fs.unlinkSync(tmp) } catch { /* already gone */ }
       if (!saved) {
         for (let i = 0; i < 3; i++) {
           await sleep(700)
