@@ -461,7 +461,7 @@ function startElementContextWatcher(context, log) {
       fresh++
       const idm = /#([A-Za-z0-9_.:-]{1,80})/.exec(f.label)
       const payload = {
-        ev: 'comment', native: true, text: f.comment, label: f.label, url: lastElementUrl,
+        ev: 'comment', native: true, text: f.comment, label: f.label, url: lastElementUrl || bridge.browserPageUrl(),
         title: '', size: '', locate: 'native', tag: f.label.split(/[.#[]/)[0] || 'element',
         id: idm ? idm[1] : '', classes: [], attributes: {}, ancestors: [], selector: '',
         innerText: '', outerHTML: '', bounds: { x: 0, y: 0, width: 0, height: 0 },

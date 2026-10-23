@@ -538,6 +538,14 @@ function startBrowserComment(opts) {
   let lastSeenCount = -1
   let absentNoticed = false
 
+  bridge.setPageUrlProvider(() => {
+    for (const [, c] of conns) {
+      const u = String(c.url || '')
+      if (/^https?:\/\//.test(u)) return u
+    }
+    return ''
+  })
+
   function nativeBridge() {
     try {
       return !!vscode.workspace.getConfiguration('dshReview.browserComment').get('nativeBridge', false)

@@ -49,6 +49,19 @@ function nativeCommentPayload(q) {
   }
 }
 
+/**
+ * 0.1.48: the browser-comment module knows which http(s) pages it has CDP attached to;
+ * the watcher needs a page URL for native comments (it no longer opens the element doc,
+ * which used to be the only source). One provider, no import cycle.
+ */
+let pageUrlProvider = null
+function setPageUrlProvider(fn) {
+  pageUrlProvider = typeof fn === 'function' ? fn : null
+}
+function browserPageUrl() {
+  try { return pageUrlProvider ? String(pageUrlProvider() || '') : '' } catch { return '' }
+}
+
 function setDismissPrompt(fn) {
   handlers.dismissPrompt = typeof fn === 'function' ? fn : null
 }
@@ -77,7 +90,7 @@ async function deliverBrowserComment(payload) {
   }
 }
 
-module.exports = { nativeCommentPayload, setDismissPrompt, dismissPrompt, setBrowserCommentHandler, deliverBrowserComment, setOpenGuard, openGuarded }
+module.exports = { nativeCommentPayload, setPageUrlProvider, browserPageUrl, setDismissPrompt, dismissPrompt, setBrowserCommentHandler, deliverBrowserComment, setOpenGuard, openGuarded }
 
 async function dismissPrompt() {
   if (!handlers.dismissPrompt) return { ok: false, why: 'no-handler' }

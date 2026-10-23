@@ -44,6 +44,26 @@
 - 版本说明:本修复与「元素批注」同日开发,原报 0.1.70/0.1.26 与批注功能撞号,rebase 后改号 0.1.71/0.1.28
 
 
+## dsh-review 0.1.71 + dsh-review-vscode 0.1.47–0.1.48 (2026-10-23) — 原生 ⌥⌘C 批注正式进 dsh（用户实测通过）
+
+### 决定性证据（用户贴的日志）
+```
+· 输入框内容[chatSessionInput:input-0] = @span#mv-gpu 1321312 ⏎ @span#ms-gpu 312312 ⏎ @span 测试 ⏎ …
+· chat 输入框基线：10 条旧引用（不送 dsh）
+· 原生批注 -> dsh label=span#ms-gpu chars=6 (输入框变更)
+[element-context] [comment] wrote /tmp/dsh-comments/comment-20261023-112028-ms-gpu-aj6g.md -> dsh ok=true kind=file chars=6
+insert mode=chip count=1 source=selection
+```
+⇒ 原生评论在 `chatSessionInput` 文档里就是**一行一条 `@元素 文字`**，我的正则形状猜对；0.1.47 之所以成，是因为把扫描从 800ms 日志节流后面挪到前面（之前那次变更事件被节流吞了，看起来像「没匹配到」）。用户确认：dsh 输入框出现了，且不开文件、不弹保存、没给 VS Code 打补丁。
+
+### 0.1.48 补掉最后一个缺口
+md 里 `- URL:` 之前为空（不再打开元素文档就没人给 URL）。`element-bridge` 增加 `setPageUrlProvider / browserPageUrl`，`browser-comment` 用已 attach 的 CDP 页面注册提供者，watcher 取 `lastElementUrl || bridge.browserPageUrl()` ⇒ 原生批注的 md 也带页面地址，且不需要开任何文档。
+
+### 已知行为（不是 bug，写清楚）
+- 首次快照（含 Copilot 里留下的旧引用）只登记基线，不送 dsh；一次变更冒出 >3 条新引用按「会话恢复」处理，只更新基线。
+- 用户自己在 Copilot 里手打 `@xx 文字` 也会被当成一条批注抄进 dsh（同 key 去重）。
+- 批注文字事后在 Copilot 里改动 = 新 key ⇒ 会再抄一条。
+
 ## dsh-review 0.1.71 + dsh-review-vscode 0.1.46 (2026-10-23) — 定时基线把用户刚批的那条吞了（dsh 收到 0）
 
 ### 实测
