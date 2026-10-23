@@ -406,10 +406,12 @@ function startElementContextWatcher(context, log) {
   // reference "@<element> <comment>". So no bundle patch and no CDP are needed: watch
   // that document, take the reference, and push it through our existing md + chip
   // pipeline. The element-context doc (opened by the chip click) supplies the page URL.
-  const seenNative = new Set()
+  let lastElementUrl = ''
+  const inputBaseline = new Map() // input doc uri -> Set(label\u241fcomment) seen last time
   function urlFromElementDoc(text) {
     const m = /\nURL:\s*(\S+)/.exec(String(text || ''))
-    return m ? m[1] : ''
+    if (m) lastElementUrl = m[1]
+    return lastElementUrl
   }
   function scanNativeComments(hint, docText) {
     if (!cfg('nativeToDsh', true)) return
@@ -421,25 +423,42 @@ function startElementContextWatcher(context, log) {
     let text = ''
     try { text = input.getText() } catch { return }
     if (!text) return
-    const url = urlFromElementDoc(docText)
-    for (const m of text.matchAll(/@([^\s@`\n]{3,120}?)\s+([^\n@]{2,400})/g)) {
+    const REF_RE = /@([^\s@`\n]{3,120}?)\s+([^\n@]{2,400})/g
+    const found = []
+    const next = new Set()
+    for (const m of text.matchAll(REF_RE)) {
       const label = m[1].trim()
       const comment = m[2].trim()
       if (!label || !comment) continue
       const key = label + '\u241f' + comment
-      if (seenNative.has(key)) continue
-      seenNative.add(key)
-      while (seenNative.size > 200) seenNative.delete(seenNative.keys().next().value)
-      const idm = /#([A-Za-z0-9_.:-]{1,80})/.exec(label)
+      next.add(key)
+      found.push({ key: key, label: label, comment: comment })
+    }
+    const id = String(input.uri)
+    // 0.1.43: the composer keeps every reference from earlier sessions, so a plain
+    // "send everything I can see" scan re-exported the whole history (the user's 6 files
+    // in one Enter). Baseline the first snapshot and only deliver the delta.
+    const prev = inputBaseline.get(id)
+    inputBaseline.set(id, next)
+    if (!prev) {
+      log.appendLine(TAG + ' · chat 输入框基线：' + found.length + ' 条旧引用（不送 dsh）')
+      return
+    }
+    let fresh = 0
+    for (const f of found) {
+      if (prev.has(f.key)) continue
+      fresh++
+      const idm = /#([A-Za-z0-9_.:-]{1,80})/.exec(f.label)
       const payload = {
-        ev: 'comment', native: true, text: comment, label: label, url: url,
-        title: '', size: '', locate: 'native', tag: label.split(/[.#[]/)[0] || 'element',
+        ev: 'comment', native: true, text: f.comment, label: f.label, url: lastElementUrl,
+        title: '', size: '', locate: 'native', tag: f.label.split(/[.#[]/)[0] || 'element',
         id: idm ? idm[1] : '', classes: [], attributes: {}, ancestors: [], selector: '',
         innerText: '', outerHTML: '', bounds: { x: 0, y: 0, width: 0, height: 0 },
       }
-      log.appendLine(TAG + ' · 原生批注 -> dsh label=' + label + ' chars=' + comment.length + (hint ? ' (来自元素文档)' : ''))
+      log.appendLine(TAG + ' · 原生批注 -> dsh label=' + f.label + ' chars=' + f.comment.length + (hint ? ' (元素文档触发)' : ' (输入框变更)'))
       void sendCommentToDsh(payload)
     }
+    if (hint && fresh === 0) log.appendLine(TAG + ' · 元素文档打开但输入框里没有新引用（可能已被抄走）')
   }
 
   function handleElementDoc(doc, text) {
