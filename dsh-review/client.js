@@ -1543,7 +1543,7 @@ window.__ModuleLoader__.load({
             setTimeout(compactNativeStatsLine, 800);
             applyZoom();
             // Scope is owned by apply()-level listener; ask again in case early posts were dropped.
-            try { window.parent.postMessage({ type: "dshScopeRequest" }, "*"); } catch (err) { /* noop */ }
+            try { window.parent.postMessage({ type: "dshScopeRequest", build: "0.1.76" }, "*"); } catch (err) { /* noop */ }
             return;
           }
           if (msg.type === "dshChromeState") {
@@ -4036,7 +4036,7 @@ window.__ModuleLoader__.load({
           setVscodeScope(msg.paths, msg.rawPaths);
         }
         window.addEventListener("message", onScopeFromHost);
-        try { window.parent.postMessage({ type: "dshScopeRequest" }, "*"); } catch (err) { /* noop */ }
+        try { window.parent.postMessage({ type: "dshScopeRequest", build: "0.1.76" }, "*"); } catch (err) { /* noop */ }
         const timer = setInterval(checkWorkbenchScope, 800);
         return function () {
           clearInterval(timer);
