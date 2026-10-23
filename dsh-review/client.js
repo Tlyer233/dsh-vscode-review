@@ -1325,7 +1325,7 @@ window.__ModuleLoader__.load({
         function postState(extra) {
           // 0.1.82: only the scope-request message has ever reached the extension, so all
           // client-side events (tracked / dropped / request-received / removed) ride on it.
-          const msg = { type: "dshScopeRequest", build: "0.1.96", watching: Array.from(trackedRefs.keys()).slice(0, 3) };
+          const msg = { type: "dshScopeRequest", build: "0.1.97", watching: Array.from(trackedRefs.keys()).slice(0, 3) };
           try { Object.assign(msg, extra || {}); } catch (err) { /* noop */ }
           try { window.parent.postMessage(msg, "*"); } catch (err) { /* noop */ }
         }
@@ -1459,7 +1459,7 @@ window.__ModuleLoader__.load({
           const scope = composerScope();
           if (!scope) return;
           const text = String(scope.textContent || '');
-          if (!text.trim()) return; // composer cleared = the message was sent, not deleted
+          // (the cleared-composer case is handled below, against the composer element itself)
           const croot = composerRoot();
           if (!croot) {
             const n2 = Date.now();
@@ -1467,7 +1467,19 @@ window.__ModuleLoader__.load({
             return;
           }
           const composerText = String(croot.textContent || '');
-          if (!composerText.trim()) return;
+          // 0.1.97: an empty composer used to be treated as "the message was sent, nothing was
+          // deleted" — but backspacing the last reference also empties it, so the deletion was
+          // ignored forever (measured: composer text was "" while the client still reported
+          // 连着 for a tracked chip). Empty now means every remaining reference is gone.
+          if (!composerText.trim()) {
+            const gone = [];
+            trackedRefs.forEach(function (info, name) { gone.push({ name: name, path: info.path }) });
+            trackedRefs.clear();
+            for (let g = 0; g < gone.length; g++) {
+              postState({ report: "输入框清空 -> 方块全部移除: " + gone[g].name, drop: gone[g].name, dropPath: gone[g].path })
+            }
+            if (gone.length) return;
+          }
           // 0.1.90: say out loud why a tracked chip was or was not treated as deleted — the
           // 撤图钉 path produced no log at all, so the broken link had to be made visible.
           const diag = [];
@@ -1847,7 +1859,7 @@ window.__ModuleLoader__.load({
             setTimeout(compactNativeStatsLine, 800);
             applyZoom();
             // Scope is owned by apply()-level listener; ask again in case early posts were dropped.
-            try { window.parent.postMessage({ type: "dshScopeRequest", build: "0.1.96", watching: Array.from(trackedRefs.keys()).slice(0, 3) }, "*"); } catch (err) { /* noop */ }
+            try { window.parent.postMessage({ type: "dshScopeRequest", build: "0.1.97", watching: Array.from(trackedRefs.keys()).slice(0, 3) }, "*"); } catch (err) { /* noop */ }
             return;
           }
           if (msg.type === "dshChromeState") {
@@ -4347,13 +4359,13 @@ window.__ModuleLoader__.load({
               try { ok = !!(window.__dshrRemoveChip && window.__dshrRemoveChip(nm)); } catch (err) { ok = false; }
               let watch = [];
               try { watch = (window.__dshrTracked && window.__dshrTracked()) || []; } catch (err) { watch = []; }
-              try { window.parent.postMessage({ type: "dshScopeRequest", build: "0.1.96", watching: watch.slice(0, 3), report: "捎带删方块: " + nm + " -> " + (ok ? "已删" : "没找到方块节点") }, "*"); } catch (err) { /* noop */ }
+              try { window.parent.postMessage({ type: "dshScopeRequest", build: "0.1.97", watching: watch.slice(0, 3), report: "捎带删方块: " + nm + " -> " + (ok ? "已删" : "没找到方块节点") }, "*"); } catch (err) { /* noop */ }
             });
           }
           setVscodeScope(msg.paths, msg.rawPaths);
         }
         window.addEventListener("message", onScopeFromHost);
-        try { window.parent.postMessage({ type: "dshScopeRequest", build: "0.1.96", watching: Array.from(trackedRefs.keys()).slice(0, 3) }, "*"); } catch (err) { /* noop */ }
+        try { window.parent.postMessage({ type: "dshScopeRequest", build: "0.1.97", watching: Array.from(trackedRefs.keys()).slice(0, 3) }, "*"); } catch (err) { /* noop */ }
         const timer = setInterval(checkWorkbenchScope, 800);
         return function () {
           clearInterval(timer);
