@@ -492,7 +492,25 @@ const pendingRaw = new Map() // 0.1.84: DOM-domain replies, resolved whole (not 
       for (let i = 0; i + 1 < a.length; i += 2) if (a[i] === k) return String(a[i + 1])
       return ''
     }
+    // 0.1.90: the pin's delete button ignores synthetic events (verified: dispatchEvent
+    // reported "clicked" but the pin stayed). Trusted input through Input.dispatchMouseEvent
+    // at the node's box centre does work — measured: the pin went away, VS Code then removed
+    // the composer line and the attachment itself.
+    const clickReal = async (node) => {
+      const box = await cdpRequest(c, 'DOM.getBoxModel', { nodeId: node.nodeId }, 1500)
+      const bm = box && box.model
+      if (!bm || !Array.isArray(bm.content) || bm.content.length < 8) return false
+      const xs = [bm.content[0], bm.content[2], bm.content[4], bm.content[6]]
+      const ys = [bm.content[1], bm.content[3], bm.content[5], bm.content[7]]
+      const x = (Math.min.apply(null, xs) + Math.max.apply(null, xs)) / 2
+      const y = (Math.min.apply(null, ys) + Math.max.apply(null, ys)) / 2
+      await cdpRequest(c, 'Input.dispatchMouseEvent', { type: 'mouseMoved', x, y, button: 'none' }, 1200)
+      await cdpRequest(c, 'Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', clickCount: 1, buttons: 1 }, 1200)
+      await cdpRequest(c, 'Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', clickCount: 1, buttons: 0 }, 1200)
+      return true
+    }
     const clickNode = async (node) => {
+      if (await clickReal(node)) return true
       const r = await cdpRequest(c, 'DOM.resolveNode', { nodeId: node.nodeId }, 2000)
       const obj = r && r.object
       if (!obj || !obj.objectId) return false
@@ -521,7 +539,7 @@ const pendingRaw = new Map() // 0.1.84: DOM-domain replies, resolved whole (not 
     if (!pin) pin = loose
     if (!pin) return { ok: false, why: '没找到对应图钉（可能这个元素没有图钉，或文字已被改过）', body: want, total: nodes.filter((n) => /comment-pin(\s|$)/.test(classOf(n))).length }
     const opened = await clickNode(pin)
-    await new Promise((r) => setTimeout(r, 350))
+    await new Promise((r) => setTimeout(r, 700))
     const nodes2 = await flatten()
     const btn = nodes2.filter((n) => /comment-preview-remove/.test(classOf(n)))[0]
     if (!btn) return { ok: false, why: '预览没出删除按钮', opened }
