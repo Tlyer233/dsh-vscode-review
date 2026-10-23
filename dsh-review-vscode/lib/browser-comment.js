@@ -350,6 +350,25 @@ const pendingRaw = new Map() // 0.1.84: DOM-domain replies, resolved whole (not 
         try {
           ws.send(JSON.stringify({ id: 5, method: 'Page.addScriptToEvaluateOnNewDocument', params: { source: PROBE_JS } }))
         } catch { /* noop */ }
+        // 0.1.101: the new-document script only covers documents that load later; when the page
+        // reloads the already-open socket keeps its id but its probe is gone (that is how
+        // 撤图钉 ended up with 页面没连上 / 元素详情没拿到). Re-inject into this very context too,
+        // and refresh the recorded url since a navigation may change it.
+        const ctx = msg.params && msg.params.context
+        const ctxId = ctx && typeof ctx.id === 'number' ? ctx.id : undefined
+        try {
+          ws.send(JSON.stringify({
+            id: 6, method: 'Runtime.evaluate',
+            params: Object.assign({ expression: PROBE_JS + '\n;"ok"', returnByValue: true, timeout: 5000 }, ctxId !== undefined ? { contextId: ctxId } : {}),
+          }))
+        } catch { /* noop */ }
+        try {
+          ws.send(JSON.stringify({ id: 7, method: 'Runtime.evaluate', params: { expression: 'String(location.href)', returnByValue: true, timeout: 2000 } }))
+        } catch { /* noop */ }
+        pendingRaw.set(7, (res) => {
+          const v = res && res.result && res.result.value
+          if (v && typeof v === 'string') { const cur = conns.get(target.id); if (cur) cur.url = v }
+        })
         return
       }
       if (msg.method !== 'Runtime.consoleAPICalled') return
@@ -480,8 +499,18 @@ const pendingRaw = new Map() // 0.1.84: DOM-domain replies, resolved whole (not 
   // delete button lives), then on .comment-preview-remove. VS Code itself then drops the
   // pin, the chat attachment and the composer line — no VS Code file is touched.
   async function removePinForBody(url, body, nth) {
-    const c = pickConn(url)
-    if (!c || !c.ws || c.ws.readyState !== 1) return { ok: false, why: '页面没连上' }
+    let c = pickConn(url)
+    if (!c || !c.ws || c.ws.readyState !== 1) {
+      // 0.1.101: no polling, but an on-demand rescan when someone actually asks for the pins —
+      // after a page reload the old socket is dead and only a scan finds the live one.
+      try { await scan() } catch { /* noop */ }
+      c = pickConn(url)
+      if (!c || !c.ws || c.ws.readyState !== 1) {
+        const any = Array.from(conns.values()).filter((x) => x.ws && x.ws.readyState === 1)[0]
+        if (any) c = any
+      }
+      if (!c || !c.ws || c.ws.readyState !== 1) return { ok: false, why: '页面没连上（已当场补扫一次）' }
+    }
     const classOf = (n) => {
       const a = n.attributes || []
       for (let i = 0; i + 1 < a.length; i += 2) if (a[i] === 'class') return String(a[i + 1])
