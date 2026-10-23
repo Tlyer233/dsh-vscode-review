@@ -520,7 +520,9 @@ function startCdpProbe(context, log) {
 
   connect()
   // disconnect-only retry: zero cost while connected, not a hot path
-  const t = setInterval(() => { if (!ws) connect() }, 5000)
+  // 0.1.95: reconnect on the socket's own close event instead of a 5s poll
+  const t = null
+  void t
   context.subscriptions.push({ dispose: () => { stopped = true; clearInterval(t); teardown() } })
 }
 

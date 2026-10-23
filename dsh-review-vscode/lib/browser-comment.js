@@ -622,7 +622,29 @@ const pendingRaw = new Map() // 0.1.84: DOM-domain replies, resolved whole (not 
     log.appendLine(TAG + ' selftest probe(body) -> ' + (one && one.ok ? 'ok ' + one.tag + ' ' + one.bounds.width + 'x' + one.bounds.height : 'miss'))
   })
 
-  const timer = setInterval(() => { void scan() }, RESCAN_MS)
+  // 0.1.95: no polling for targets either — ask the browser endpoint to tell us when a page
+  // appears or goes away, and re-scan on those events. The interval is only a slow safety net
+  // for the case where the discovery socket itself cannot be opened.
+  let discoverWs = null
+  function watchTargets() {
+    if (discoverWs && discoverWs.readyState === 1) return
+    fetch(`http://127.0.0.1:${port}/json/version`, { signal: AbortSignal.timeout(2000) }).then((r) => r.json()).then((v) => {
+      const url = v && v.webSocketDebuggerUrl
+      if (!url) return
+      const ws = new WS(url)
+      discoverWs = ws
+      ws.onopen = () => ws.send(JSON.stringify({ id: 1, method: 'Target.setDiscoverTargets', params: { discover: true } }))
+      ws.onmessage = (ev) => {
+        let m
+        try { m = JSON.parse(String(ev.data)) } catch { return }
+        if (m.method === 'Target.targetCreated' || m.method === 'Target.targetDestroyed' || m.method === 'Target.targetInfoChanged') void scan()
+      }
+      ws.onclose = () => { discoverWs = null; setTimeout(watchTargets, 4000) }
+      ws.onerror = () => { try { ws.close() } catch { /* noop */ } }
+    }).catch(() => { /* the safety net below covers it */ })
+  }
+  watchTargets()
+  const timer = setInterval(() => { void scan() }, discoverWs ? RESCAN_MS * 4 : RESCAN_MS)
   context.subscriptions.push(sub, sub2)
   context.subscriptions.push({
     dispose: () => {
