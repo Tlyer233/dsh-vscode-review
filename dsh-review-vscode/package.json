@@ -2,7 +2,7 @@
   "name": "dsh-review-vscode",
   "displayName": "dsh review — inline diff + dsh sidebar",
   "description": "Inline review (shadow/pending) + dsh webview sidebar",
-  "version": "0.1.40",
+  "version": "0.1.41",
   "publisher": "dsn",
   "engines": {
     "vscode": "^1.85.0"
@@ -64,6 +64,10 @@
         "title": "dsh: 元素批注状态 / browser comment status"
       },
       {
+          "command": "dshReview.dumpDocs",
+          "title": "dsh: 列出当前打开的文档（排障用）"
+        },
+        {
         "command": "dshReview.browserComment.selftest",
         "title": "dsh: 元素批注自检（先聚焦评论框再运行）"
       },
