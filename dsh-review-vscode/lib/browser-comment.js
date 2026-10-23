@@ -643,13 +643,16 @@ const pendingRaw = new Map() // 0.1.84: DOM-domain replies, resolved whole (not 
       ws.onerror = () => { try { ws.close() } catch { /* noop */ } }
     }).catch(() => { /* the safety net below covers it */ })
   }
+  // 0.1.96: no interval at all — target events drive the scan, and the discovery socket
+  // re-opens itself on close. (The only remaining timer in the plugin is the pre-existing
+  // dshBridgeHello handshake, which stops after 12 attempts.)
   watchTargets()
-  const timer = setInterval(() => { void scan() }, discoverWs ? RESCAN_MS * 4 : RESCAN_MS)
+  const timer = null
   context.subscriptions.push(sub, sub2)
   context.subscriptions.push({
     dispose: () => {
       stopped = true
-      clearInterval(timer)
+      try { if (timer) clearInterval(timer) } catch { /* noop */ }
       bridge.setElementProbe(null)
       bridge.setPageStateProbe(null)
       bridge.setPageUrlProvider(null)
