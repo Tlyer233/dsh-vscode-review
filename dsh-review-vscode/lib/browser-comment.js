@@ -46,9 +46,18 @@ const PROBE_JS = `(function () {
     'display', 'position', 'top', 'left', 'width', 'height', 'margin', 'padding', 'border', 'border-radius',
     'z-index', 'opacity', 'text-align', 'cursor', 'overflow']
 
+  function clsOf(el) {
+    // SVG elements expose className as an SVGAnimatedString object, so String(el.className)
+    // printed "[object SVGAnimatedString]" into the label and the class list.
+    var c = ''
+    try { c = (typeof el.getAttribute === 'function' && el.getAttribute('class')) || '' } catch (e) { c = '' }
+    if (!c && typeof el.className === 'string') c = el.className
+    return String(c).split(/\\s+/).filter(Boolean)
+  }
+
   function labelFor(el) {
     var r = el.getBoundingClientRect()
-    var cls = String(el.className || '').split(/\\s+/).filter(Boolean)
+    var cls = clsOf(el)
     return String(el.tagName || '').toLowerCase() +
       (el.id ? '#' + el.id : '') +
       (cls.length ? '.' + cls[0] : '') +
@@ -61,7 +70,7 @@ const PROBE_JS = `(function () {
     var node = el
     for (var depth = 0; node && node.tagName && depth < 5; depth++) {
       var name = node.tagName.toLowerCase()
-      var cls = String(node.className || '').split(/\\s+/).filter(Boolean)
+      var cls = clsOf(node)
       if (cls.length) name += '.' + cls[0]
       var parent = node.parentElement
       if (parent) {
@@ -81,8 +90,7 @@ const PROBE_JS = `(function () {
     var anc = []
     var n = el.parentElement
     for (var i = 0; n && i < 6; i++) {
-      anc.push(String(n.tagName || '').toLowerCase() + (n.id ? '#' + n.id : '') +
-        (String(n.className || '').trim() ? '.' + String(n.className).trim().split(/\\s+/)[0] : ''))
+      anc.push(String(n.tagName || '').toLowerCase() + (n.id ? '#' + n.id : '') + (clsOf(n).length ? '.' + clsOf(n)[0] : ''))
       n = n.parentElement
     }
     var at = {}
@@ -99,7 +107,7 @@ const PROBE_JS = `(function () {
     return {
       tag: String(el.tagName || '').toLowerCase(),
       id: el.id || '',
-      classes: String(el.className || '').split(/\\s+/).filter(Boolean).slice(0, 10),
+      classes: clsOf(el).slice(0, 10),
       attributes: at,
       ancestors: anc,
       selector: selectorFor(el),
