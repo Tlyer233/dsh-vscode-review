@@ -245,6 +245,7 @@ function startElementContextWatcher(context, log) {
     const ok = await sendRefsToDsh([ref], text ? text + '\n' + md : md, '')
     log.appendLine(TAG + ' [comment] ' + (file ? 'wrote ' + file : 'no-file') +
       ' -> dsh ok=' + ok + ' kind=' + ref.kind + ' chars=' + text.length + (nid ? ' nid=' + nid : ''))
+    lastCommentFile = file || ''
     if (cfg('focusDshAfterCapture', true)) {
       // 0.1.53: the native flow focuses the Copilot composer right after inserting its
       // reference, which stole the focus back from our single 200ms attempt — re-assert
@@ -264,14 +265,11 @@ function startElementContextWatcher(context, log) {
   // 366 × 20", so match on tag + id only (classes/size differ) and prefer the line whose
   // text is identical. Removing that line makes VS Code drop the page pin by itself — the
   // user proved this by deleting the reference manually.
-  function commentFileFor(p) {
-    const dir = bcfg('commentDir', '/tmp/dsh-comments')
-    const nid = String((p && p.nid) || '')
-    if (nid) { const f = findCommentFile(nid); if (f) return f }
-    try {
-      const base = 'comment-' + require('node:fs').readdirSync(dir).filter((f) => f.endsWith('.md')).sort().pop()
-      return base
-    } catch { return '' }
+  // 0.1.60: the reverse binding needs the exact file a delivery wrote. My first version
+  // re-derived it and produced "comment-comment-…", so the client could never match the
+  // chip. sendCommentToDsh now records it directly.
+  function commentFileFor() {
+    return lastCommentFile
   }
 
   async function dropCopilotLineForMd(file) {
@@ -797,6 +795,7 @@ function startElementContextWatcher(context, log) {
   seedBaseline()
   let lastScanLog = 0
   let lastSelfDelete = 0
+  let lastCommentFile = ''
   const deliveredFiles = new Map() // composer key -> [md paths]
   let lastNoDocLog = 0
   context.subscriptions.push(vscode.commands.registerCommand('dshReview.dumpDocs', () => {

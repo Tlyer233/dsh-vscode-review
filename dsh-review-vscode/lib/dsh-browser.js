@@ -1138,6 +1138,10 @@ function setupDshBrowser(context) {
         })
       } catch { /* already registered */ }
       view.webview.onDidReceiveMessage((msg) => {
+        if (msg.type === 'dshRefsTracked') {
+          state.log('[chip-watch] 客户端正在盯 ' + String((msg.names || []).join(', ')).slice(0, 120))
+          return
+        }
         if (msg.type === 'dshRemoveReferenceAck') {
           state.log('[chip-remove] ' + String(msg.name || '?') + ' -> ' + (msg.ok ? '已删掉' : '页面上没找到这个方块（可能已经删了）'))
           return

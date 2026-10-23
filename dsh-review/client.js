@@ -1297,6 +1297,7 @@ window.__ModuleLoader__.load({
         // VS Code drops the page pin on its own (verified by the user's test).
         const trackedRefs = new Map(); // file name -> { path }
         let refSweepAt = 0;
+        let sweepReported = false;
         function composerScope() {
           const editor = document.querySelector('[contenteditable="true"]');
           if (!editor) return null;
@@ -1304,9 +1305,12 @@ window.__ModuleLoader__.load({
           for (let i = 0; i < 3 && node.parentElement; i++) node = node.parentElement;
           return node;
         }
-        function trackInsertedRefs(list) {
-          (Array.isArray(list) ? list : []).forEach(function (r) {
-            const path = String((r && (r.path || r.ref)) || '');
+        function trackInsertedRefs(refs, list) {
+          const all = []
+            .concat(Array.isArray(refs) ? refs : [])
+            .concat(Array.isArray(list) ? list : []);
+          all.forEach(function (r) {
+            const path = String((r && (r.path || r.ref || r.label)) || '');
             const name = path.split('/').pop();
             if (name && /\.md$/.test(name)) trackedRefs.set(name, { path: path });
           });
@@ -1323,6 +1327,10 @@ window.__ModuleLoader__.load({
             if (text.indexOf(name) !== -1) return;
             trackedRefs.delete(name);
             try { window.parent.postMessage({ type: "dshDropReference", path: info.path, name: name }, "*"); } catch (err) { /* noop */ }
+          });
+          if (trackedRefs.size && !sweepReported) {
+            sweepReported = true;
+            try { window.parent.postMessage({ type: "dshRefsTracked", names: Array.from(trackedRefs.keys()).slice(0, 4) }, "*"); } catch (err) { /* noop */ }
           });
         }
         function removeTrackedChipByName(name) {
@@ -1418,7 +1426,7 @@ window.__ModuleLoader__.load({
               // user placing the caret, not a request to open the file.
               try { window.__dshrRefGuardUntil = Date.now() + 800; } catch (err) { /* noop */ }
               setTimeout(function () { try { caretDiag("insertReference", inputHub.shell(sessionId)); } catch (err) { /* noop */ } }, 320);
-              trackInsertedRefs(list);
+              trackInsertedRefs(refs, list);
               return { mode: "chip", count: references.length, reason: "" };
             }
 
