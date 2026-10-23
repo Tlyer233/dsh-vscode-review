@@ -2,7 +2,7 @@
   "name": "dsh-review-vscode",
   "displayName": "dsh review — inline diff + dsh sidebar",
   "description": "Inline review (shadow/pending) + dsh webview sidebar",
-  "version": "0.1.55",
+  "version": "0.1.56",
   "publisher": "dsn",
   "engines": {
     "vscode": "^1.85.0"
@@ -30,16 +30,22 @@
       },
       {
         "command": "dshReview.restartDsh",
+        "icon": "$(debug-restart)",
         "category": "dsh",
         "title": "重启 dsh"
       },
       {
         "command": "dshReview.restartDshProxy",
+        "icon": {
+          "light": "media/dsh-refresh-proxy.svg",
+          "dark": "media/dsh-refresh-proxy.svg"
+        },
         "category": "dsh",
         "title": "重启 dsh（走代理）"
       },
       {
         "command": "dshReview.stopDsh",
+        "icon": "$(debug-stop)",
         "category": "dsh",
         "title": "停止 dsh"
       },
@@ -75,11 +81,19 @@
       },
       {
         "command": "dshReview.acceptAll",
+        "icon": {
+          "light": "media/dsh-accept.svg",
+          "dark": "media/dsh-accept.svg"
+        },
         "category": "dsh",
         "title": "全部接受"
       },
       {
         "command": "dshReview.rejectAll",
+        "icon": {
+          "light": "media/dsh-reject.svg",
+          "dark": "media/dsh-reject.svg"
+        },
         "category": "dsh",
         "title": "全部撤回"
       },
@@ -90,6 +104,7 @@
       },
       {
         "command": "dshReview.restartDshBili",
+        "icon": "$(zap)",
         "category": "dsh",
         "title": "重启 dsh（bili 环境）"
       },
