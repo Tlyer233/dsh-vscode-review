@@ -1298,12 +1298,24 @@ window.__ModuleLoader__.load({
         const trackedRefs = new Map(); // file name -> { path }
         let refSweepAt = 0;
         let sweepReported = false;
+        let announceSent = false;
         function composerScope() {
-          const editor = document.querySelector('[contenteditable="true"]');
-          if (!editor) return null;
-          let node = editor;
-          for (let i = 0; i < 3 && node.parentElement; i++) node = node.parentElement;
-          return node;
+          // The composer markup is dsh's own and is not guaranteed to be contenteditable,
+          // and returning null here used to switch the whole binding off silently. The md
+          // file names we track are unique (timestamp + random), so falling back to the
+          // document body is safe and keeps the binding alive whatever the markup is.
+          const editor = document.querySelector('[contenteditable="true"], textarea');
+          if (editor) {
+            let node = editor;
+            for (let i = 0; i < 3 && node.parentElement; i++) node = node.parentElement;
+            return node
+          }
+          return document.body || document.documentElement;
+        }
+        function announceTracking() {
+          if (!trackedRefs.size || announceSent) return;
+          announceSent = true;
+          try { window.parent.postMessage({ type: "dshRefsTracked", names: Array.from(trackedRefs.keys()).slice(0, 4) }, "*"); } catch (err) { /* noop */ }
         }
         function trackInsertedRefs(refs, list) {
           const all = []
@@ -1312,8 +1324,9 @@ window.__ModuleLoader__.load({
           all.forEach(function (r) {
             const path = String((r && (r.path || r.ref || r.label)) || '');
             const name = path.split('/').pop();
-            if (name && /\.md$/.test(name)) trackedRefs.set(name, { path: path });
+            if (name && /\.md$/.test(name)) { trackedRefs.set(name, { path: path }); announceSent = false; }
           });
+          announceTracking();
         }
         function sweepDroppedRefs() {
           const now = Date.now();
