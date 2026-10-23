@@ -1325,7 +1325,7 @@ window.__ModuleLoader__.load({
         function postState(extra) {
           // 0.1.82: only the scope-request message has ever reached the extension, so all
           // client-side events (tracked / dropped / request-received / removed) ride on it.
-          const msg = { type: "dshScopeRequest", build: "0.1.94", watching: Array.from(trackedRefs.keys()).slice(0, 3) };
+          const msg = { type: "dshScopeRequest", build: "0.1.95", watching: Array.from(trackedRefs.keys()).slice(0, 3) };
           try { Object.assign(msg, extra || {}); } catch (err) { /* noop */ }
           try { window.parent.postMessage(msg, "*"); } catch (err) { /* noop */ }
         }
@@ -1399,6 +1399,25 @@ window.__ModuleLoader__.load({
           }
           return list;
         }
+        // 0.1.95: the composer's references are span.<hash>_reference elements (measured from a
+        // click the user made: svg < span.q44v1G_reference:"321321"). That class is the exact
+        // handle for "does this reference still exist in the composer" — no text guessing.
+        function refNodes() {
+          var list = [];
+          try { list = Array.prototype.slice.call(document.querySelectorAll('[class*="_reference"]')) } catch (err) { list = []; }
+          return list;
+        }
+        function refTexts() {
+          const set = {};
+          const nodes = refNodes();
+          for (let i = 0; i < nodes.length; i++) {
+            const t = String(nodes[i].textContent || '').replace(/\s+/g, ' ').trim();
+            if (t) set[t] = true;
+            const ti = String((nodes[i].getAttribute && nodes[i].getAttribute('title')) || '');
+            if (ti) set[ti] = true;
+          }
+          return set;
+        }
         function pathOfChip(el) {
           const t = String((el && el.getAttribute && el.getAttribute('title')) || '');
           const p2 = t.charAt(0) === '@' ? t.slice(1) : t;
@@ -1441,6 +1460,12 @@ window.__ModuleLoader__.load({
           // 撤图钉 path produced no log at all, so the broken link had to be made visible.
           const diag = [];
           const seenPaths = censusChips();
+          const inRefs = refTexts();
+          const refsText = Object.keys(inRefs).join("\u241f");
+          for (const nm in inRefs) {
+            if (Object.prototype.hasOwnProperty.call(trackedRefs, nm)) inRefs[nm] = true
+          }
+          void refsText;
           const short = function (nm) { return String(nm).replace(/^comment-\d{8}-/, '').slice(0, 14) };
           trackedRefs.forEach(function (info, name) {
             // 0.1.86: we track the chip before dsh renders it (the log order proved it:
@@ -1463,7 +1488,8 @@ window.__ModuleLoader__.load({
               return;
             }
             const ct = composerText;
-            const still = seenPaths[name] || (info.alt && ct.indexOf(info.alt) !== -1) || ct.indexOf(name) !== -1 || (info.tail && ct.indexOf(info.tail) !== -1);
+            const altKey = info.alt ? String(info.alt).replace(/\s+/g, ' ').trim() : '';
+            const still = seenPaths[name] || (altKey && inRefs[altKey]) || (info.tail && refsText.indexOf(info.tail) !== -1) || ct.indexOf(name) !== -1 || (altKey && ct.indexOf(altKey) !== -1);
             if (still) { diag.push(short(name) + " 还在输入框"); return; }
             if (!info.seen) { diag.push(short(name) + " 从没见过节点"); return; }
             diag.push(short(name) + " 判为已删");
@@ -1569,7 +1595,16 @@ window.__ModuleLoader__.load({
           // that text and deleting it — do the same, then fall back to clicking a control.
           try {
             const root = composerRoot();
-            const needleText = needle2 || needle || name;
+            const alt1 = needle2 || needle || name;
+            var needleText = alt1;
+            // prefer the exact reference element: click its remove affordance if it has one
+            const refs = refNodes();
+            for (let q = 0; q < refs.length; q++) {
+              const own = String(refs[q].textContent || '').replace(/\s+/g, ' ').trim();
+              if (!alt1 || (own.indexOf(alt1) === -1 && String(refs[q].getAttribute('title') || '').indexOf(alt1) === -1)) continue;
+              const ctl = refs[q].querySelector('svg,button,[role="button"],[class*="remove"],[class*="close"],[class*="delete"]') || refs[q];
+              try { ctl.dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true, view: window })); return true; } catch (err) { /* keep trying */ }
+            }
             if (root && needleText) {
               const walker = document.createTreeWalker(root, window.NodeFilter.SHOW_TEXT, null);
               let tn = null;
@@ -1800,7 +1835,7 @@ window.__ModuleLoader__.load({
             setTimeout(compactNativeStatsLine, 800);
             applyZoom();
             // Scope is owned by apply()-level listener; ask again in case early posts were dropped.
-            try { window.parent.postMessage({ type: "dshScopeRequest", build: "0.1.94", watching: Array.from(trackedRefs.keys()).slice(0, 3) }, "*"); } catch (err) { /* noop */ }
+            try { window.parent.postMessage({ type: "dshScopeRequest", build: "0.1.95", watching: Array.from(trackedRefs.keys()).slice(0, 3) }, "*"); } catch (err) { /* noop */ }
             return;
           }
           if (msg.type === "dshChromeState") {
@@ -4300,13 +4335,13 @@ window.__ModuleLoader__.load({
               try { ok = !!(window.__dshrRemoveChip && window.__dshrRemoveChip(nm)); } catch (err) { ok = false; }
               let watch = [];
               try { watch = (window.__dshrTracked && window.__dshrTracked()) || []; } catch (err) { watch = []; }
-              try { window.parent.postMessage({ type: "dshScopeRequest", build: "0.1.94", watching: watch.slice(0, 3), report: "捎带删方块: " + nm + " -> " + (ok ? "已删" : "没找到方块节点") }, "*"); } catch (err) { /* noop */ }
+              try { window.parent.postMessage({ type: "dshScopeRequest", build: "0.1.95", watching: watch.slice(0, 3), report: "捎带删方块: " + nm + " -> " + (ok ? "已删" : "没找到方块节点") }, "*"); } catch (err) { /* noop */ }
             });
           }
           setVscodeScope(msg.paths, msg.rawPaths);
         }
         window.addEventListener("message", onScopeFromHost);
-        try { window.parent.postMessage({ type: "dshScopeRequest", build: "0.1.94", watching: Array.from(trackedRefs.keys()).slice(0, 3) }, "*"); } catch (err) { /* noop */ }
+        try { window.parent.postMessage({ type: "dshScopeRequest", build: "0.1.95", watching: Array.from(trackedRefs.keys()).slice(0, 3) }, "*"); } catch (err) { /* noop */ }
         const timer = setInterval(checkWorkbenchScope, 800);
         return function () {
           clearInterval(timer);
