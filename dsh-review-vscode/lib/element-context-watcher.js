@@ -700,6 +700,20 @@ function startElementContextWatcher(context, log) {
         } else {
           log.appendLine(TAG + ' · 元素详情没拿到（探针没连上或元素已经变了）label=' + f.label)
         }
+        // 0.1.75: report the page's actual pin/overlay situation, so it is visible in the log
+        // whether VS Code's pin is a DOM node we can reach at all.
+        try {
+          const st = await bridge.pageState(payload.url || '')
+          if (st && typeof st === 'object') {
+            const pins = Array.isArray(st.pins) ? st.pins : []
+            log.appendLine(TAG + ' · 页面图钉扫描：' + pins.length + ' 个可疑覆盖层' + (st.helpers ? ' ｜ __vscode_helpers=' + String(st.helpers).slice(0, 60) : ' ｜ 无 __vscode_helpers') + (st.globals ? ' ｜ globals=' + String(st.globals).slice(0, 70) : ''))
+            pins.slice(0, 4).forEach((x) => log.appendLine(TAG + ' ·   ' + String(x).slice(0, 150)))
+          } else {
+            log.appendLine(TAG + ' · 页面图钉扫描：探针没答（' + (st === null ? 'null' : typeof st) + '）')
+          }
+        } catch (e) {
+          log.appendLine(TAG + ' · 页面图钉扫描失败: ' + String((e && e.message) || e))
+        }
         const okSend = await sendCommentToDsh(payload)
         if (okSend && cfg('bindDshRemoval', true)) {
           if (!deliveredFiles.has(f.key)) deliveredFiles.set(f.key, [])

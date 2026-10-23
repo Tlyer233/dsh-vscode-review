@@ -140,6 +140,40 @@ const PROBE_JS = `(function () {
   window.__dshProbe = {
     version: 'v7',
     ping: function () { return 'v7 ' + location.href },
+    state: function () {
+      var out = { url: location.href, title: document.title || '', pins: [], helpers: null }
+      function walk(root, where) {
+        var els = []
+        try { els = Array.prototype.slice.call(root.querySelectorAll('*')) } catch (e) { return }
+        for (var i = 0; i < els.length && i < 9000; i++) {
+          var el = els[i]
+          var id = '', cls = '', data = ''
+          try {
+            id = el.id || ''
+            cls = typeof el.className === 'string' ? el.className : (el.getAttribute && el.getAttribute('class') || '')
+            for (var j = 0; el.attributes && j < el.attributes.length && j < 12; j++) {
+              var at = el.attributes[j]
+              if (/comment|element|pin|marker|vscode/i.test(at.name)) data += ' ' + at.name + '=' + String(at.value).slice(0, 24)
+            }
+          } catch (e) {}
+          var blob = (id + ' ' + cls + data).toLowerCase()
+          var txt = ''
+          try { txt = String(el.textContent || '').trim().slice(0, 8) } catch (e) {}
+          var pos = ''
+          try { var st = getComputedStyle(el); pos = st.position } catch (e) {}
+          if (out.pins.length < 14 && (/pin|marker|comment|annotation|element-selection|vscode/.test(blob) || (/^[0-9]{1,3}$/.test(txt) && (pos === 'fixed' || pos === 'absolute')))) {
+            var r = null
+            try { r = el.getBoundingClientRect() } catch (e) {}
+            out.pins.push(where + ' ' + el.tagName.toLowerCase() + (id ? '#' + id : '') + (cls ? '.' + String(cls).trim().split(/\s+/)[0] : '') + (data ? ' ' + data.trim() : '') + ' text=' + JSON.stringify(txt) + ' ' + pos + (r ? ' @' + Math.round(r.left) + ',' + Math.round(r.top) + ' ' + Math.round(r.width) + 'x' + Math.round(r.height) : ''))
+          }
+          if (el.shadowRoot) walk(el.shadowRoot, where + '>' + el.tagName.toLowerCase() + '#sr')
+        }
+      }
+      walk(document, 'doc')
+      try { var h = window.__vscode_helpers; out.helpers = h ? Object.keys(h).slice(0, 20).join(',') : null } catch (e) { out.helpers = 'ERR' }
+      try { out.globals = Object.getOwnPropertyNames(window).filter(function (k) { return /vscode|comment|element|pin|__dsh/i.test(k) }).slice(0, 16).join(',') } catch (e) {}
+      return JSON.stringify(out)
+    },
     lookup: function (q) {
       var el = find(q)
       if (!el) return JSON.stringify({ ok: false, q: q, url: location.href })
@@ -246,6 +280,20 @@ function startBrowserComment(opts) {
       }
     })
   }
+  async function probePageState(url) {
+    const c = pickConn(url)
+    if (!c || !c.ws || c.ws.readyState !== 1) return null
+    const id = ++rpcSeq
+    const expr = '(window.__dshProbe ? window.__dshProbe.state() : null)'
+    return await new Promise((resolve) => {
+      const timer = setTimeout(() => { pending.delete(id); resolve(null) }, 3000)
+      pending.set(id, (val) => { clearTimeout(timer); resolve(val) })
+      try {
+        c.ws.send(JSON.stringify({ id: id, method: 'Runtime.evaluate', params: { expression: expr, returnByValue: true, timeout: 2500 } }))
+      } catch (e) { clearTimeout(timer); pending.delete(id); resolve(null) }
+    })
+  }
+  bridge.setPageStateProbe(probePageState)
   bridge.setElementProbe(probeElement)
 
   bridge.setPageUrlProvider(() => {
@@ -311,6 +359,7 @@ function startBrowserComment(opts) {
       stopped = true
       clearInterval(timer)
       bridge.setElementProbe(null)
+      bridge.setPageStateProbe(null)
       bridge.setPageUrlProvider(null)
       for (const id of Array.from(conns.keys())) closeOne(id, '')
     },

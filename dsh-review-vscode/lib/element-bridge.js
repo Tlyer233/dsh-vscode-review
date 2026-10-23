@@ -92,6 +92,18 @@ function referenceDropped(payload) {
   try { return !!referenceDroppedHandler(payload) } catch { return false }
 }
 
+/* 0.1.75: the page pin survey. browser-comment owns the CDP connections; the watcher asks
+ * for "what does the page actually contain right now" after each annotation so the log shows
+ * whether VS Code's pin lives in this page or in the unreachable agent host. */
+let pageStateProbe = null
+function setPageStateProbe(fn) {
+  pageStateProbe = typeof fn === 'function' ? fn : null
+}
+async function pageState(url) {
+  if (!pageStateProbe) return null
+  try { return await pageStateProbe(url) } catch { return null }
+}
+
 function setDismissPrompt(fn) {
   handlers.dismissPrompt = typeof fn === 'function' ? fn : null
 }
@@ -120,7 +132,7 @@ async function deliverBrowserComment(payload) {
   }
 }
 
-module.exports = { nativeCommentPayload, setReferenceDroppedHandler, referenceDropped, setElementProbe, probeElement, setPageUrlProvider, browserPageUrl, setDismissPrompt, dismissPrompt, setBrowserCommentHandler, deliverBrowserComment, setOpenGuard, openGuarded }
+module.exports = { nativeCommentPayload, setPageStateProbe, pageState, setReferenceDroppedHandler, referenceDropped, setElementProbe, probeElement, setPageUrlProvider, browserPageUrl, setDismissPrompt, dismissPrompt, setBrowserCommentHandler, deliverBrowserComment, setOpenGuard, openGuarded }
 
 async function dismissPrompt() {
   if (!handlers.dismissPrompt) return { ok: false, why: 'no-handler' }
