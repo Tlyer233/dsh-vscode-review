@@ -1299,6 +1299,15 @@ window.__ModuleLoader__.load({
         let refSweepAt = 0;
         let sweepReported = false;
         let announceSent = false;
+        // A chip matches when its text carries either the file-name tail or the annotation
+        // label we gave it (dsh truncates long labels in the middle, both survive).
+        function textHas(el, info) {
+          const txt = String((el && el.textContent) || '');
+          const t = info && info.tail, a2 = info && info.alt;
+          if (t && txt.indexOf(t) !== -1) return true;
+          if (a2 && txt.indexOf(a2) !== -1) return true;
+          return false;
+        }
         function composerScope() {
           // The composer markup is dsh's own and is not guaranteed to be contenteditable,
           // and returning null here used to switch the whole binding off silently. The md
@@ -1315,7 +1324,7 @@ window.__ModuleLoader__.load({
         function postState(extra) {
           // 0.1.82: only the scope-request message has ever reached the extension, so all
           // client-side events (tracked / dropped / request-received / removed) ride on it.
-          const msg = { type: "dshScopeRequest", build: "0.1.88", watching: Array.from(trackedRefs.keys()).slice(0, 3) };
+          const msg = { type: "dshScopeRequest", build: "0.1.89", watching: Array.from(trackedRefs.keys()).slice(0, 3) };
           try { Object.assign(msg, extra || {}); } catch (err) { /* noop */ }
           try { window.parent.postMessage(msg, "*"); } catch (err) { /* noop */ }
         }
@@ -1338,7 +1347,10 @@ window.__ModuleLoader__.load({
               // so neither exact equality nor a full-name contains-match finds it. The tail
               // ("span-xd4m.md") survives truncation and is unique enough to identify a chip.
               const tail = name.replace(/^comment-\d{8}-\d{6}-/, '') || name;
-              trackedRefs.set(name, { path: path, el: null, since: Date.now(), tail: tail });
+              // 0.1.89: the chip's visible text is the annotation itself now (ext 0.1.74), so
+              // matching by file name alone stopped finding chips. Keep both needles.
+              const alt = String((r && r.label) || '').replace(/\s+/g, ' ').trim().slice(0, 40);
+              trackedRefs.set(name, { path: path, el: null, since: Date.now(), tail: tail, alt: alt });
               announceSent = false;
             }
           });
@@ -1353,7 +1365,7 @@ window.__ModuleLoader__.load({
               if (info.el && info.el.isConnected) return;
               for (let i = 0; i < nodes.length; i++) {
                 const el = nodes[i];
-                if (String(el.textContent || '').indexOf(info.tail || nm) === -1) continue;
+                if (!textHas(el, info)) continue;
                 const parent = el.parentElement;
                 if (parent && parent !== scope && String(parent.textContent || '').indexOf(nm) !== -1 && String(parent.textContent || '').length > String(el.textContent || '').length + 4) continue;
                 info.el = el;
@@ -1385,7 +1397,7 @@ window.__ModuleLoader__.load({
             if (info.el && text.indexOf(name) !== -1) {
               const nodes = composerScope().querySelectorAll('span,div,a,button');
               for (let i = 0; i < nodes.length; i++) {
-                if (String(nodes[i].textContent || '').indexOf(info.tail || name) === -1) continue;
+                if (!textHas(nodes[i], info)) continue;
                 if (!info.el || String(nodes[i].textContent || '').length < String(info.el.textContent || '').length) info.el = nodes[i];
                 info.seen = true;
               }
@@ -1409,10 +1421,11 @@ window.__ModuleLoader__.load({
           if (!scope || !name) return false;
           const tr = trackedRefs.get(name);
           const needle = (tr && tr.tail) || name;
+          const needle2 = (tr && tr.alt) || '';
           const nodes = scope.querySelectorAll('span,div,a,button');
           for (let i = 0; i < nodes.length; i++) {
             const el = nodes[i];
-            if (String(el.textContent || '').indexOf(needle) === -1) continue;
+            if (String(el.textContent || '').indexOf(needle) === -1 && (!needle2 || String(el.textContent || '').indexOf(needle2) === -1)) continue;
             const parent = el.parentElement;
             if (parent && parent !== scope && String(parent.textContent || '').indexOf(needle) !== -1 && String(parent.textContent || '').length > String(el.textContent || '').length + 4) continue;
             let target = null;
@@ -1621,7 +1634,7 @@ window.__ModuleLoader__.load({
             setTimeout(compactNativeStatsLine, 800);
             applyZoom();
             // Scope is owned by apply()-level listener; ask again in case early posts were dropped.
-            try { window.parent.postMessage({ type: "dshScopeRequest", build: "0.1.88", watching: Array.from(trackedRefs.keys()).slice(0, 3) }, "*"); } catch (err) { /* noop */ }
+            try { window.parent.postMessage({ type: "dshScopeRequest", build: "0.1.89", watching: Array.from(trackedRefs.keys()).slice(0, 3) }, "*"); } catch (err) { /* noop */ }
             return;
           }
           if (msg.type === "dshChromeState") {
@@ -4121,13 +4134,13 @@ window.__ModuleLoader__.load({
               try { ok = !!(window.__dshrRemoveChip && window.__dshrRemoveChip(nm)); } catch (err) { ok = false; }
               let watch = [];
               try { watch = (window.__dshrTracked && window.__dshrTracked()) || []; } catch (err) { watch = []; }
-              try { window.parent.postMessage({ type: "dshScopeRequest", build: "0.1.88", watching: watch.slice(0, 3), report: "捎带删方块: " + nm + " -> " + (ok ? "已删" : "没找到方块节点") }, "*"); } catch (err) { /* noop */ }
+              try { window.parent.postMessage({ type: "dshScopeRequest", build: "0.1.89", watching: watch.slice(0, 3), report: "捎带删方块: " + nm + " -> " + (ok ? "已删" : "没找到方块节点") }, "*"); } catch (err) { /* noop */ }
             });
           }
           setVscodeScope(msg.paths, msg.rawPaths);
         }
         window.addEventListener("message", onScopeFromHost);
-        try { window.parent.postMessage({ type: "dshScopeRequest", build: "0.1.88", watching: Array.from(trackedRefs.keys()).slice(0, 3) }, "*"); } catch (err) { /* noop */ }
+        try { window.parent.postMessage({ type: "dshScopeRequest", build: "0.1.89", watching: Array.from(trackedRefs.keys()).slice(0, 3) }, "*"); } catch (err) { /* noop */ }
         const timer = setInterval(checkWorkbenchScope, 800);
         return function () {
           clearInterval(timer);
