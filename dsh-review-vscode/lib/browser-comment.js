@@ -262,19 +262,21 @@ const PROBE_JS = `(function () {
 
 // Runs before any page script on the next navigation: records closed shadow roots so the
 // pin layer becomes reachable. Pure CDP injection — no VS Code file is modified.
-const SHADOW_HOOK = \`(function () {
-  if (window.__dshShadowRoots) return 'dup'
-  window.__dshShadowRoots = []
-  var orig = Element.prototype.attachShadow
-  Element.prototype.attachShadow = function (init) {
-    var root = orig.call(this, init)
-    try {
-      if (init && init.mode === 'closed') { window.__dshShadowRoots.push(root); try { Object.defineProperty(this, '__dshClosedRoot', { value: root, configurable: true }) } catch (e) {} }
-    } catch (e) {}
-    return root
-  }
-  return 'ok'
-})()\`
+const SHADOW_HOOK = [
+  "(function () {",
+  "  if (window.__dshShadowRoots) return 'dup'",
+  "  window.__dshShadowRoots = []",
+  "  var orig = Element.prototype.attachShadow",
+  "  Element.prototype.attachShadow = function (init) {",
+  "    var root = orig.call(this, init)",
+  "    try {",
+  "      if (init && init.mode === 'closed') { window.__dshShadowRoots.push(root); try { Object.defineProperty(this, '__dshClosedRoot', { value: root, configurable: true }) } catch (e) {} }",
+  "    } catch (e) {}",
+  "    return root",
+  "  }",
+  "  return 'ok'",
+  "})()",
+].join('\n')
 
 function startBrowserComment(opts) {
   const { context, log } = opts
