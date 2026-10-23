@@ -396,7 +396,15 @@ function startElementContextWatcher(context, log) {
       const body = cm ? String(cm[1]).trim() : ''
       if (!body) { log.appendLine(TAG + ' · 撤图钉：md 里没有批注文字，跳过'); return false }
       const url = (um && um[1]) || bridge.browserPageUrl() || ''
-      const r = await bridge.removePin(url, body)
+      let r = await bridge.removePin(url, body)
+      // 0.1.98: VS Code paints the pin a moment after the composer line exists, so a first
+      // "no such pin" is not final — look once more shortly after (a single retry, not polling).
+      if (r && !r.ok && /没找到对应图钉/.test(String(r.why || ''))) {
+        await new Promise((res) => setTimeout(res, 800))
+        const r2 = await bridge.removePin(url, body)
+        if (r2 && r2.ok) r = r2
+        else if (r2) r = r2
+      }
       log.appendLine(TAG + ' · 撤图钉：' + (r && r.ok ? '已点到删除按钮' : '没成：' + String((r && r.why) || '?')) + ' ｜ 批注=' + JSON.stringify(body).slice(0, 40))
       return !!(r && r.ok)
     } catch (e) {
