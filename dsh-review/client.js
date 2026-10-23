@@ -1325,7 +1325,7 @@ window.__ModuleLoader__.load({
         function postState(extra) {
           // 0.1.82: only the scope-request message has ever reached the extension, so all
           // client-side events (tracked / dropped / request-received / removed) ride on it.
-          const msg = { type: "dshScopeRequest", build: "0.1.92", watching: Array.from(trackedRefs.keys()).slice(0, 3) };
+          const msg = { type: "dshScopeRequest", build: "0.1.93", watching: Array.from(trackedRefs.keys()).slice(0, 3) };
           try { Object.assign(msg, extra || {}); } catch (err) { /* noop */ }
           try { window.parent.postMessage(msg, "*"); } catch (err) { /* noop */ }
         }
@@ -1512,6 +1512,34 @@ window.__ModuleLoader__.load({
           }, true);
         }
         hookChipClicks();
+
+        // 0.1.93: diagnostic of last resort — report the first click that happens anywhere a
+        // file chip is nearby, with the control's tag/text/ancestor chain, so the delete
+        // control's real shape becomes visible in the extension log instead of guessed.
+        let clickDiagAt = 0;
+        document.addEventListener('click', function (ev) {
+          const now = Date.now();
+          if (now - clickDiagAt < 800) return;
+          const src = ev && ev.target;
+          if (!src || !src.tagName) return;
+          let near = null;
+          let n = src;
+          for (let up = 0; n && up < 12; up++) { if (/comment-\d{8}-/.test(String(n.textContent || ''))) { near = n; break } n = n.parentElement }
+          if (!near) {
+            const chips = chipNodes();
+            if (!chips.length) return;
+            near = chips[0];
+          }
+          clickDiagAt = now;
+          const chain = [];
+          let c = src;
+          for (let d = 0; c && d < 6; d++) {
+            const cls = typeof c.className === 'string' ? c.className.trim().split(/\s+/)[0] : '';
+            chain.push(c.tagName.toLowerCase() + (c.id ? '#' + c.id : '') + (cls ? '.' + cls : '') + (c.getAttribute && c.getAttribute('data-ref-chip') ? '[chip]' : '') + (String(c.textContent || '').trim() ? ':' + JSON.stringify(String(c.textContent || '').trim().slice(0, 14)) : ''));
+            c = c.parentElement;
+          }
+          postState({ report: "方块附近点击: " + chain.join(" < ").slice(0, 230) });
+        }, true);
 
         function removeTrackedChipByName(name) {
           // 0.1.58: reverse half of the binding — the user deleted the pin/reference in
@@ -1734,7 +1762,7 @@ window.__ModuleLoader__.load({
             setTimeout(compactNativeStatsLine, 800);
             applyZoom();
             // Scope is owned by apply()-level listener; ask again in case early posts were dropped.
-            try { window.parent.postMessage({ type: "dshScopeRequest", build: "0.1.92", watching: Array.from(trackedRefs.keys()).slice(0, 3) }, "*"); } catch (err) { /* noop */ }
+            try { window.parent.postMessage({ type: "dshScopeRequest", build: "0.1.93", watching: Array.from(trackedRefs.keys()).slice(0, 3) }, "*"); } catch (err) { /* noop */ }
             return;
           }
           if (msg.type === "dshChromeState") {
@@ -4234,13 +4262,13 @@ window.__ModuleLoader__.load({
               try { ok = !!(window.__dshrRemoveChip && window.__dshrRemoveChip(nm)); } catch (err) { ok = false; }
               let watch = [];
               try { watch = (window.__dshrTracked && window.__dshrTracked()) || []; } catch (err) { watch = []; }
-              try { window.parent.postMessage({ type: "dshScopeRequest", build: "0.1.92", watching: watch.slice(0, 3), report: "捎带删方块: " + nm + " -> " + (ok ? "已删" : "没找到方块节点") }, "*"); } catch (err) { /* noop */ }
+              try { window.parent.postMessage({ type: "dshScopeRequest", build: "0.1.93", watching: watch.slice(0, 3), report: "捎带删方块: " + nm + " -> " + (ok ? "已删" : "没找到方块节点") }, "*"); } catch (err) { /* noop */ }
             });
           }
           setVscodeScope(msg.paths, msg.rawPaths);
         }
         window.addEventListener("message", onScopeFromHost);
-        try { window.parent.postMessage({ type: "dshScopeRequest", build: "0.1.92", watching: Array.from(trackedRefs.keys()).slice(0, 3) }, "*"); } catch (err) { /* noop */ }
+        try { window.parent.postMessage({ type: "dshScopeRequest", build: "0.1.93", watching: Array.from(trackedRefs.keys()).slice(0, 3) }, "*"); } catch (err) { /* noop */ }
         const timer = setInterval(checkWorkbenchScope, 800);
         return function () {
           clearInterval(timer);
