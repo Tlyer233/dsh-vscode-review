@@ -17,7 +17,7 @@ const bridge = require('./element-bridge')
 const CDP_PORT = 9223
 const TAG = '[browser-comment]'
 const PREFIX = '__DSH_BCC__'
-const VERSION = 'v7'
+const VERSION = 'v8'
 const RESCAN_MS = 2500
 
 async function fetchTargets(port) {
@@ -41,7 +41,8 @@ function isBrowserPage(t) {
  * without backticks because it lives inside a template literal here and ships as text.
  */
 const PROBE_JS = `(function () {
-  if (window.__dshProbe && window.__dshProbe.version === 'v7') return 'already'
+  if (window.__dshProbe && window.__dshProbe.version === 'v8') return 'already'
+  if (window.__dshProbe) { try { delete window.__dshProbe } catch (e) { window.__dshProbe = null } } // 0.1.77: v8 replaced state(); the old guard kept the stale probe installed forever
   var CSS_KEYS = ['color', 'background-color', 'font-size', 'font-weight', 'font-family', 'line-height',
     'display', 'position', 'top', 'left', 'width', 'height', 'margin', 'padding', 'border', 'border-radius',
     'z-index', 'opacity', 'text-align', 'cursor', 'overflow']
@@ -138,10 +139,10 @@ const PROBE_JS = `(function () {
   }
 
   window.__dshProbe = {
-    version: 'v7',
-    ping: function () { return 'v7 ' + location.href },
+    version: 'v8',
+    ping: function () { return 'v8 ' + location.href },
     state: function () {
-      var out = { url: location.href, title: document.title || '', pins: [], helpers: null }
+      var out = { url: location.href, title: document.title || '', pins: [], helpers: null, pickHost: null, helperSrc: '' }
       function walk(root, where) {
         var els = []
         try { els = Array.prototype.slice.call(root.querySelectorAll('*')) } catch (e) { return }
