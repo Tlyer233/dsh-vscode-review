@@ -1313,9 +1313,13 @@ window.__ModuleLoader__.load({
           return document.body || document.documentElement;
         }
         function announceTracking() {
-          if (!trackedRefs.size || announceSent) return;
-          announceSent = true;
-          try { window.parent.postMessage({ type: "dshRefsTracked", names: Array.from(trackedRefs.keys()).slice(0, 4) }, "*"); } catch (err) { /* noop */ }
+          // 0.1.80: report right after inserting chips, over the scope-request channel —
+          // the only client -> extension message proven to arrive. (dshRefsTracked never
+          // showed up in the log, and a scope request fired at page load reports 0 anyway.)
+          if (!trackedRefs.size) return;
+          try {
+            window.parent.postMessage({ type: "dshScopeRequest", build: "0.1.80", watching: Array.from(trackedRefs.keys()).slice(0, 3) }, "*");
+          } catch (err) { /* noop */ }
         }
         function trackInsertedRefs(refs, list) {
           const all = []
@@ -1556,7 +1560,7 @@ window.__ModuleLoader__.load({
             setTimeout(compactNativeStatsLine, 800);
             applyZoom();
             // Scope is owned by apply()-level listener; ask again in case early posts were dropped.
-            try { window.parent.postMessage({ type: "dshScopeRequest", build: "0.1.79", watching: Array.from(trackedRefs.keys()).slice(0, 3) }, "*"); } catch (err) { /* noop */ }
+            try { window.parent.postMessage({ type: "dshScopeRequest", build: "0.1.80", watching: Array.from(trackedRefs.keys()).slice(0, 3) }, "*"); } catch (err) { /* noop */ }
             return;
           }
           if (msg.type === "dshChromeState") {
@@ -4049,7 +4053,7 @@ window.__ModuleLoader__.load({
           setVscodeScope(msg.paths, msg.rawPaths);
         }
         window.addEventListener("message", onScopeFromHost);
-        try { window.parent.postMessage({ type: "dshScopeRequest", build: "0.1.79", watching: Array.from(trackedRefs.keys()).slice(0, 3) }, "*"); } catch (err) { /* noop */ }
+        try { window.parent.postMessage({ type: "dshScopeRequest", build: "0.1.80", watching: Array.from(trackedRefs.keys()).slice(0, 3) }, "*"); } catch (err) { /* noop */ }
         const timer = setInterval(checkWorkbenchScope, 800);
         return function () {
           clearInterval(timer);
