@@ -400,8 +400,51 @@ function startElementContextWatcher(context, log) {
     })()
   }
 
+  // ---------- 0.1.42: native ⌥⌘C comment -> dsh, read straight out of the chat input ----------
+  // Proven by dshReview.dumpDocs: Copilot's input box is an extension-visible text
+  // document (chatSessionInput:input-0), and a native comment lands in it as an inline
+  // reference "@<element> <comment>". So no bundle patch and no CDP are needed: watch
+  // that document, take the reference, and push it through our existing md + chip
+  // pipeline. The element-context doc (opened by the chip click) supplies the page URL.
+  const seenNative = new Set()
+  function urlFromElementDoc(text) {
+    const m = /\nURL:\s*(\S+)/.exec(String(text || ''))
+    return m ? m[1] : ''
+  }
+  function scanNativeComments(hint, docText) {
+    if (!cfg('nativeToDsh', true)) return
+    let input = null
+    try {
+      input = vscode.workspace.textDocuments.filter((d) => d.uri.scheme === 'chatSessionInput').sort((a, b) => String(b.uri).length - String(a.uri).length)[0]
+    } catch { return }
+    if (!input) return
+    let text = ''
+    try { text = input.getText() } catch { return }
+    if (!text) return
+    const url = urlFromElementDoc(docText)
+    for (const m of text.matchAll(/@([^\s@`\n]{3,120}?)\s+([^\n@]{2,400})/g)) {
+      const label = m[1].trim()
+      const comment = m[2].trim()
+      if (!label || !comment) continue
+      const key = label + '\u241f' + comment
+      if (seenNative.has(key)) continue
+      seenNative.add(key)
+      while (seenNative.size > 200) seenNative.delete(seenNative.keys().next().value)
+      const idm = /#([A-Za-z0-9_.:-]{1,80})/.exec(label)
+      const payload = {
+        ev: 'comment', native: true, text: comment, label: label, url: url,
+        title: '', size: '', locate: 'native', tag: label.split(/[.#[]/)[0] || 'element',
+        id: idm ? idm[1] : '', classes: [], attributes: {}, ancestors: [], selector: '',
+        innerText: '', outerHTML: '', bounds: { x: 0, y: 0, width: 0, height: 0 },
+      }
+      log.appendLine(TAG + ' · 原生批注 -> dsh label=' + label + ' chars=' + comment.length + (hint ? ' (来自元素文档)' : ''))
+      void sendCommentToDsh(payload)
+    }
+  }
+
   function handleElementDoc(doc, text) {
     const nu = parseNameUrl(text)
+    scanNativeComments(nu.name, text)
     // 0.1.35: the user's own chain report — Enter in the native comment box made VS
     // Code create this attachment doc, and our old mover then opened it, closed it
     // (the macOS "save?" prompt) and pushed a duplicate element chip. Native already
@@ -508,6 +551,7 @@ function startElementContextWatcher(context, log) {
     const now = Date.now()
     if (now - lastChangeLog < 800) return
     lastChangeLog = now
+    if (e.document.uri.scheme === 'chatSessionInput') scanNativeComments('', e.document.getText())
     log.appendLine(TAG + ' · chatInput change len=' + e.document.getText().length)
   }))
 

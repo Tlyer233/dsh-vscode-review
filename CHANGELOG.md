@@ -44,6 +44,21 @@
 - 版本说明:本修复与「元素批注」同日开发,原报 0.1.70/0.1.26 与批注功能撞号,rebase 后改号 0.1.71/0.1.28
 
 
+## dsh-review 0.1.71 + dsh-review-vscode 0.1.42 (2026-10-23) — 原生批注直送 dsh 输入框（读 chat 输入框文档，不打补丁）
+
+### 依据（用户跑 `dsh: 列出当前打开的文档` 实测出来的）
+```
+[element-context] · doc-open scheme=chatSessionInput base=input-0 len=0
+[element-context] · chatInput change len=100
+[element-context] doc chatSessionInput:input-0 len=115
+```
+⇒ **Copilot 的输入框是扩展可读的 text document**（`chatSessionInput:input-0`），原生批注会以行内引用 `@<元素> <文字>` 落进这篇文档。之前尝试的两条路（bundle 补丁的信标 / CDP 读 globalThis）都因为 agent host 那个 renderer 不在 9223 的 target 列表里而送不回来；这条路完全绕开它们。
+
+### 实现（`element-context-watcher.js`）
+- `scanNativeComments(hint, docText)`：取 `scheme==='chatSessionInput'` 的文档，正则 `/@([^\s@`\n]{3,120}?)\s+([^\n@]{2,400})/g` 提取 `标签 + 批注`（只有引用没有文字 = 0 命中，已单独验过），拼成 payload 走 `sendCommentToDsh` ⇒ `/tmp/dsh-comments/comment-…md` + dsh 一个文件 chip（不自动发送）。
+- 触发点两处：元素文档打开时（`handleElementDoc` 里，顺带从文档正文 `URL:` 行取页面地址）+ `chatSessionInput` 文档变更时（覆盖后续连续批注）。去重 `seenNative`（`label␟comment`，200 条上限），所以 fetch/多次 change 不会重复插。
+- 开关：`dshReview.elementContext.nativeToDsh`（默认 true）。同时把 `clickChips` 与 `closeNativeDoc` 默认恢复为 true：点 chip 会打开元素文档，这是「刚发生原生批注」的可靠信号兼 URL 来源，关标签走 0.1.38 修好的「唯一临时文件名」路径，**不会**再弹 macOS 保存面板。
+
 ## dsh-review 0.1.71 + dsh-review-vscode 0.1.40 (2026-10-23) — 真凶：我们自己在点 chip，所以那个 untitled 文档才被打开
 
 ### 用户质疑成立

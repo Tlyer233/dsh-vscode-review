@@ -88,7 +88,7 @@ function activate(context) {
   // — native Copilot never clicks it, so native never opens it. Off by default now;
   // dshReview.elementContext.clickChips=true brings it back.
   let clickChips = false
-  try { clickChips = !!vscode.workspace.getConfiguration('dshReview.elementContext').get('clickChips', false) } catch { /* noop */ }
+  try { clickChips = !!vscode.workspace.getConfiguration('dshReview.elementContext').get('clickChips', true) } catch { /* noop */ }
   const sideFeatures = [['element-context', startElementContextWatcher], ['native-comment', startNativeComment]]
   if (clickChips) sideFeatures.push(['cdp', startCdpProbe])
   else log.appendLine('[cdp] 已停用（0.1.40 默认关：点 chip 会打开附件文档 / 引出保存面板；要开设置 dshReview.elementContext.clickChips）')
