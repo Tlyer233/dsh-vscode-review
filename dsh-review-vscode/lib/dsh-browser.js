@@ -1138,6 +1138,10 @@ function setupDshBrowser(context) {
         })
       } catch { /* already registered */ }
       view.webview.onDidReceiveMessage((msg) => {
+        if (msg.type === 'dshClientBuild') {
+          state.log('[client] 正在运行的 dsh 客户端构建 = ' + String(msg.version || '?'))
+          return
+        }
         if (msg.type === 'dshRefsTracked') {
           state.log('[chip-watch] 客户端正在盯 ' + String((msg.names || []).join(', ')).slice(0, 120))
           return

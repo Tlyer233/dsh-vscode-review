@@ -1356,6 +1356,7 @@ window.__ModuleLoader__.load({
           }
           return false;
         }
+        try { window.parent.postMessage({ type: "dshClientBuild", version: "0.1.75" }, "*"); } catch (err) { /* noop */ }
         if (!window.__dshrRefWatch) {
           window.__dshrRefWatch = true;
           setInterval(sweepDroppedRefs, 900);
