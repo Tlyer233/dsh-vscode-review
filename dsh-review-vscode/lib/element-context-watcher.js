@@ -320,6 +320,17 @@ function startElementContextWatcher(context, log) {
     we.replace(doc.uri, new vscode.Range(doc.positionAt(start), doc.positionAt(end)), '')
     const ok = await vscode.workspace.applyEdit(we)
     if (ok) lastSelfDelete = Date.now()
+    // 0.1.69: chatSessionInput is a virtual document, so an accepted edit is not proof the
+    // text changed. Read back after a beat and report what VS Code actually kept — the user
+    // confirmed deleting that line by hand does drop the pin, so anything less than "the line
+    // is gone" means our edit never landed.
+    if (ok) {
+      setTimeout(() => {
+        let gone = false
+        try { gone = doc.getText().indexOf(lines[pick]) === -1 } catch { gone = true }
+        log.appendLine(TAG + ' · 回读确认：那行' + (gone ? '已经从 Copilot 输入框消失（图钉应当随之撤掉）' : '还在 Copilot 输入框里（VS Code 没接受这次修改）'))
+      }, 600)
+    }
     return !!ok
   }
 
@@ -499,6 +510,14 @@ function startElementContextWatcher(context, log) {
       we.replace(doc.uri, new vscode.Range(doc.positionAt(lineStart), doc.positionAt(end)), '')
       const ok = await vscode.workspace.applyEdit(we)
       if (ok) lastSelfDelete = Date.now()
+      if (ok) {
+        const lineText = text.slice(idx, end)
+        setTimeout(() => {
+          let gone = false
+          try { gone = doc.getText().indexOf(lineText) === -1 } catch { gone = true }
+          log.appendLine(TAG + ' · 回读确认（抄完顺手删）：那行' + (gone ? '已消失' : '还在，VS Code 没接受修改'))
+        }, 600)
+      }
       log.appendLine(TAG + ' · 已从 Copilot 输入框删掉这条引用 ok=' + ok)
     } catch (e) {
       log.appendLine(TAG + ' · 清 Copilot 失败: ' + String((e && e.message) || e))
