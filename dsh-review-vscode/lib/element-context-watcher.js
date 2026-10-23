@@ -274,7 +274,7 @@ function startElementContextWatcher(context, log) {
     } catch { return '' }
   }
 
-  function dropCopilotLineForMd(file) {
+  async function dropCopilotLineForMd(file) {
     let md = ''
     try { md = fs.readFileSync(String(file || ''), 'utf8') } catch { return false }
     const lm = /^#\s*元素批注\s*—\s*(.+)$/m.exec(md)
@@ -316,10 +316,10 @@ function startElementContextWatcher(context, log) {
   }
 
   bridge.setBrowserCommentHandler(sendCommentToDsh)
-  bridge.setReferenceDroppedHandler((payload) => {
+  bridge.setReferenceDroppedHandler(async (payload) => {
     if (!cfg('bindDshRemoval', true)) return false
     const file = String((payload && payload.path) || '')
-    const ok = dropCopilotLineForMd(file)
+    const ok = await dropCopilotLineForMd(file)
     log.appendLine(TAG + ' · dsh 删方块 ' + file.split('/').pop() + ' -> ' + (ok ? '已删 Copilot 那行（页面图钉应随之消失）' : '没找到对应那行（可能已经删了或改过）'))
     return ok
   })
