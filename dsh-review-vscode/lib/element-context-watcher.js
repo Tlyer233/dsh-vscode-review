@@ -612,7 +612,7 @@ function startElementContextWatcher(context, log) {
       // nothing reached dsh). A new comment always raises the count by one.
       const key = label + '\u241f' + comment
       next.set(key, (next.get(key) || 0) + 1)
-      orderedRefs.push({ label: String(labelTok).slice(0, 120), comment: String(comment).trim().slice(0, 200) })
+      orderedRefs.push({ label: String(label || '').slice(0, 120), comment: String(comment || '').trim().slice(0, 200) })
       found.push({ key: key, label: label, comment: comment, nth: next.get(key) })
     }
     const id = String(input.uri)
