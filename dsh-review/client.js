@@ -1325,7 +1325,7 @@ window.__ModuleLoader__.load({
         function postState(extra) {
           // 0.1.82: only the scope-request message has ever reached the extension, so all
           // client-side events (tracked / dropped / request-received / removed) ride on it.
-          const msg = { type: "dshScopeRequest", build: "0.1.98", watching: Array.from(trackedRefs.keys()).slice(0, 3) };
+          const msg = { type: "dshScopeRequest", build: "0.1.99", watching: Array.from(trackedRefs.keys()).slice(0, 3) };
           try { Object.assign(msg, extra || {}); } catch (err) { /* noop */ }
           try { window.parent.postMessage(msg, "*"); } catch (err) { /* noop */ }
         }
@@ -1474,8 +1474,26 @@ window.__ModuleLoader__.load({
           // ignored forever (measured: composer text was "" while the client still reported
           // 连着 for a tracked chip). Empty now means every remaining reference is gone.
           if (!composerText.trim()) {
+            // 0.1.99: an empty composer is ambiguous — the user may have sent the message (the
+            // references move into the sent bubble) instead of deleting them. Sending must not
+            // remove the page pins, so check the conversation for the annotation text first.
+            const conversation = (function () {
+              let t = '';
+              try {
+                const nodes = document.querySelectorAll('[data-slot="conversation.user.text.node"], [data-ref-chip], [class*="_refChip"]')
+                for (let z = 0; z < nodes.length; z++) t += ' \u241f' + String(nodes[z].textContent || '') + ' ' + String(nodes[z].getAttribute && nodes[z].getAttribute('title') || '')
+              } catch (err) { t = '' }
+              return t
+            })();
             const gone = [];
-            trackedRefs.forEach(function (info, name) { gone.push({ name: name, path: info.path }) });
+            trackedRefs.forEach(function (info, name) {
+              const alt = String((info && info.alt) || '').replace(/\s+/g, ' ').trim();
+              if (alt && conversation.indexOf(alt) !== -1) {
+                postState({ report: "输入框清空但是已发送（保留图钉）: " + name });
+                return;
+              }
+              gone.push({ name: name, path: info.path });
+            });
             trackedRefs.clear();
             for (let g = 0; g < gone.length; g++) {
               postState({ report: "输入框清空 -> 方块全部移除: " + gone[g].name, drop: gone[g].name, dropPath: gone[g].path })
@@ -1861,7 +1879,7 @@ window.__ModuleLoader__.load({
             setTimeout(compactNativeStatsLine, 800);
             applyZoom();
             // Scope is owned by apply()-level listener; ask again in case early posts were dropped.
-            try { window.parent.postMessage({ type: "dshScopeRequest", build: "0.1.98", watching: Array.from(trackedRefs.keys()).slice(0, 3) }, "*"); } catch (err) { /* noop */ }
+            try { window.parent.postMessage({ type: "dshScopeRequest", build: "0.1.99", watching: Array.from(trackedRefs.keys()).slice(0, 3) }, "*"); } catch (err) { /* noop */ }
             return;
           }
           if (msg.type === "dshChromeState") {
@@ -4361,13 +4379,13 @@ window.__ModuleLoader__.load({
               try { ok = !!(window.__dshrRemoveChip && window.__dshrRemoveChip(nm)); } catch (err) { ok = false; }
               let watch = [];
               try { watch = (window.__dshrTracked && window.__dshrTracked()) || []; } catch (err) { watch = []; }
-              try { window.parent.postMessage({ type: "dshScopeRequest", build: "0.1.98", watching: watch.slice(0, 3), report: "捎带删方块: " + nm + " -> " + (ok ? "已删" : "没找到方块节点") }, "*"); } catch (err) { /* noop */ }
+              try { window.parent.postMessage({ type: "dshScopeRequest", build: "0.1.99", watching: watch.slice(0, 3), report: "捎带删方块: " + nm + " -> " + (ok ? "已删" : "没找到方块节点") }, "*"); } catch (err) { /* noop */ }
             });
           }
           setVscodeScope(msg.paths, msg.rawPaths);
         }
         window.addEventListener("message", onScopeFromHost);
-        try { window.parent.postMessage({ type: "dshScopeRequest", build: "0.1.98", watching: Array.from(trackedRefs.keys()).slice(0, 3) }, "*"); } catch (err) { /* noop */ }
+        try { window.parent.postMessage({ type: "dshScopeRequest", build: "0.1.99", watching: Array.from(trackedRefs.keys()).slice(0, 3) }, "*"); } catch (err) { /* noop */ }
         // 0.1.98: no scope polling — the extension pushes dshSetScope on every workspace change,
         // and the initial dshScopeRequest above covers startup hydration.
         const timer = null;
