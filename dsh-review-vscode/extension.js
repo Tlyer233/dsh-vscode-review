@@ -69,8 +69,16 @@ function activate(context) {
   setupDshBrowser(context)
 
   // TEST: watch Integrated Browser "Add Element to Chat" output file; print location only.
-  startElementContextWatcher(context, log)
-  startCdpProbe(context, log)
+  // Neither side feature may abort activate(): in 0.1.26 a bad module export threw
+  // in here, activate() died before registering commands, and EVERY dsh command
+  // answered "not found" (whole sidebar dead). Keep them isolated.
+  for (const [name, fn] of [['element-context', startElementContextWatcher], ['cdp', startCdpProbe]]) {
+    try {
+      fn(context, log)
+    } catch (e) {
+      log.appendLine('[' + name + '] start failed: ' + String((e && e.message) || e))
+    }
+  }
 
   // 0.1.26: Integrated-browser element comments. Shift+Enter inside VS Code's
   // in-page comment box sends {element chip + comment text} into the dsh

@@ -45,5 +45,3 @@ async function dismissPrompt() {
     return { ok: false, why: String((e && e.message) || e) }
   }
 }
-
-module.exports = { setDismissPrompt, dismissPrompt }

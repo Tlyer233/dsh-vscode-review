@@ -22,6 +22,7 @@
    | **plan 卡片「查看全文」只在 dsh 内部预览打开**(窄侧栏看不到) | 0.2.1 的 plan 是虚拟资源 `dsh-resource://plan[-review]/…`,不在盘上,`fileOpenTargetPath` 三种特征都认不到 | 0.1.68:认 `[data-plan-card]` 与 `*_reviewLink*` → fiber 取 `{callId, markdown, title}`(退资源 store / 预览 DOM)→ 扩展写 `~/.dsh/review/plans/plan-<sid>-<callId>.md` 并在编辑器聚焦打开;看 `[plan] kind=… tier=…` 与 `[planFile] wrote …` |
    | **plan 打开了但正文是乱的**(表格压成一行、`#`/代码块标记丢失) | 打开的是预览 `innerText`:待审 plan 正文在 fiber 里是 **`review.plan` 字符串**(ui-plan 用 `params.planReview.markdown = review.plan`),0.1.68 只认 `plan.markdown` 对象形 → 三级全空退 DOM。同屏还暴露 sid 为空(dsh ≥0.1.6 不再发布 `sessions.list.current`)与每次点击新建文件(Date.now 兜底) | 0.1.69/0.1.25:认字符串形 + `requestKey`;资源兜底按真实形态读 `source(addr).getSnapshot()`(只有 `status==="live"` 带 `value`);sid 三级(快照 `retainedBy.mainView` → 插入时挂的 `window.__dshrSessionId` → 路由);文件名改 `…-<标题 slug>-<sha1 前 8>` 内容寻址(重复点 = `[planFile] reused`);DOM 兜底在文件头声明"取自渲染文本"。排查:`[plan] … tier=dom` = 字段形没认到,`sid_src=` 说明 id 来源 |
    | **集成浏览器元素批注按 Shift+Enter 没进 dsh** | 评论框是 VS Code **注入到页面里**的(workbench bundle 里搜不到它的 DOM),扩展只能走 CDP;VS Code 不是 `--remote-debugging-port=9223` 启动就够不着 | 0.1.26:新模块 `lib/browser-comment.js` 按 target 池连每个浏览器 tab,页内捕 Shift+Enter。排查:`[browser-comment] cdp=absent` = 9223 没开（0.1.26 起 install.sh 已把 `remote-debugging-port` 写进 argv.json，Cmd+Q 一次即可，正常启动也生效）;`targets=0` = tab 没被认成 http(s) page;`comment label=… locate=label|size|smallest|near-label|no-label` = 元素靠哪一级反查;命令面板 `dsh: 元素批注状态 / 自检` 当场验 |
+   | **升级后所有 `dshReview.*` 命令 not found、侧栏空白** | `activate()` 在半路抛异常 → 命令一个都没注册（0.1.26：`element-bridge.js` 里出现两个 `module.exports`，末尾那个覆盖前面的，`setBrowserCommentHandler` 变 undefined → watcher TypeError）。排查只看一处：`Code/logs/<时间戳>/window*/exthost/exthost.log` 搜 `Activating extension dsn.dsh-review-vscode failed` | 0.1.27：合并成单个 `module.exports`；`startElementContextWatcher`/`startCdpProbe` 各自 try/catch，侧功能崩了不吃命令。免重启复验法：node 里 stub `vscode`/`electron` 直接 require 已安装目录的 lib（见 0.1.27 节） |
 3. **改哪边装哪边,版本必须递增**(服务端按 rev 缓存合并 bundle,同版本号重装=下发旧代码):
    只改 `dsh-review/client.js` → webview 右键 Reload;改 `index.js` → 侧栏 Restart dsh;改扩展 `dsh-review-vscode/**` → **Cmd+Q**(mac)/ **Ctrl+Q**(Linux)整重启,并 bump `dsh-review-vscode/package.json` 的 `version`——`install.sh` 的 `EXT_VER` 现在自动读它,不用再手改。装完重写 `~/.dsh/review/shadow/settings.json`(install.sh 会清空)。
 4. **验证**:hover/点击类 bug **不要用 ego-browser 复现**(CDP 合成鼠标事件 relatedTarget 失真,0.1.56 曾误判),以真实 VS Code webview + 扩展日志为准。
@@ -52,6 +53,11 @@ VS Code 内置浏览器（`workbench.action.browser.*`）的 **Comment on Elemen
 
 ### 待你实测（只需一次 Cmd+Q，之后正常启动）
 首版把 CDP 说成「每次都要 `code --remote-debugging-port=9223` 启动」，用户不接受（就要正常启动）→ 改成 argv.json 常驻。装完后：Cmd+Q 重启一次 → `curl -s http://127.0.0.1:9223/json/list` 应返回 target 列表 → 命令面板 `dsh: 元素批注状态` 显示 `connected≥1` → 集成浏览器里 ⌥⌘C 选元素写评论 → **Shift+Enter** → dsh 输入框出现 `element: span#…` chip + 评论一行；**Enter** 仍进 Copilot。日志前缀 `[browser-comment]`。若 curl 仍连不上（argv.json 不被该版本接受），备选是 jsonl 镜像（实测：未发送的评论**不落盘**，最近 30 分钟 workspaceStorage 里搜不到 `mv-pcie`，所以镜像只能在 Enter 发送后拿到，做不到按键即时）。
+
+### 0.1.27 回归修复：升级后「所有 dsh 命令都 not found、侧栏空了」
+`element-bridge.js` 我插了新 `module.exports`，但**文件末尾原有的** `module.exports = { setDismissPrompt, dismissPrompt }` 在后面覆盖了它 → `bridge.setBrowserCommentHandler` 是 undefined → `element-context-watcher.js:166` TypeError → `activate()` 直接死在注册命令之前 → `dshReview.sendTerminalSelectionToDsh` 等全部 not found、dsh 侧栏没了（exthost.log: `Activating extension dsn.dsh-review-vscode failed … at startElementContextWatcher … at activate`）。
+修：只留一个 `module.exports`（四个导出）；**并且** `extension.js` 把 `startElementContextWatcher`/`startCdpProbe` 各自包 try/catch —— 侧功能再崩也不许吃掉全部命令。
+复验（不用重启也能测）：拿 stub 的 `vscode`/`electron` 在 node 里加载**已安装目录**的三个模块 → `[cdp] observer installed`、`[browser-comment] attached … #monitor → injected`、`[element-context] v12 armed` 全部干净。
 
 ## dsh-review 0.1.69 + dsh-review-vscode 0.1.25 (2026-10-22, dsh 0.2.1-rc.2) — 待审 plan「查看全文」正文乱
 
