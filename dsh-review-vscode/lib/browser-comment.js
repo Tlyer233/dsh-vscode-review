@@ -442,10 +442,24 @@ const pendingRaw = new Map() // 0.1.84: DOM-domain replies, resolved whole (not 
       for (let i = 0; i + 1 < a.length; i += 2) if (a[i] === 'class') return String(a[i + 1])
       return ''
     }
+    const attrMap = (n) => {
+      const m = {}
+      const a = n.attributes || []
+      for (let i = 0; i + 1 < a.length; i += 2) m[String(a[i])] = String(a[i + 1])
+      return m
+    }
     const pins = []
     for (const n of nodes) {
       if (!/comment-pin(\s|$)/.test(classOf(n))) continue
-      const num = (textOf(n) || '').slice(0, 4)
+      // 0.1.86: the pin carries its own annotation — VS Code sets role=note plus
+      // aria-label="Element comment N: <body>" and title="<body>", so we read the text from
+      // the pin itself instead of guessing which chat line it came from (hidden elements get
+      // no pin, so line numbers never matched anyway).
+      const at = attrMap(n)
+      const label = String(at['aria-label'] || '')
+      const lm = /Element comment\s*(\d+)\s*:\s*([\s\S]*)/.exec(label)
+      const num = lm ? lm[1] : (String(at['title'] || '') ? '' : (textOf(n) || '').slice(0, 4))
+      const body = (lm ? lm[2] : String(at['title'] || '')).trim().slice(0, 200)
       const box = await cdpRequest(c, 'DOM.getBoxModel', { nodeId: n.nodeId }, 1200)
       const bm = box && box.model
       let at = '?', size = '?'
@@ -455,7 +469,7 @@ const pendingRaw = new Map() // 0.1.84: DOM-domain replies, resolved whole (not 
         at = Math.round(Math.min.apply(null, xs)) + ',' + Math.round(Math.min.apply(null, ys))
         size = Math.round(Math.max.apply(null, xs) - Math.min.apply(null, xs)) + 'x' + Math.round(Math.max.apply(null, ys) - Math.min.apply(null, ys))
       }
-      pins.push({ n: num, at, size, backendId: n.backendNodeId })
+      pins.push({ n: num, at, size, body, backendId: n.backendNodeId })
       if (pins.length >= 20) break
     }
     return { url: c.url, pins }

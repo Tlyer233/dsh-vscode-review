@@ -328,9 +328,7 @@ function startElementContextWatcher(context, log) {
       const order = lastRefs.slice(0)
       log.appendLine(TAG + ' · 图钉补查：' + before + ' -> ' + pr.pins.length + ' 个')
       pr.pins.forEach((x, ix) => {
-        const idx = /^[0-9]+$/.test(String(x.n)) ? Number(x.n) - 1 : ix
-        const ref = order[idx]
-        log.appendLine(TAG + ' ·   图钉 #' + (x.n || ix + 1) + ' @' + x.at + ' ' + x.size + (ref ? ' ｜ 批注：@' + ref.label + ' ' + ref.comment : ' ｜ 批注：（第 ' + (idx + 1) + ' 条对不上）'))
+        log.appendLine(TAG + ' ·   图钉 #' + (x.n || ix + 1) + ' @' + x.at + ' ' + x.size + ' ｜ 批注（图钉自带）：' + JSON.stringify(String(x.body || '(空)')))
       })
     } catch { /* noop */ }
   }
@@ -744,9 +742,7 @@ function startElementContextWatcher(context, log) {
             const order = lastRefs.slice(0)
             log.appendLine(TAG + ' · 页面图钉：' + cps.length + ' 个（封闭 shadow root 由 CDP 穿透读取）')
             cps.forEach((x, ix) => {
-              const idx = /^[0-9]+$/.test(String(x.n)) ? Number(x.n) - 1 : ix
-              const ref = order[idx]
-              log.appendLine(TAG + ' ·   图钉 #' + (x.n || ix + 1) + ' @' + x.at + ' ' + x.size + (ref ? ' ｜ 批注：@' + ref.label + ' ' + ref.comment : ' ｜ 批注：（第 ' + (idx + 1) + ' 条对不上）'))
+              log.appendLine(TAG + ' ·   图钉 #' + (x.n || ix + 1) + ' @' + x.at + ' ' + x.size + ' ｜ 批注（图钉自带）：' + JSON.stringify(String(x.body || '(空)')))
             })
             const pc = Array.isArray(st.pinCandidates) ? st.pinCandidates : []
             log.appendLine(TAG + ' · 页面图钉扫描：按形状找到 ' + pc.length + ' 个疑似图钉 ｜ ' + phText + ' ｜ 其它覆盖层 ' + pins.length + ' 个 ｜ __vscode_helpers=' + String(st.helpers || '无').slice(0, 40))
