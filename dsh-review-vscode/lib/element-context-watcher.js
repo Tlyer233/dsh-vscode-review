@@ -714,11 +714,16 @@ function startElementContextWatcher(context, log) {
             const phText = ph && typeof ph === 'object'
               ? '图钉宿主层子元素 ' + ph.children + ' 个' + (ph.hostText ? '，文字=' + JSON.stringify(String(ph.hostText).slice(0, 24)) : '（空）')
               : '宿主层=' + JSON.stringify(ph)
-            const cps = Array.isArray(st.commentPins) ? st.commentPins : []
+            let cps = Array.isArray(st.commentPins) ? st.commentPins : []
+            if (!cps.length) {
+              const pr = await bridge.pagePins(payload.url || '')
+              if (pr && Array.isArray(pr.pins)) cps = pr.pins
+              log.appendLine(TAG + ' · 图钉普查（CDP 穿透封闭层）：' + (pr ? pr.pins.length + ' 个' : '不可用'))
+            }
             // VS Code numbers the pins in the same order as the chat references (its own test
             // plan), so pairing by number gives the annotation text for each pin.
             const order = lastRefs.slice(0)
-            log.appendLine(TAG + ' · 页面图钉：' + cps.length + ' 个（封闭 shadow root ' + (st.roots || 0) + ' 个已抓到）' + (cps.length === 0 && !st.roots ? ' —— 页面需要刷新一次钩子才装上' : ''))
+            log.appendLine(TAG + ' · 页面图钉：' + cps.length + ' 个（封闭 shadow root 由 CDP 穿透读取）')
             cps.forEach((x, ix) => {
               const idx = /^[0-9]+$/.test(String(x.n)) ? Number(x.n) - 1 : ix
               const ref = order[idx]

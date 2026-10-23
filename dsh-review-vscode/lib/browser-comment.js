@@ -285,7 +285,8 @@ function startBrowserComment(opts) {
   else WS = require('ws')
 
   const conns = new Map() // targetId -> { ws, url, since }
-  const pending = new Map() // rpc id -> callback
+  const pending = new Map()
+const pendingRaw = new Map() // 0.1.84: DOM-domain replies, resolved whole (not a Runtime value) // rpc id -> callback
   let rpcSeq = 400
   let stopped = false
   let lastAbsent = 0
@@ -326,6 +327,12 @@ function startBrowserComment(opts) {
       if (raw && typeof raw !== 'string') { try { raw = String(raw) } catch { return } }
       let msg
       try { msg = JSON.parse(raw) } catch { return }
+      if (pendingRaw.has(msg.id)) {
+        const cb = pendingRaw.get(msg.id)
+        pendingRaw.delete(msg.id)
+        cb(msg.result || null)
+        return
+      }
       if (pending.has(msg.id)) {
         const cb = pending.get(msg.id)
         pending.delete(msg.id)
@@ -396,6 +403,64 @@ function startBrowserComment(opts) {
       } catch (e) { clearTimeout(timer); pending.delete(id); resolve(null) }
     })
   }
+  function cdpRequest(c, method, params, ms) {
+    const id = ++rpcSeq
+    return new Promise((resolve) => {
+      if (!c || !c.ws || c.ws.readyState !== 1) return resolve(null)
+      const timer = setTimeout(() => { pendingRaw.delete(id); resolve(null) }, ms || 3000)
+      pendingRaw.set(id, (res) => { clearTimeout(timer); resolve(res) })
+      try { c.ws.send(JSON.stringify({ id, method, params: params || {} })) }
+      catch { clearTimeout(timer); pendingRaw.delete(id); resolve(null) }
+    })
+  }
+
+  // 0.1.84: the pin layer lives in a CLOSED shadow root created by VS Code's preload, so page
+  // world JS (and our new-document hook, which runs too late) cannot see it — but the CDP DOM
+  // agent pierces it. Read the pins from there: find .comment-pin nodes, take the number from
+  // their child text, and the position from getBoxModel.
+  async function probePins(url) {
+    const c = pickConn(url)
+    if (!c || !c.ws || c.ws.readyState !== 1) return null
+    await cdpRequest(c, 'DOM.enable', {}, 1500)
+    const doc = await cdpRequest(c, 'DOM.getFlattenedDocument', { depth: -1, pierce: true }, 4000)
+    const nodes = doc && doc.nodes
+    if (!Array.isArray(nodes)) return null
+    const byId = new Map(nodes.map((n) => [n.nodeId, n]))
+    const textOf = (node) => {
+      const kids = (node.childNodeIds || []).map((k) => byId.get(k)).filter(Boolean)
+      let t = ''
+      for (const k of kids) {
+        if (k.nodeType === 3) t += String(k.nodeValue || '')
+        else if (/comment-pin-number/.test(String((attrsOf(k) || '')))) t += textOf(k)
+        else t += textOf(k)
+      }
+      return t.trim()
+    }
+    const attrsOf = (n) => (n.attributes || []).join(' ')
+    const classOf = (n) => {
+      const a = n.attributes || []
+      for (let i = 0; i + 1 < a.length; i += 2) if (a[i] === 'class') return String(a[i + 1])
+      return ''
+    }
+    const pins = []
+    for (const n of nodes) {
+      if (!/comment-pin(\s|$)/.test(classOf(n))) continue
+      const num = (textOf(n) || '').slice(0, 4)
+      const box = await cdpRequest(c, 'DOM.getBoxModel', { nodeId: n.nodeId }, 1200)
+      const bm = box && box.model
+      let at = '?', size = '?'
+      if (bm && Array.isArray(bm.content) && bm.content.length >= 8) {
+        const xs = [bm.content[0], bm.content[2], bm.content[4], bm.content[6]]
+        const ys = [bm.content[1], bm.content[3], bm.content[5], bm.content[7]]
+        at = Math.round(Math.min.apply(null, xs)) + ',' + Math.round(Math.min.apply(null, ys))
+        size = Math.round(Math.max.apply(null, xs) - Math.min.apply(null, xs)) + 'x' + Math.round(Math.max.apply(null, ys) - Math.min.apply(null, ys))
+      }
+      pins.push({ n: num, at, size, backendId: n.backendNodeId })
+      if (pins.length >= 20) break
+    }
+    return { url: c.url, pins }
+  }
+  bridge.setPagePinsProbe(probePins)
   bridge.setPageStateProbe(probePageState)
   bridge.setElementProbe(probeElement)
 

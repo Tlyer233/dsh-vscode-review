@@ -104,6 +104,17 @@ async function pageState(url) {
   try { return await pageStateProbe(url) } catch { return null }
 }
 
+/* 0.1.84: pin census taken through the CDP DOM agent (it pierces the closed shadow root that
+ * holds VS Code's element-comment pins). */
+let pinsProbe = null
+function setPagePinsProbe(fn) {
+  pinsProbe = typeof fn === 'function' ? fn : null
+}
+async function pagePins(url) {
+  if (!pinsProbe) return null
+  try { return await pinsProbe(url) } catch { return null }
+}
+
 function setDismissPrompt(fn) {
   handlers.dismissPrompt = typeof fn === 'function' ? fn : null
 }
@@ -132,7 +143,7 @@ async function deliverBrowserComment(payload) {
   }
 }
 
-module.exports = { nativeCommentPayload, setPageStateProbe, pageState, setReferenceDroppedHandler, referenceDropped, setElementProbe, probeElement, setPageUrlProvider, browserPageUrl, setDismissPrompt, dismissPrompt, setBrowserCommentHandler, deliverBrowserComment, setOpenGuard, openGuarded }
+module.exports = { nativeCommentPayload, setPageStateProbe, pageState, setPagePinsProbe, pagePins, setReferenceDroppedHandler, referenceDropped, setElementProbe, probeElement, setPageUrlProvider, browserPageUrl, setDismissPrompt, dismissPrompt, setBrowserCommentHandler, deliverBrowserComment, setOpenGuard, openGuarded }
 
 async function dismissPrompt() {
   if (!handlers.dismissPrompt) return { ok: false, why: 'no-handler' }
