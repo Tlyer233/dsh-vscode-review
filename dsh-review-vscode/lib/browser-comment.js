@@ -171,6 +171,30 @@ const PROBE_JS = `(function () {
         }
       }
       walk(document, 'doc')
+      // 0.1.78: the pins ARE in this page (proved by a CDP screenshot of the page's own
+      // renderer), but they are not absolutely positioned and their class carries no keyword —
+      // a page screenshot showed SVG-ish round badges with a number. Find them by shape:
+      // small, roughly square, visible, text is 1-3 digits.
+      try {
+        var cand = []
+        var els = document.querySelectorAll('*')
+        for (var z = 0; z < els.length; z++) {
+          var e2 = els[z]
+          var tx = ''
+          try { tx = String(e2.textContent || '').trim() } catch (err2) {}
+          if (!/^[0-9]{1,3}$/.test(tx)) continue
+          var b = null
+          try { b = e2.getBoundingClientRect() } catch (err2) { continue }
+          if (!(b.width >= 8 && b.width <= 60 && b.height >= 8 && b.height <= 60)) continue
+          var vis = true
+          try { var st2 = getComputedStyle(e2); vis = st2.visibility !== 'hidden' && st2.display !== 'none' && Number(st2.opacity) > 0.05 } catch (err2) {}
+          if (!vis) continue
+          var cn = ''
+          try { cn = (typeof e2.className === 'string' ? e2.className : (e2.getAttribute && e2.getAttribute('class') || '')) + ' ' + (e2.parentElement && e2.parentElement.tagName || '') + '.' + (e2.parentElement && typeof e2.parentElement.className === 'string' ? e2.parentElement.className : '') } catch (err2) {}
+          if (cand.length < 12) cand.push({ n: tx, at: Math.round(b.left) + ',' + Math.round(b.top), size: Math.round(b.width) + 'x' + Math.round(b.height), cls: String(cn).replace(/\s+/g, ' ').slice(0, 60) })
+        }
+        out.pinCandidates = cand
+      } catch (e) { out.pinCandidates = 'ERR' }
       // 0.1.76: the real pin layer is VS Code's own host inside the page — count what is in it.
       try {
         var host = document.querySelector('[data-vscode-pick-host]')

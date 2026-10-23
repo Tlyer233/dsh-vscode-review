@@ -710,7 +710,9 @@ function startElementContextWatcher(context, log) {
             const phText = ph && typeof ph === 'object'
               ? '图钉宿主层子元素 ' + ph.children + ' 个' + (ph.hostText ? '，文字=' + JSON.stringify(String(ph.hostText).slice(0, 24)) : '（空）')
               : '宿主层=' + JSON.stringify(ph)
-            log.appendLine(TAG + ' · 页面图钉扫描：' + phText + ' ｜ 其它覆盖层 ' + pins.length + ' 个 ｜ __vscode_helpers=' + String(st.helpers || '无').slice(0, 46))
+            const pc = Array.isArray(st.pinCandidates) ? st.pinCandidates : []
+            log.appendLine(TAG + ' · 页面图钉扫描：按形状找到 ' + pc.length + ' 个疑似图钉 ｜ ' + phText + ' ｜ 其它覆盖层 ' + pins.length + ' 个 ｜ __vscode_helpers=' + String(st.helpers || '无').slice(0, 40))
+            pc.slice(0, 6).forEach((x) => log.appendLine(TAG + ' ·   图钉 #' + x.n + ' @' + x.at + ' ' + x.size + ' class=' + x.cls))
             if (ph && typeof ph === 'object' && Array.isArray(ph.sample)) ph.sample.slice(0, 5).forEach((x) => log.appendLine(TAG + ' ·   图钉候选 ' + String(x).slice(0, 130)))
             pins.slice(0, 3).forEach((x) => log.appendLine(TAG + ' ·   覆盖层 ' + String(x).slice(0, 130)))
             if (st.helperSrc) log.appendLine(TAG + ' ·   helpers.getElement = ' + String(st.helperSrc).replace(/\s+/g, ' ').slice(0, 170))
