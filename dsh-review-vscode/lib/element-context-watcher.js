@@ -841,7 +841,17 @@ function startElementContextWatcher(context, log) {
           if (!deliveredFiles.has(f.key)) deliveredFiles.set(f.key, [])
           deliveredFiles.get(f.key).push(commentFileFor(payload) || '')
         }
-        if (okSend && cfg('nativeClearCopilot', false)) await clearComposerReference(f.label, f.comment)
+        if (okSend && cfg('nativeClearCopilot', true)) {
+          // 0.1.107: the user wants the annotation only in dsh. Clear the Copilot copy for
+          // real: click that pin's own delete button first (VS Code then removes pin + chat
+          // attachment + the composer line itself), and only fall back to editing the document
+          // when no pin was found (e.g. the element had no pin at all).
+          const file2 = lastCommentFile || ''
+          let pinGone = false
+          try { pinGone = file2 ? await removeNativePinForFile(file2) : false } catch (e) { pinGone = false }
+          if (!pinGone) await clearComposerReference(f.label, f.comment)
+          refocusDsh()
+        }
       })()
     }
     if (hint && fresh === 0) log.appendLine(TAG + ' · 元素文档打开但输入框里没有新引用（可能已被抄走）')
