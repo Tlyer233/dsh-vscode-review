@@ -510,6 +510,12 @@ function startElementContextWatcher(context, log) {
     }
   }
 
+  const onDocOpenSeed = (doc) => {
+    try {
+      if (doc && doc.uri && doc.uri.scheme === 'chatSessionInput') seedBaseline()
+    } catch { /* noop */ }
+  }
+
   const onDocOpen = (doc) => {
     const u = doc.uri
     if (u.toString() === TMP_URI) {
@@ -530,7 +536,7 @@ function startElementContextWatcher(context, log) {
       log.appendLine(TAG + ' · doc-open scheme=' + u.scheme + ' base=' + base + ' len=' + text.length)
     }
   }
-  context.subscriptions.push(vscode.workspace.onDidOpenTextDocument(onDocOpen))
+  context.subscriptions.push(vscode.workspace.onDidOpenTextDocument((d) => { onDocOpenSeed(d); onDocOpen(d) }))
   context.subscriptions.push(vscode.workspace.onDidCloseTextDocument((doc) => {
     log.appendLine(TAG + ' · doc-close scheme=' + doc.uri.scheme + ' uri=' + doc.uri.toString())
   }))
@@ -574,6 +580,12 @@ function startElementContextWatcher(context, log) {
     log.appendLine(TAG + ' · chatInput change len=' + e.document.getText().length)
   }))
 
+  // 0.1.43: seed the composer baseline early (at activation and when the composer doc
+  // opens, when it is still empty) — otherwise the first comment after a restart is
+  // swallowed as part of the baseline.
+  const seedBaseline = () => { try { scanNativeComments('', '') } catch { /* noop */ } }
+  setTimeout(seedBaseline, 1500)
+  setTimeout(seedBaseline, 8000)
   context.subscriptions.push(vscode.commands.registerCommand('dshReview.dumpDocs', () => {
     const docs = vscode.workspace.textDocuments
     log.appendLine(TAG + ' --- dump ' + docs.length + ' docs ---')
