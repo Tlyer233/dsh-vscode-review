@@ -474,6 +474,61 @@ const pendingRaw = new Map() // 0.1.84: DOM-domain replies, resolved whole (not 
     }
     return { url: c.url, pins }
   }
+  // 0.1.88: delete a native pin from the outside. The pin node is reachable through the CDP
+  // DOM agent (it pierces VS Code's closed shadow root), so we resolve it to an object and
+  // dispatch a real click: first on the pin (that opens its preview, which is where the
+  // delete button lives), then on .comment-preview-remove. VS Code itself then drops the
+  // pin, the chat attachment and the composer line — no VS Code file is touched.
+  async function removePinForBody(url, body) {
+    const c = pickConn(url)
+    if (!c || !c.ws || c.ws.readyState !== 1) return { ok: false, why: '页面没连上' }
+    const classOf = (n) => {
+      const a = n.attributes || []
+      for (let i = 0; i + 1 < a.length; i += 2) if (a[i] === 'class') return String(a[i + 1])
+      return ''
+    }
+    const attrOf = (n, k) => {
+      const a = n.attributes || []
+      for (let i = 0; i + 1 < a.length; i += 2) if (a[i] === k) return String(a[i + 1])
+      return ''
+    }
+    const clickNode = async (node) => {
+      const r = await cdpRequest(c, 'DOM.resolveNode', { nodeId: node.nodeId }, 2000)
+      const obj = r && r.object
+      if (!obj || !obj.objectId) return false
+      const res = await cdpRequest(c, 'Runtime.callFunctionOn', {
+        objectId: obj.objectId,
+        functionDeclaration: 'function(){ try { this.dispatchEvent(new MouseEvent(\'click\', { bubbles: true, cancelable: true, view: window })); return 1 } catch (e) { return 0 } }',
+        returnByValue: true,
+      }, 2000)
+      return !!(res && res.result && res.result.value === 1)
+    }
+    const flatten = async () => {
+      const doc = await cdpRequest(c, 'DOM.getFlattenedDocument', { depth: -1, pierce: true }, 4000)
+      return (doc && doc.nodes) || []
+    }
+    await cdpRequest(c, 'DOM.enable', {}, 1500)
+    const nodes = await flatten()
+    const want = String(body || '').trim()
+    let pin = null
+    let loose = null
+    for (const n of nodes) {
+      if (!/comment-pin(\s|$)/.test(classOf(n))) continue
+      const text = String(attrOf(n, 'title') || attrOf(n, 'aria-label') || '').replace(/^Element comment\s*\d+:\s*/, '').trim()
+      if (want && text === want) { pin = n; break }
+      if (want && text && text.indexOf(want) !== -1 && !loose) loose = n
+    }
+    if (!pin) pin = loose
+    if (!pin) return { ok: false, why: '没找到对应图钉（可能这个元素没有图钉，或文字已被改过）', body: want, total: nodes.filter((n) => /comment-pin(\s|$)/.test(classOf(n))).length }
+    const opened = await clickNode(pin)
+    await new Promise((r) => setTimeout(r, 350))
+    const nodes2 = await flatten()
+    const btn = nodes2.filter((n) => /comment-preview-remove/.test(classOf(n)))[0]
+    if (!btn) return { ok: false, why: '预览没出删除按钮', opened }
+    const clicked = await clickNode(btn)
+    return { ok: clicked, why: clicked ? '' : '点删除按钮失败', opened, body: want }
+  }
+  bridge.setPinRemover(removePinForBody)
   bridge.setPagePinsProbe(probePins)
   bridge.setPageStateProbe(probePageState)
   bridge.setElementProbe(probeElement)

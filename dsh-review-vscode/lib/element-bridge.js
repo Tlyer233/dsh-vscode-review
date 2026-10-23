@@ -115,6 +115,16 @@ async function pagePins(url) {
   try { return await pinsProbe(url) } catch { return null }
 }
 
+/* 0.1.88: delete a native page pin (browser-comment drives it over CDP). */
+let pinRemover = null
+function setPinRemover(fn) {
+  pinRemover = typeof fn === 'function' ? fn : null
+}
+async function removePin(url, body) {
+  if (!pinRemover) return { ok: false, why: '探针未就绪' }
+  try { return await pinRemover(url, body) } catch (e) { return { ok: false, why: String((e && e.message) || e) } }
+}
+
 function setDismissPrompt(fn) {
   handlers.dismissPrompt = typeof fn === 'function' ? fn : null
 }
@@ -143,7 +153,7 @@ async function deliverBrowserComment(payload) {
   }
 }
 
-module.exports = { nativeCommentPayload, setPageStateProbe, pageState, setPagePinsProbe, pagePins, setReferenceDroppedHandler, referenceDropped, setElementProbe, probeElement, setPageUrlProvider, browserPageUrl, setDismissPrompt, dismissPrompt, setBrowserCommentHandler, deliverBrowserComment, setOpenGuard, openGuarded }
+module.exports = { nativeCommentPayload, setPageStateProbe, pageState, setPagePinsProbe, pagePins, setPinRemover, removePin, setReferenceDroppedHandler, referenceDropped, setElementProbe, probeElement, setPageUrlProvider, browserPageUrl, setDismissPrompt, dismissPrompt, setBrowserCommentHandler, deliverBrowserComment, setOpenGuard, openGuarded }
 
 async function dismissPrompt() {
   if (!handlers.dismissPrompt) return { ok: false, why: 'no-handler' }
