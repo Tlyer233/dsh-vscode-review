@@ -888,9 +888,38 @@ function startElementContextWatcher(context, log) {
     }
   }
 
+  // 0.1.98: the replay flood came from stale references that Copilot restores into its input on
+  // start: they arrive as a delta (the composer document opens empty, so the baseline is empty)
+  // and each became a new dsh chip. Clear them once per start — a fresh composer means no
+  // replay, and VS Code drops the matching pins/attachments itself.
+  let startCleared = false
+  async function clearComposerOnStart() {
+    if (!cfg('clearStaleOnStart', true) || startCleared) return
+    let doc = null
+    try {
+      doc = vscode.workspace.textDocuments.filter((d) => d.uri && d.uri.scheme === 'chatSessionInput')[0] || null
+    } catch { return }
+    if (!doc) return
+    let txt = ''
+    try { txt = doc.getText() } catch { return }
+    const lines = String(txt).split('\n')
+    const kept = lines.filter((l) => !/^@[^\s@\n]{2,120}(\s+[^\n]*)?$/.test(String(l).trim()))
+    if (kept.length === lines.length) { startCleared = true; return }
+    let ok = false
+    try {
+      const we = new vscode.WorkspaceEdit()
+      we.replace(doc.uri, new vscode.Range(0, 0, doc.lineCount, 0), kept.join('\n') + (kept.length ? '\n' : ''))
+      ok = await vscode.workspace.applyEdit(we)
+    } catch (e) { ok = false }
+    startCleared = true
+    try { inputBaseline.delete(String(doc.uri)) } catch (e) { /* noop */ }
+    deliveredKeys.clear()
+    log.appendLine(TAG + ' · 启动清理：删掉 Copilot 输入框里 ' + (lines.length - kept.length) + ' 条旧批注（' + (ok ? 'VS Code 已接受' : '编辑未确认') + '），不再重放进 dsh')
+  }
+
   const onDocOpenSeed = (doc) => {
     try {
-      if (doc && doc.uri && doc.uri.scheme === 'chatSessionInput') seedBaseline()
+      if (doc && doc.uri && doc.uri.scheme === 'chatSessionInput') { void clearComposerOnStart(); seedBaseline() }
     } catch { /* noop */ }
   }
 
@@ -991,6 +1020,7 @@ function startElementContextWatcher(context, log) {
   // then (Copilot restored it), and the doc-open seed never fires for it — that race is
   // why the user's comment was swallowed as "基线：12 条旧引用".
   seedBaseline()
+  void clearComposerOnStart()
   context.subscriptions.push(vscode.commands.registerCommand('dshReview.dumpDocs', () => {
     const docs = vscode.workspace.textDocuments
     log.appendLine(TAG + ' --- dump ' + docs.length + ' docs ---')

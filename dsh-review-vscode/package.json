@@ -2,7 +2,7 @@
   "name": "dsh-review-vscode",
   "displayName": "dsh review — inline diff + dsh sidebar",
   "description": "Inline review (shadow/pending) + dsh webview sidebar",
-  "version": "0.1.97",
+  "version": "0.1.98",
   "publisher": "dsn",
   "engines": {
     "vscode": "^1.85.0"
@@ -220,6 +220,11 @@
           "type": "boolean",
           "default": false,
           "markdownDescription": "0.1.42 起默认开：点一下聊天里的元素 chip 会把附件文档打开，这是「刚发生了原生批注」的可靠信号（也是页面 URL 的来源），随后我们用不会弹保存提示的方式把它关掉。"
+        },
+        "dshReview.elementContext.clearStaleOnStart": {
+          "type": "boolean",
+          "default": true,
+          "description": "启动时把 Copilot 输入框里残留的旧批注（@元素 文字）删掉一次。VS Code 会把它们重新塞回输入框，插件会把它们当成新批注重放进 dsh（一次批注冒出好几条就是这个）。关掉则保留残留。"
         },
         "dshReview.elementContext.bindDshRemoval": {
           "type": "boolean",
