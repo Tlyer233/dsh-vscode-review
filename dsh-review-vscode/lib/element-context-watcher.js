@@ -71,10 +71,12 @@ function startElementContextWatcher(context, log) {
   // panel opening late used to swallow exactly that comment: 基线：1 条旧引用 + delta=0).
   const deliveredKeys = new Set()
   function keyOf(labelOrTok, comment) {
-    const tok = String(labelOrTok || '').split(/\s+/)[0]
-    const tm = /^([a-z][a-z0-9]*)/i.exec(tok)
-    const im = /#([^.\s[]+)/.exec(tok)
-    return (tm ? tm[1].toLowerCase() : '') + (im ? '#' + im[1] : '') + '\u241f' + String(comment || '').replace(/\s+/g, ' ').trim()
+    // 0.1.97: the dedupe key used to be "<tag>#<id> + 批注文字", but the element part is not
+    // stable — when the probe has not re-attached yet the label degrades to "@div", so old
+    // annotations no longer matched their md files and one live comment replayed eight stale
+    // ones. The annotation text is written by the user and is stable across sessions, so it is
+    // the key; the element identity is not.
+    return String(comment || '').replace(/\s+/g, ' ').trim()
   }
   function loadDeliveredKeys() {
     const dir = bcfg('commentDir', '/tmp/dsh-comments')
