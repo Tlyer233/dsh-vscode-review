@@ -412,7 +412,7 @@ function startElementContextWatcher(context, log) {
       // 0.1.37: the user asked to get rid of the tab VS Code opens by itself. Closing is
       // the proven save-to-tmp → close → delete-tmp sequence, which never prompts; no
       // chip, no dsh traffic. 180s per name so a re-render cannot spam it.
-      if (cfg('closeNativeDoc', true) && !alreadySent(nu.name)) {
+      if (cfg('closeNativeDoc', false) && !alreadySent(nu.name)) {
         markCapture(nu.name)
         log.appendLine(TAG + ' · 老链路已关闭，只关掉 VS Code 自己打开的附件标签 name=' + nu.name)
         setTimeout(() => closeElementDoc(doc), 400)

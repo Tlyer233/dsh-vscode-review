@@ -44,6 +44,19 @@
 - 版本说明:本修复与「元素批注」同日开发,原报 0.1.70/0.1.26 与批注功能撞号,rebase 后改号 0.1.71/0.1.28
 
 
+## dsh-review 0.1.71 + dsh-review-vscode 0.1.38–0.1.39 (2026-10-23) — 保存面板真凶 + 用户决定：原生→dsh 这条链路整体停用
+
+### 0.1.38 保存面板（那张 macOS「保存为 / 标签 / 位置 / Format: All Files」）
+不是 VS Code 弹的，也不是「我们关标签」这个动作本身：`closeElementDoc` 把 untitled 存到**固定** `os.tmpdir()/dsh-element-context.txt`，第二次起文件已存在 ⇒ VS Code 用**原生**面板问「要不要覆盖」⇒ `doc.save()` 返回 false（日志 `close: save-to-tmp=false`）⇒ 文档仍脏 ⇒ `closeActiveEditor` 又把面板顶出来。我们的 dismissPrompt 只认 workbench DOM，所以日志写的是 `no-dialog` / 「tab 已关闭(无弹框)」——两句都不算谎，但用户看到的是原生面板。
+改法：每次存唯一文件名 `dsh-element-context-<epoch>.txt`，存成功才关、关完 unlink；存不成功**就不关标签**（不再跟原生面板抢）。
+
+### 0.1.39 链路按用户要求拆掉
+- `python3 tools/patch_comment_hook.py --revert`：VS Code 两个 bundle 还原（`.dsh-bak`），「installation appears to be corrupt」弹窗从此不再出现。
+- `dshReview.browserComment.nativeBridge` **默认 false**：不起 43167 监听、不 attach host、不轮询 globalThis。留着的理由只剩一个：将来 agent host 若能被 CDP 看见，打开开关 + 重打补丁就能立刻再试。
+- `dshReview.elementContext.closeNativeDoc` **默认 false**：不再去关 VS Code 自己打开的 `Attached Element Context` 标签（那正是面板的来源），原生行为完全不动。
+- `dshReview.elementContext.elementChain` 仍默认 false（0.1.35 起）：不插 element chip、不发 dsh。
+⇒ 原生 ⌥⌘C 批注 = 纯原生（Copilot 拿到引用、VS Code 开自己的标签），dsh 侧的批注入口回到右下角 `dsh ✎` 那一套（图钉/展开改/删/文件 chip，0.1.33 起已实测可用）。
+
 ## dsh-review 0.1.71 + dsh-review-vscode 0.1.36 (2026-10-23) — 原生批注改走 CDP 直取（CSP 拦掉了信标）
 
 ### 用户实测的两件事（都有日志/截图对应）

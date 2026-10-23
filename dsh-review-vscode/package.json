@@ -2,7 +2,7 @@
   "name": "dsh-review-vscode",
   "displayName": "dsh review — inline diff + dsh sidebar",
   "description": "Inline review (shadow/pending) + dsh webview sidebar",
-  "version": "0.1.38",
+  "version": "0.1.39",
   "publisher": "dsn",
   "engines": {
     "vscode": "^1.85.0"
@@ -195,7 +195,7 @@
         },
         "dshReview.elementContext.closeNativeDoc": {
           "type": "boolean",
-          "default": true,
+          "default": false,
           "markdownDescription": "0.1.37：VS Code 每次加元素批注都会自己打开一个 untitled 的 Attached Element Context 标签。开着时我们用「存到临时文件 → 关闭 → 删临时文件」的方式把它静默关掉（不会弹保存提示），不往 dsh 插任何东西。"
         },
         "dshReview.elementContext.elementChain": {
@@ -207,6 +207,11 @@
           "type": "boolean",
           "default": false,
           "markdownDescription": "发送时附带元素截图 base64(尽力而为, 取决于 VS Code 是否已落盘, 通常需 ~30s). Best-effort element screenshot (base64) attached when sending to dsh."
+        },
+        "dshReview.browserComment.nativeBridge": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "0.1.39：把 VS Code 原生「Comment on Elements」的批注也送进 dsh 的那条链路（需要给 VS Code 本体打补丁 tools/patch_comment_hook.py）。实测收端拿不到 agent host 的投递，**默认关闭**；要再试就打开并 `python3 tools/patch_comment_hook.py`。"
         },
         "dshReview.browserComment.sendToDsh": {
           "type": "boolean",

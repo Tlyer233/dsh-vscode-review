@@ -538,6 +538,12 @@ function startBrowserComment(opts) {
   let lastSeenCount = -1
   let absentNoticed = false
 
+  function nativeBridge() {
+    try {
+      return !!vscode.workspace.getConfiguration('dshReview.browserComment').get('nativeBridge', false)
+    } catch { return false }
+  }
+
   function enabled() {
     try {
       return !!vscode.workspace.getConfiguration('dshReview.browserComment').get('sendToDsh', true)
@@ -629,7 +635,10 @@ function startBrowserComment(opts) {
     }
     absentNoticed = false
     const pages = (targets || []).filter(isBrowserPage)
-    const hosts = (targets || []).filter(isHostPage)
+    // 0.1.39: the user asked to remove the native-comment -> dsh chain entirely. The
+    // agent-host renderer that runs the native flow is not a CDP target, so the drain
+    // can never see it; keep it behind an explicit opt-in instead of running blind.
+    const hosts = nativeBridge() ? (targets || []).filter(isHostPage) : []
     for (const h of hosts) {
       if (!conns.has(h.id)) { try { attach(h, false) } catch (e) { log.appendLine(TAG + ' host attach failed: ' + String((e && e.message) || e)) } }
     }

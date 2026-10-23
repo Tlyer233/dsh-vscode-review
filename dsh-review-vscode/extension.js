@@ -75,7 +75,13 @@ function activate(context) {
   // 0.1.34: native-comment receiver. VS Code's own comment box is unreachable from
   // CDP, so tools/patch_comment_hook.py adds a beacon inside the shipped bundles that
   // POSTs each comment here; the payload goes through the same md-file + chip pipeline.
-  const startNativeComment = (ctx, lg) => require('./lib/native-comment-server')({ context: ctx, log: lg })
+  const startNativeComment = (ctx, lg) => {
+    const on = (() => {
+      try { return !!vscode.workspace.getConfiguration('dshReview.browserComment').get('nativeBridge', false) } catch { return false }
+    })()
+    if (!on) { lg.appendLine('[native-comment] 已停用（dshReview.browserComment.nativeBridge=false，0.1.39 起默认关）'); return }
+    require('./lib/native-comment-server')({ context: ctx, log: lg })
+  }
   for (const [name, fn] of [['element-context', startElementContextWatcher], ['cdp', startCdpProbe], ['native-comment', startNativeComment]]) {
     try {
       fn(context, log)
