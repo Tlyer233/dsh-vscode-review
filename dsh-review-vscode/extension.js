@@ -82,7 +82,17 @@ function activate(context) {
     if (!on) { lg.appendLine('[native-comment] 已停用（dshReview.browserComment.nativeBridge=false，0.1.39 起默认关）'); return }
     require('./lib/native-comment-server')({ context: ctx, log: lg })
   }
-  for (const [name, fn] of [['element-context', startElementContextWatcher], ['cdp', startCdpProbe], ['native-comment', startNativeComment]]) {
+  // 0.1.40: the 'cdp' module auto-clicks chat element chips (its old element->source
+  // trick). Clicking a chip OPENS its document, which is exactly the
+  // "Attached Element Context from Integrated · Untitled-1" tab the user keeps hitting
+  // — native Copilot never clicks it, so native never opens it. Off by default now;
+  // dshReview.elementContext.clickChips=true brings it back.
+  let clickChips = false
+  try { clickChips = !!vscode.workspace.getConfiguration('dshReview.elementContext').get('clickChips', false) } catch { /* noop */ }
+  const sideFeatures = [['element-context', startElementContextWatcher], ['native-comment', startNativeComment]]
+  if (clickChips) sideFeatures.push(['cdp', startCdpProbe])
+  else log.appendLine('[cdp] 已停用（0.1.40 默认关：点 chip 会打开附件文档 / 引出保存面板；要开设置 dshReview.elementContext.clickChips）')
+  for (const [name, fn] of sideFeatures) {
     try {
       fn(context, log)
     } catch (e) {

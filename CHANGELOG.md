@@ -44,6 +44,15 @@
 - 版本说明:本修复与「元素批注」同日开发,原报 0.1.70/0.1.26 与批注功能撞号,rebase 后改号 0.1.71/0.1.28
 
 
+## dsh-review 0.1.71 + dsh-review-vscode 0.1.40 (2026-10-23) — 真凶：我们自己在点 chip，所以那个 untitled 文档才被打开
+
+### 用户质疑成立
+「为什么还是会打开这个文件, copilot原生就不会打开!!」——对。`lib/cdp-element-source.js` 里 `findElementChips()` 找 `.chat-attached-context-attachment`（aria-label 以 `Attached element` 开头），`clickChip()` 直接 `chip.el.click()`（`:79`）来触发老的「元素→源码」路径；**点这个 chip 就等于打开它的文档**，于是出现 `Attached Element Context from Integrated · Untitled-1`（带脏点）。原生 Copilot 不会去点，所以原生不会打开。日志对应：`[cdp] >>> NEW #3 (+3) span#state-detail [chat-attached-context-attachment show-file-icons]`。
+（顺带解释 0.1.38 之前的保存面板：那个脏 untitled 文档一旦是我们点开/关掉的，就会碰到系统级保存面板。）
+
+### 改法
+`extension.js`：`cdp` 侧功能改为受 `dshReview.elementContext.clickChips` 控制，**默认 false**，关掉时只记一行说明；`element-context` / `native-comment` 仍在列表里（各自的开关也已默认关）。⇒ ⌥⌘C 现在完全等同原生 VS Code：Copilot 收到引用、不点 chip、不开文档、没有面板。
+
 ## dsh-review 0.1.71 + dsh-review-vscode 0.1.38–0.1.39 (2026-10-23) — 保存面板真凶 + 用户决定：原生→dsh 这条链路整体停用
 
 ### 0.1.38 保存面板（那张 macOS「保存为 / 标签 / 位置 / Format: All Files」）

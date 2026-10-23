@@ -2,7 +2,7 @@
   "name": "dsh-review-vscode",
   "displayName": "dsh review — inline diff + dsh sidebar",
   "description": "Inline review (shadow/pending) + dsh webview sidebar",
-  "version": "0.1.39",
+  "version": "0.1.40",
   "publisher": "dsn",
   "engines": {
     "vscode": "^1.85.0"
@@ -192,6 +192,11 @@
           "type": "boolean",
           "default": false,
           "markdownDescription": "自动捕获后把元素 chip 从 Copilot 输入框移除. Remove the element chip from the Copilot input after auto-capture."
+        },
+        "dshReview.elementContext.clickChips": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "0.1.40：CDP 自动点击聊天里的元素 chip（老的「元素→源码」技巧）。点 chip 会**打开**它的附件文档，还常带出 macOS 保存面板，所以默认关掉。关掉后 ⌥⌘C 就是纯原生行为。"
         },
         "dshReview.elementContext.closeNativeDoc": {
           "type": "boolean",
