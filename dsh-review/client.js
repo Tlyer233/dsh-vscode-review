@@ -1325,7 +1325,7 @@ window.__ModuleLoader__.load({
         function postState(extra) {
           // 0.1.82: only the scope-request message has ever reached the extension, so all
           // client-side events (tracked / dropped / request-received / removed) ride on it.
-          const msg = { type: "dshScopeRequest", build: "0.1.90", watching: Array.from(trackedRefs.keys()).slice(0, 3) };
+          const msg = { type: "dshScopeRequest", build: "0.1.91", watching: Array.from(trackedRefs.keys()).slice(0, 3) };
           try { Object.assign(msg, extra || {}); } catch (err) { /* noop */ }
           try { window.parent.postMessage(msg, "*"); } catch (err) { /* noop */ }
         }
@@ -1423,6 +1423,43 @@ window.__ModuleLoader__.load({
             try { window.parent.postMessage({ type: "dshRefsTracked", names: Array.from(trackedRefs.keys()).slice(0, 4) }, "*"); } catch (err) { /* noop */ }
           }
         }
+        // 0.1.91: the DOM-disappearance check is unreliable — dsh rebuilds chip nodes with React,
+        // so a tracked node can stay isConnected (measured: 方块状态 … 连着 forever) and the drop
+        // was never reported. Watch the click itself: pressing the chip's 删除 reports the drop
+        // immediately, event driven, no grace period, no polling.
+        let chipClickHooked = false;
+        function hookChipClicks() {
+          if (chipClickHooked) return;
+          chipClickHooked = true;
+          document.addEventListener('click', function (ev) {
+            if (trackedRefs.size === 0) return;
+            const src = ev && ev.target;
+            if (!src || !src.closest) return;
+            const btn = src.closest('button,[role="button"],svg,[aria-label],[title]');
+            if (!btn) return;
+            const labelOf = (n) => String((n.getAttribute && (n.getAttribute('aria-label') || n.getAttribute('title'))) || '') + ' ' + String(n.textContent || '');
+            const txt = labelOf(btn);
+            if (!/删|remove|close|×|✕/i.test(txt)) return;
+            let el = btn;
+            for (let up = 0; el && up < 10; up++) {
+              const own = String(el.textContent || '');
+              let hit = null;
+              trackedRefs.forEach(function (info, name) {
+                if ((info.tail && own.indexOf(info.tail) !== -1) || (info.alt && own.indexOf(info.alt) !== -1) || own.indexOf(name) !== -1) hit = name;
+              });
+              if (hit) {
+                const info = trackedRefs.get(hit);
+                const dp = info && info.path;
+                trackedRefs.delete(hit);
+                postState({ report: "方块被点删: " + hit, drop: hit, dropPath: dp });
+                return;
+              }
+              el = el.parentElement;
+            }
+          }, true);
+        }
+        hookChipClicks();
+
         function removeTrackedChipByName(name) {
           // 0.1.58: reverse half of the binding — the user deleted the pin/reference in
           // Copilot, so drop the chip we inserted. Chips are dsh's own React nodes, so the
@@ -1644,7 +1681,7 @@ window.__ModuleLoader__.load({
             setTimeout(compactNativeStatsLine, 800);
             applyZoom();
             // Scope is owned by apply()-level listener; ask again in case early posts were dropped.
-            try { window.parent.postMessage({ type: "dshScopeRequest", build: "0.1.90", watching: Array.from(trackedRefs.keys()).slice(0, 3) }, "*"); } catch (err) { /* noop */ }
+            try { window.parent.postMessage({ type: "dshScopeRequest", build: "0.1.91", watching: Array.from(trackedRefs.keys()).slice(0, 3) }, "*"); } catch (err) { /* noop */ }
             return;
           }
           if (msg.type === "dshChromeState") {
@@ -4144,13 +4181,13 @@ window.__ModuleLoader__.load({
               try { ok = !!(window.__dshrRemoveChip && window.__dshrRemoveChip(nm)); } catch (err) { ok = false; }
               let watch = [];
               try { watch = (window.__dshrTracked && window.__dshrTracked()) || []; } catch (err) { watch = []; }
-              try { window.parent.postMessage({ type: "dshScopeRequest", build: "0.1.90", watching: watch.slice(0, 3), report: "捎带删方块: " + nm + " -> " + (ok ? "已删" : "没找到方块节点") }, "*"); } catch (err) { /* noop */ }
+              try { window.parent.postMessage({ type: "dshScopeRequest", build: "0.1.91", watching: watch.slice(0, 3), report: "捎带删方块: " + nm + " -> " + (ok ? "已删" : "没找到方块节点") }, "*"); } catch (err) { /* noop */ }
             });
           }
           setVscodeScope(msg.paths, msg.rawPaths);
         }
         window.addEventListener("message", onScopeFromHost);
-        try { window.parent.postMessage({ type: "dshScopeRequest", build: "0.1.90", watching: Array.from(trackedRefs.keys()).slice(0, 3) }, "*"); } catch (err) { /* noop */ }
+        try { window.parent.postMessage({ type: "dshScopeRequest", build: "0.1.91", watching: Array.from(trackedRefs.keys()).slice(0, 3) }, "*"); } catch (err) { /* noop */ }
         const timer = setInterval(checkWorkbenchScope, 800);
         return function () {
           clearInterval(timer);
