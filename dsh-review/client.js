@@ -1315,7 +1315,7 @@ window.__ModuleLoader__.load({
         function postState(extra) {
           // 0.1.82: only the scope-request message has ever reached the extension, so all
           // client-side events (tracked / dropped / request-received / removed) ride on it.
-          const msg = { type: "dshScopeRequest", build: "0.1.85", watching: Array.from(trackedRefs.keys()).slice(0, 3) };
+          const msg = { type: "dshScopeRequest", build: "0.1.86", watching: Array.from(trackedRefs.keys()).slice(0, 3) };
           try { Object.assign(msg, extra || {}); } catch (err) { /* noop */ }
           try { window.parent.postMessage(msg, "*"); } catch (err) { /* noop */ }
         }
@@ -1333,7 +1333,7 @@ window.__ModuleLoader__.load({
           all.forEach(function (r) {
             const path = String((r && (r.path || r.ref || r.label)) || '');
             const name = path.split('/').pop();
-            if (name && /\.md$/.test(name)) { trackedRefs.set(name, { path: path, el: null }); announceSent = false; }
+            if (name && /\.md$/.test(name)) { trackedRefs.set(name, { path: path, el: null, since: Date.now() }); announceSent = false; }
           });
           // 0.1.81: remember the chip's own node. Text scanning the body was useless — the
           // file name also appears elsewhere in the page, so a deleted chip still looked
@@ -1343,7 +1343,7 @@ window.__ModuleLoader__.load({
             if (!scope) return;
             const nodes = scope.querySelectorAll('span,div,a,button');
             trackedRefs.forEach(function (info, nm) {
-              if (info.el) return;
+              if (info.el && info.el.isConnected) return;
               for (let i = 0; i < nodes.length; i++) {
                 const el = nodes[i];
                 if (String(el.textContent || '').trim() !== nm) continue;
@@ -1365,18 +1365,25 @@ window.__ModuleLoader__.load({
           const text = String(scope.textContent || '');
           if (!text.trim()) return; // composer cleared = the message was sent, not deleted
           trackedRefs.forEach(function (info, name) {
+            // 0.1.86: we track the chip before dsh renders it (the log order proved it:
+            // 已盯上方块 -> postScope -> insert mode=chip). Without a grace period the very
+            // first sweep ran in that gap, saw the name missing, declared a deletion and ate
+            // the user's pin seconds after it appeared. Require: a grace period, and that we
+            // actually saw the node once, before ever reporting a drop.
             if (info.el && info.el.isConnected) return;
+            if (Date.now() - (info.since || 0) < 1500) return;
             // 0.1.84: dsh re-renders the chip and replaces its DOM node, so a disconnected
             // node alone is not a deletion. Re-resolve by name and rebind; only when the name
             // is gone from the page as well is it a real deletion.
             if (info.el && text.indexOf(name) !== -1) {
               const nodes = composerScope().querySelectorAll('span,div,a,button');
               for (let i = 0; i < nodes.length; i++) {
-                if (String(nodes[i].textContent || '').trim() === name) { info.el = nodes[i]; break }
+                if (String(nodes[i].textContent || '').trim() === name) { info.el = nodes[i]; info.seen = true; break }
               }
               return;
             }
             if (text.indexOf(name) !== -1) return;
+            if (!info.seen) return;
             trackedRefs.delete(name);
             postState({ report: "方块被删: " + name, drop: name, dropPath: info.path });
           });
@@ -1602,7 +1609,7 @@ window.__ModuleLoader__.load({
             setTimeout(compactNativeStatsLine, 800);
             applyZoom();
             // Scope is owned by apply()-level listener; ask again in case early posts were dropped.
-            try { window.parent.postMessage({ type: "dshScopeRequest", build: "0.1.85", watching: Array.from(trackedRefs.keys()).slice(0, 3) }, "*"); } catch (err) { /* noop */ }
+            try { window.parent.postMessage({ type: "dshScopeRequest", build: "0.1.86", watching: Array.from(trackedRefs.keys()).slice(0, 3) }, "*"); } catch (err) { /* noop */ }
             return;
           }
           if (msg.type === "dshChromeState") {
@@ -4100,13 +4107,13 @@ window.__ModuleLoader__.load({
             msg.removeChips.forEach(function (nm) {
               let ok = false;
               try { ok = !!(window.__dshrRemoveChip && window.__dshrRemoveChip(nm)); } catch (err) { ok = false; }
-              try { window.parent.postMessage({ type: "dshScopeRequest", build: "0.1.85", watching: [], report: "捎带删方块: " + nm + " -> " + (ok ? "已删" : "没找到方块节点") }, "*"); } catch (err) { /* noop */ }
+              try { window.parent.postMessage({ type: "dshScopeRequest", build: "0.1.86", watching: [], report: "捎带删方块: " + nm + " -> " + (ok ? "已删" : "没找到方块节点") }, "*"); } catch (err) { /* noop */ }
             });
           }
           setVscodeScope(msg.paths, msg.rawPaths);
         }
         window.addEventListener("message", onScopeFromHost);
-        try { window.parent.postMessage({ type: "dshScopeRequest", build: "0.1.85", watching: Array.from(trackedRefs.keys()).slice(0, 3) }, "*"); } catch (err) { /* noop */ }
+        try { window.parent.postMessage({ type: "dshScopeRequest", build: "0.1.86", watching: Array.from(trackedRefs.keys()).slice(0, 3) }, "*"); } catch (err) { /* noop */ }
         const timer = setInterval(checkWorkbenchScope, 800);
         return function () {
           clearInterval(timer);
