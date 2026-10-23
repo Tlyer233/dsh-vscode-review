@@ -30,7 +30,7 @@ const http = require('node:http')
 const CDP_PORT = 9223
 const TAG = '[browser-comment]'
 const PREFIX = '__DSH_BCC__'
-const VERSION = 'v5'
+const VERSION = 'v6'
 const RESCAN_MS = 2500
 
 /** Page-side: floating trigger, element picker, in-place comment box. */
@@ -124,6 +124,11 @@ const INJECT_JS = `(() => {
 
   let mode = 'idle' // idle | pick
   let picked = null
+  // 0.1.33: comment-20261023-101224-td-cx801.md showed 尺寸 0x0 and a one-level
+  // ancestor chain — between picking and Enter, Strata re-rendered that table cell,
+  // so elementBits() snapshotted a detached node. Keep the pick-time selector and
+  // re-resolve it at submit.
+  let pickedSel = ''
   // 0.1.30: a successful send used to look like nothing happened ("页面也没有标注,
   // 输入的内容也没有了" — we clear the box). Every note now leaves a numbered pin on
   // the element, the panel confirms the send, and the button shows the count.
@@ -368,9 +373,10 @@ const INJECT_JS = `(() => {
 
   function openFor(el) {
     picked = el
+    try { pickedSel = selectorFor(el) } catch (e) { pickedSel = '' }
     mode = 'idle'
     btn.classList.remove('on')
-    btn.textContent = 'dsh \\u270e'
+    btn.textContent = 'dsh ' + String.fromCharCode(0x270e) + (notes.length ? ' ' + notes.length : '')
     mark.style.display = 'none'
     pill.textContent = labelFor(el)
     place(el)
@@ -389,9 +395,23 @@ const INJECT_JS = `(() => {
     if (!picked) { closePanel(); return }
     const text = String(ta.value || '').trim()
     if (!text) { closePanel(); return }
-    const bits = elementBits(picked)
+    // The node may have been replaced by a re-render while we were typing; re-dress
+    // it from the pick-time selector so size / ancestor chain / html are not 0x0.
+    let target = picked
+    const rect0 = target.getBoundingClientRect ? target.getBoundingClientRect() : null
+    if ((!target.isConnected || !rect0 || !(rect0.width || rect0.height)) && pickedSel) {
+      let fresh = null
+      try { fresh = document.querySelector(pickedSel) } catch (e) { fresh = null }
+      if (fresh && fresh !== target) {
+        target = fresh
+        picked = fresh
+        pill.textContent = labelFor(fresh)
+      }
+    }
+    const bits = elementBits(target)
     const n = { text: text, label: pill.textContent, n: notes.length + 1, nid: nidFor(notes.length + 1), el: picked, bits: bits }
     notes.push(n)
+    n.el = target
     addPin(n)
     sendNote('comment', n, text)
     btn.textContent = 'dsh ' + String.fromCharCode(0x270e) + ' ' + notes.length

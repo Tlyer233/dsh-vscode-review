@@ -44,6 +44,18 @@
 - 版本说明:本修复与「元素批注」同日开发,原报 0.1.70/0.1.26 与批注功能撞号,rebase 后改号 0.1.71/0.1.28
 
 
+## dsh-review 0.1.71 + dsh-review-vscode 0.1.33 (2026-10-23) — 提交时节点已被重渲染 → md 里尺寸 0x0、祖先链只剩一层
+
+### 触发文件
+用户问 `/tmp/dsh-comments/comment-20261023-101224-td-cx801.md` 是什么（= 他自己批的一条：`td.num` 内容 130.8，批注「666」）。文件里自相矛盾：标题 `td.num 98 × 50`，但 `- 尺寸: 0x0 @ (0, 0)`、`祖先链: tr` 只有一层。
+根因和图钉被吃掉是同一个：从选中到按 Enter 之间 Strata 重渲染把那一格换掉，`elementBits(picked)` 是在**已脱离文档的旧节点**上取的（rect 0、parent 链断）。
+
+### 修法（页内脚本 v6）
+- `openFor()` 记下选中的 `pickedSel = selectorFor(el)`。
+- `submit()` 取快照前：若 `!picked.isConnected` 或 rect 宽高为 0 且有 `pickedSel` ⇒ `document.querySelector(pickedSel)` 重新认新节点（认到就用它、并刷新 pill 文案），再 `elementBits(target)`；note 的 `el` 也换成新节点，图钉直接跟到新位置。
+- 顺手修：`openFor()` 重置按钮文案时丢掉计数 → 现在保留 `dsh ✎ N`。
+- 探针加 3 项（选中后把 `td` 换成新节点再 Enter：bounds 仍是 98x50、`innerText` 取到新值 131.4、祖先链 ≥2 层且 html 块是新内容、pill 跟着刷新）→ **22/22 通过**。
+
 ## dsh-review 0.1.71 + dsh-review-vscode 0.1.32 (2026-10-23) — 图钉被 SPA 重渲染吃掉（"①怎么不见了"）
 
 ### 原因（不是用户点太快）
