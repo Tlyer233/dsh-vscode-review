@@ -1315,7 +1315,7 @@ window.__ModuleLoader__.load({
         function postState(extra) {
           // 0.1.82: only the scope-request message has ever reached the extension, so all
           // client-side events (tracked / dropped / request-received / removed) ride on it.
-          const msg = { type: "dshScopeRequest", build: "0.1.82", watching: Array.from(trackedRefs.keys()).slice(0, 3) };
+          const msg = { type: "dshScopeRequest", build: "0.1.83", watching: Array.from(trackedRefs.keys()).slice(0, 3) };
           try { Object.assign(msg, extra || {}); } catch (err) { /* noop */ }
           try { window.parent.postMessage(msg, "*"); } catch (err) { /* noop */ }
         }
@@ -1398,6 +1398,12 @@ window.__ModuleLoader__.load({
           return false;
         }
         try { window.parent.postMessage({ type: "dshClientBuild", version: "0.1.75" }, "*"); } catch (err) { /* noop */ }
+        window.__dshrRemoveChip = function (nm) {
+          const name = String(nm || '');
+          const ok = removeTrackedChipByName(name);
+          if (ok) trackedRefs.delete(name);
+          return ok;
+        };
         if (!window.__dshrRefWatch) {
           window.__dshrRefWatch = true;
           setInterval(sweepDroppedRefs, 900);
@@ -1584,7 +1590,7 @@ window.__ModuleLoader__.load({
             setTimeout(compactNativeStatsLine, 800);
             applyZoom();
             // Scope is owned by apply()-level listener; ask again in case early posts were dropped.
-            try { window.parent.postMessage({ type: "dshScopeRequest", build: "0.1.82", watching: Array.from(trackedRefs.keys()).slice(0, 3) }, "*"); } catch (err) { /* noop */ }
+            try { window.parent.postMessage({ type: "dshScopeRequest", build: "0.1.83", watching: Array.from(trackedRefs.keys()).slice(0, 3) }, "*"); } catch (err) { /* noop */ }
             return;
           }
           if (msg.type === "dshChromeState") {
@@ -4075,10 +4081,20 @@ window.__ModuleLoader__.load({
         function onScopeFromHost(event) {
           const msg = event.data;
           if (!msg || msg.type !== "dshSetScope") return;
+          // 0.1.83: the removal instruction rides on the scope answer — the one
+          // extension -> client message that demonstrably arrives (the sidebar workspace
+          // list is fed by it), whereas dshRemoveReference never reached this page.
+          if (Array.isArray(msg.removeChips) && msg.removeChips.length) {
+            msg.removeChips.forEach(function (nm) {
+              let ok = false;
+              try { ok = !!(window.__dshrRemoveChip && window.__dshrRemoveChip(nm)); } catch (err) { ok = false; }
+              try { window.parent.postMessage({ type: "dshScopeRequest", build: "0.1.83", watching: [], report: "捎带删方块: " + nm + " -> " + (ok ? "已删" : "没找到方块节点") }, "*"); } catch (err) { /* noop */ }
+            });
+          }
           setVscodeScope(msg.paths, msg.rawPaths);
         }
         window.addEventListener("message", onScopeFromHost);
-        try { window.parent.postMessage({ type: "dshScopeRequest", build: "0.1.82", watching: Array.from(trackedRefs.keys()).slice(0, 3) }, "*"); } catch (err) { /* noop */ }
+        try { window.parent.postMessage({ type: "dshScopeRequest", build: "0.1.83", watching: Array.from(trackedRefs.keys()).slice(0, 3) }, "*"); } catch (err) { /* noop */ }
         const timer = setInterval(checkWorkbenchScope, 800);
         return function () {
           clearInterval(timer);

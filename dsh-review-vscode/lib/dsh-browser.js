@@ -770,6 +770,11 @@ function noticeScopeEmpty(reason) {
   void vscode.window.showWarningMessage('当前窗口未打开工作区，无法进入 dsh 工作区')
 }
 
+const pendingChipRemovals = []
+function takePendingChips() {
+  return pendingChipRemovals.splice(0)
+}
+
 function postScope(view) {
   if (!view) return
   const scope = scopePaths()
@@ -779,7 +784,7 @@ function postScope(view) {
     + ' paths=' + JSON.stringify(scope.paths)
     + ' raw=' + JSON.stringify(scope.rawPaths),
   )
-  void view.webview.postMessage({ type: 'dshSetScope', paths: scope.paths, rawPaths: scope.rawPaths })
+  void view.webview.postMessage({ type: 'dshSetScope', paths: scope.paths, rawPaths: scope.rawPaths, removeChips: takePendingChips() })
   // Toast on transition into empty (closing last folder), not on every hello.
   if (empty && state.lastScopeEmpty === false) {
     noticeScopeEmpty('folders-cleared')
@@ -1137,8 +1142,10 @@ function setupDshBrowser(context) {
           vscode.commands.registerCommand('dshReview.removeDshChip', (name) => {
             const n = String(name || '')
             if (!n || !state.dshView) return false
-            try { state.dshView.webview.postMessage({ type: 'dshRemoveReference', name: n }) } catch { return false }
-            state.log('[chip-remove] 请求删 dsh 方块 ' + n)
+            pendingChipRemovals.push(n)
+            try { state.dshView.webview.postMessage({ type: 'dshRemoveReference', name: n }) } catch { /* the scope answer carries it anyway */ }
+            postScope(state.dshView)
+            state.log('[chip-remove] 请求删 dsh 方块 ' + n + '（同时捎带在工作区应答里）')
             return true
           })
         } catch { /* registered elsewhere */ }

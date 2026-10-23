@@ -584,7 +584,7 @@ function startElementContextWatcher(context, log) {
     // 0.1.58: reverse binding. key -> md files we delivered for it, so when the count of a
     // key drops (the user deleted the pin / the Copilot line) we can tell dsh to drop the
     // matching chip. Suppressed for 1.5s around our own deletions to avoid echo loops.
-    if (Date.now() - lastSelfDelete > 1500 && prev) {
+    if (Date.now() - lastSelfDelete > 4000 && prev) {
       const missing = []
       prev.forEach((count, key) => {
         const nowCount = next.get(key) || 0
