@@ -69,6 +69,28 @@ md 解析 + 选行逻辑单独跑：`label → {tag:span, id:mv-temp, comment:�
 ### 用户决定
 「不同步，只保留单向抄送」⇒ `dshReview.elementContext.bindDshRemoval` 默认改为 **false**（代码留着，想试再开）。最终形态：`⌥⌘C` 批注 → dsh 一个文件方块（含 URL、尺寸、CSS 定位、祖先链、元素文本、outerHTML、21 项计算样式），不自动发送；页面图钉与 Copilot 附件保持原生行为，删除各自手动。
 
+## dsh-review 0.1.89–0.1.99 + dsh-review-vscode 0.1.70–0.1.104 (2026-10-23) — 找到图钉的真身，撤图钉打通；顺带清掉全部轮询
+
+### 图钉到底在哪（源码级 + 实测，推翻我此前两次结论）
+- 画图钉的是 `out/vs/platform/browserView/electron-browser/preload-browserView.js`（49KB，注入进被标注页面）：`div[data-vscode-pick-host]` + **`attachShadow({mode:"closed"})`**，里面有 `.comment-layer` / `.comment-pin`(+`.comment-pin-number`) / `.comment-preview-remove`。
+- 封闭 root ⇒ 页面 JS 和 `el.shadowRoot` 都看不到，CDP `Runtime.evaluate` 也看不到；但 **CDP 的 DOM 域能穿透**：`DOM.getFlattenedDocument(pierce:true)` 能列出 `.comment-pin`，`DOM.getBoxModel` 给坐标。
+- 每个图钉**自带批注文字**：`title="<批注>"`、`aria-label="Element comment N: <批注>"` ⇒ 数量和每条内容都是实测，不再按顺序猜。
+- 删除必须**真实输入**：`dispatchEvent(MouseEvent)` 会被忽略（我实测「clicked」但图钉还在）；`Input.dispatchMouseEvent` mouseMoved/Pressed/Released 打盒子中心才生效（自测：1 个图钉 → 点 `.comment-preview-remove` → 0 个 ✅）。
+
+### 这一轮真修掉的 bug（都有日志证据）
+1. `removeNativePinForFile` 曾被贴进投递闭包里 ⇒ 删除处理器调不到，`撤图钉` 一次都没执行（0.1.91 移出）。
+2. 0×0 隐藏元素 VS Code 不画图钉，但我们照样建方块 ⇒ 「数量对不上」；现在探测到 0×0 就跳过（0.1.91）。
+3. 客户端只登记「本轮插入」的方块 ⇒ 用户删老方块毫无反应；改成按结构登记全部：`button[data-ref-chip="file"][title="@路径"]`（0.1.92）。
+4. 判定「方块还在不在」时兜底到 `document.body` ⇒ 已发送消息里的同款方块让它永远「还在」，退格删除永远看不见（0.1.96 限定在 `[contenteditable]`/`[class*="_input"]`，实测 `uV2eYG_input`）。
+5. 输入框清空旧规则当成「发送不算删除」⇒ 你退格删干净后什么都不发生（0.1.97 反过来又误伤发送 ⇒ 0.1.99 用「文字是否出现在已发送消息里」区分发送与删除）。
+6. 同名批注按「包含即命中」删错图钉 ⇒ 改成完全相等 + 按图钉自带编号取第 N 个（0.1.93）；多行批注被 VS Code 压平换行导致「没找到对应图钉」⇒ 两边都折叠空白再比（0.1.104）。
+7. 一次批注冒出 8 条：Copilot 启动时把旧引用塞回输入框，被当成新 delta；先试「按文字防重」（元素标签会退化成 `@div`，不可靠）→ 最终改为启动 2.5 秒内清理一次输入框（0.1.97/0.1.98/0.1.100），并且**绝不在文档后开时清理**（那会吃掉用户刚写的批注 + 抢焦点）。
+8. **轮询回归**：把 2.5s 重扫改成 `Target.setDiscoverTargets` 事件后发现——页面**重载不产生 target 事件**，第一次断连就永久失联（`页面没连上`、`元素详情没拿到`）。补：socket `close` 即重扫 + 每次新建执行上下文重新注入探针 + 撤图钉时按需补扫（0.1.101/0.1.102）。
+9. 焦点被抢进 Copilot 的三个来源（编辑 Copilot 文档 / 关闭批注预览 / 启动清理），前两个补 200/700/1400ms 抢回，第三个限制在启动瞬间（0.1.94/0.1.103/0.1.100）。
+
+### 轮询清零（用户的硬要求）
+删除了：客户端 800ms 工作区轮询（改扩展主动推 `dshSetScope`）、扩展 2.5s CDP 目标重扫（改 target 事件 + socket close 重扫）、元素源 socket 5s 重连（改 close 事件）、方块判定 500ms 节流（80ms 防重入）。插件里只剩原有的 `dshBridgeHello` 握手 500ms，12 次后自动停。
+
 ## dsh-review 0.1.71 + dsh-review-vscode 0.1.54 (2026-10-23) — 命令面板清理：24 条英文测试命令 → 7 条中文 + 上下文/隐藏
 
 ### 用户诉求
