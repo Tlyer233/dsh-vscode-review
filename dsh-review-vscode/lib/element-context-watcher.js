@@ -429,14 +429,18 @@ function startElementContextWatcher(context, log) {
     if (!text) return
     const REF_RE = /@([^\s@`\n]{3,120}?)\s+([^\n@]{2,400})/g
     const found = []
-    const next = new Set()
+    const next = new Map() // key -> how many times it appears in this snapshot
     for (const m of text.matchAll(REF_RE)) {
       const label = m[1].trim()
       const comment = m[2].trim()
       if (!label || !comment) continue
+      // 0.1.51: count occurrences, do not dedupe by content. The user typed "测试"
+      // again and the composer still held two older "@span 测试" lines, so a
+      // set-membership test called the brand-new comment a duplicate (delta=0,
+      // nothing reached dsh). A new comment always raises the count by one.
       const key = label + '\u241f' + comment
-      next.add(key)
-      found.push({ key: key, label: label, comment: comment })
+      next.set(key, (next.get(key) || 0) + 1)
+      found.push({ key: key, label: label, comment: comment, nth: next.get(key) })
     }
     const id = String(input.uri)
     // 0.1.43/0.1.46: the composer keeps every reference from earlier sessions, so we
@@ -460,16 +464,20 @@ function startElementContextWatcher(context, log) {
       }
     } catch { /* noop */ }
     let delta = 0
-    for (const f of found) { if (!prev.has(f.key)) delta++ }
+    for (const f of found) { if (f.nth > (prev instanceof Map ? (prev.get(f.key) || 0) : 0)) delta++ }
     if (delta > MAX_DELTA) {
       inputBaseline.set(id, next)
       log.appendLine(TAG + ' · 一次出现 ' + delta + ' 条新引用（像是会话恢复），只更新基线不送 dsh')
       return
     }
     inputBaseline.set(id, next)
+    const handled = new Map() // deliver only the newly appeared copies of each key
     let fresh = 0
     for (const f of found) {
-      if (prev.has(f.key)) continue
+      const before = prev instanceof Map ? (prev.get(f.key) || 0) : 0
+      const done = handled.get(f.key) || 0
+      if (f.nth <= before + done) continue
+      handled.set(f.key, done + 1)
       fresh++
       const idm = /#([A-Za-z0-9_.:-]{1,80})/.exec(f.label)
       const payload = {
