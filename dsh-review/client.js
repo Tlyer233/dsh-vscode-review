@@ -1315,7 +1315,7 @@ window.__ModuleLoader__.load({
         function postState(extra) {
           // 0.1.82: only the scope-request message has ever reached the extension, so all
           // client-side events (tracked / dropped / request-received / removed) ride on it.
-          const msg = { type: "dshScopeRequest", build: "0.1.87", watching: Array.from(trackedRefs.keys()).slice(0, 3) };
+          const msg = { type: "dshScopeRequest", build: "0.1.88", watching: Array.from(trackedRefs.keys()).slice(0, 3) };
           try { Object.assign(msg, extra || {}); } catch (err) { /* noop */ }
           try { window.parent.postMessage(msg, "*"); } catch (err) { /* noop */ }
         }
@@ -1333,7 +1333,14 @@ window.__ModuleLoader__.load({
           all.forEach(function (r) {
             const path = String((r && (r.path || r.ref || r.label)) || '');
             const name = path.split('/').pop();
-            if (name && /\.md$/.test(name)) { trackedRefs.set(name, { path: path, el: null, since: Date.now() }); announceSent = false; }
+            if (name && /\.md$/.test(name)) {
+              // dsh renders the chip label with a middle ellipsis ("comment-20261023-13…-xd4m.md"),
+              // so neither exact equality nor a full-name contains-match finds it. The tail
+              // ("span-xd4m.md") survives truncation and is unique enough to identify a chip.
+              const tail = name.replace(/^comment-\d{8}-\d{6}-/, '') || name;
+              trackedRefs.set(name, { path: path, el: null, since: Date.now(), tail: tail });
+              announceSent = false;
+            }
           });
           // 0.1.81: remember the chip's own node. Text scanning the body was useless — the
           // file name also appears elsewhere in the page, so a deleted chip still looked
@@ -1346,7 +1353,7 @@ window.__ModuleLoader__.load({
               if (info.el && info.el.isConnected) return;
               for (let i = 0; i < nodes.length; i++) {
                 const el = nodes[i];
-                if (String(el.textContent || '').indexOf(nm) === -1) continue; // dsh truncates the name in the label
+                if (String(el.textContent || '').indexOf(info.tail || nm) === -1) continue;
                 const parent = el.parentElement;
                 if (parent && parent !== scope && String(parent.textContent || '').indexOf(nm) !== -1 && String(parent.textContent || '').length > String(el.textContent || '').length + 4) continue;
                 info.el = el;
@@ -1378,7 +1385,7 @@ window.__ModuleLoader__.load({
             if (info.el && text.indexOf(name) !== -1) {
               const nodes = composerScope().querySelectorAll('span,div,a,button');
               for (let i = 0; i < nodes.length; i++) {
-                if (String(nodes[i].textContent || '').indexOf(name) === -1) continue;
+                if (String(nodes[i].textContent || '').indexOf(info.tail || name) === -1) continue;
                 if (!info.el || String(nodes[i].textContent || '').length < String(info.el.textContent || '').length) info.el = nodes[i];
                 info.seen = true;
               }
@@ -1400,12 +1407,14 @@ window.__ModuleLoader__.load({
           // only safe way is to click the control inside the chip that matches the name.
           const scope = composerScope();
           if (!scope || !name) return false;
+          const tr = trackedRefs.get(name);
+          const needle = (tr && tr.tail) || name;
           const nodes = scope.querySelectorAll('span,div,a,button');
           for (let i = 0; i < nodes.length; i++) {
             const el = nodes[i];
-            if (String(el.textContent || '').indexOf(name) === -1) continue; // contains, not exact: dsh truncates the label
+            if (String(el.textContent || '').indexOf(needle) === -1) continue;
             const parent = el.parentElement;
-            if (parent && parent !== scope && String(parent.textContent || '').indexOf(name) !== -1 && String(parent.textContent || '').length > String(el.textContent || '').length + 4) continue;
+            if (parent && parent !== scope && String(parent.textContent || '').indexOf(needle) !== -1 && String(parent.textContent || '').length > String(el.textContent || '').length + 4) continue;
             let target = null;
             try { target = el.querySelector('button,[role="button"],svg,[class*="remove"],[class*="close"]'); } catch (err) { target = null; }
             if (!target && el.matches && el.matches('button,[role="button"]')) target = el;
@@ -1418,6 +1427,7 @@ window.__ModuleLoader__.load({
           return false;
         }
         try { window.parent.postMessage({ type: "dshClientBuild", version: "0.1.75" }, "*"); } catch (err) { /* noop */ }
+        window.__dshrTracked = function () { return Array.from(trackedRefs.keys()); };
         window.__dshrRemoveChip = function (nm) {
           const name = String(nm || '');
           const ok = removeTrackedChipByName(name);
@@ -1611,7 +1621,7 @@ window.__ModuleLoader__.load({
             setTimeout(compactNativeStatsLine, 800);
             applyZoom();
             // Scope is owned by apply()-level listener; ask again in case early posts were dropped.
-            try { window.parent.postMessage({ type: "dshScopeRequest", build: "0.1.87", watching: Array.from(trackedRefs.keys()).slice(0, 3) }, "*"); } catch (err) { /* noop */ }
+            try { window.parent.postMessage({ type: "dshScopeRequest", build: "0.1.88", watching: Array.from(trackedRefs.keys()).slice(0, 3) }, "*"); } catch (err) { /* noop */ }
             return;
           }
           if (msg.type === "dshChromeState") {
@@ -4109,13 +4119,13 @@ window.__ModuleLoader__.load({
             msg.removeChips.forEach(function (nm) {
               let ok = false;
               try { ok = !!(window.__dshrRemoveChip && window.__dshrRemoveChip(nm)); } catch (err) { ok = false; }
-              try { window.parent.postMessage({ type: "dshScopeRequest", build: "0.1.87", watching: [], report: "捎带删方块: " + nm + " -> " + (ok ? "已删" : "没找到方块节点") }, "*"); } catch (err) { /* noop */ }
+              try { window.parent.postMessage({ type: "dshScopeRequest", build: "0.1.88", watching: [], report: "捎带删方块: " + nm + " -> " + (ok ? "已删" : "没找到方块节点") }, "*"); } catch (err) { /* noop */ }
             });
           }
           setVscodeScope(msg.paths, msg.rawPaths);
         }
         window.addEventListener("message", onScopeFromHost);
-        try { window.parent.postMessage({ type: "dshScopeRequest", build: "0.1.87", watching: Array.from(trackedRefs.keys()).slice(0, 3) }, "*"); } catch (err) { /* noop */ }
+        try { window.parent.postMessage({ type: "dshScopeRequest", build: "0.1.88", watching: Array.from(trackedRefs.keys()).slice(0, 3) }, "*"); } catch (err) { /* noop */ }
         const timer = setInterval(checkWorkbenchScope, 800);
         return function () {
           clearInterval(timer);
