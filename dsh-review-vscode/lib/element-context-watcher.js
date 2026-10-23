@@ -396,12 +396,26 @@ function startElementContextWatcher(context, log) {
       const body = cm ? String(cm[1]).trim() : ''
       if (!body) { log.appendLine(TAG + ' · 撤图钉：md 里没有批注文字，跳过'); return false }
       const url = (um && um[1]) || bridge.browserPageUrl() || ''
-      let r = await bridge.removePin(url, body)
+      // which one is this, among the composer references carrying the same text? VS Code numbers
+      // its pins in the same order as the references, so that index is the pin to click.
+      let nth = 0
+      try {
+        const lm = /^#\s*元素批注\s*—\s*(.+)$/m.exec(md)
+        const myLabel = lm ? String(lm[1]).trim().split(/\s+/)[0] : ''
+        let seen = 0
+        for (const ref of lastRefs) {
+          if (String(ref.comment || '').trim() !== body) continue
+          if (myLabel && String(ref.label || '').split(/\s+/)[0] === myLabel) { nth = seen; break }
+          nth = seen
+          seen++
+        }
+      } catch (e) { /* keep nth = 0 */ }
+      let r = await bridge.removePin(url, body, nth)
       // 0.1.98: VS Code paints the pin a moment after the composer line exists, so a first
       // "no such pin" is not final — look once more shortly after (a single retry, not polling).
       if (r && !r.ok && /没找到对应图钉/.test(String(r.why || ''))) {
         await new Promise((res) => setTimeout(res, 800))
-        const r2 = await bridge.removePin(url, body)
+        const r2 = await bridge.removePin(url, body, nth)
         if (r2 && r2.ok) r = r2
         else if (r2) r = r2
       }

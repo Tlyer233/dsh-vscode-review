@@ -120,9 +120,9 @@ let pinRemover = null
 function setPinRemover(fn) {
   pinRemover = typeof fn === 'function' ? fn : null
 }
-async function removePin(url, body) {
+async function removePin(url, body, nth) {
   if (!pinRemover) return { ok: false, why: '探针未就绪' }
-  try { return await pinRemover(url, body) } catch (e) { return { ok: false, why: String((e && e.message) || e) } }
+  try { return await pinRemover(url, body, nth) } catch (e) { return { ok: false, why: String((e && e.message) || e) } }
 }
 
 function setDismissPrompt(fn) {

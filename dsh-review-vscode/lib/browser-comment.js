@@ -479,7 +479,7 @@ const pendingRaw = new Map() // 0.1.84: DOM-domain replies, resolved whole (not 
   // dispatch a real click: first on the pin (that opens its preview, which is where the
   // delete button lives), then on .comment-preview-remove. VS Code itself then drops the
   // pin, the chat attachment and the composer line — no VS Code file is touched.
-  async function removePinForBody(url, body) {
+  async function removePinForBody(url, body, nth) {
     const c = pickConn(url)
     if (!c || !c.ws || c.ws.readyState !== 1) return { ok: false, why: '页面没连上' }
     const classOf = (n) => {
@@ -528,15 +528,30 @@ const pendingRaw = new Map() // 0.1.84: DOM-domain replies, resolved whole (not 
     await cdpRequest(c, 'DOM.enable', {}, 1500)
     const nodes = await flatten()
     const want = String(body || '').trim()
-    let pin = null
-    let loose = null
+    const rank = (n) => {
+      const lm = /Element comment\s*(\d+)\s*:/.exec(String(attrOf(n, 'aria-label') || ''))
+      return lm ? Number(lm[1]) : 0
+    }
+    // 0.1.93: several annotations can carry the same text, and the pin only carries that text,
+    // so "first contains-match" used to delete the wrong pin (the user saw 没有对应). Match
+    // exactly, order by the number VS Code printed on the pin, and take the nth one.
+    const exact = []
+    const loose = []
     for (const n of nodes) {
       if (!/comment-pin(\s|$)/.test(classOf(n))) continue
       const text = String(attrOf(n, 'title') || attrOf(n, 'aria-label') || '').replace(/^Element comment\s*\d+:\s*/, '').trim()
-      if (want && text === want) { pin = n; break }
-      if (want && text && text.indexOf(want) !== -1 && !loose) loose = n
+      if (!text || !want) continue
+      if (text === want) exact.push(n)
+      else if (text.indexOf(want) !== -1) loose.push(n)
     }
-    if (!pin) pin = loose
+    exact.sort((a2, b2) => rank(a2) - rank(b2))
+    loose.sort((a2, b2) => rank(a2) - rank(b2))
+    const take = exact.length ? exact : loose
+    const want2 = Number(nth) > 0 ? Number(nth) : 0
+    const pin = take.length ? (take[want2] || take[0]) : null
+    if (pin && take.length > 1) {
+      log.appendLine(TAG + ' 同名批注 ' + take.length + ' 个（' + JSON.stringify(want).slice(0, 24) + '），按图钉编号取第 ' + (want2 + 1) + ' 个')
+    }
     if (!pin) return { ok: false, why: '没找到对应图钉（可能这个元素没有图钉，或文字已被改过）', body: want, total: nodes.filter((n) => /comment-pin(\s|$)/.test(classOf(n))).length }
     const opened = await clickNode(pin)
     await new Promise((r) => setTimeout(r, 700))
