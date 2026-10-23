@@ -435,15 +435,26 @@ function startElementContextWatcher(context, log) {
       found.push({ key: key, label: label, comment: comment })
     }
     const id = String(input.uri)
-    // 0.1.43: the composer keeps every reference from earlier sessions, so a plain
-    // "send everything I can see" scan re-exported the whole history (the user's 6 files
-    // in one Enter). Baseline the first snapshot and only deliver the delta.
+    // 0.1.43/0.1.46: the composer keeps every reference from earlier sessions, so we
+    // only deliver what is missing from the previous snapshot. The baseline is set once
+    // and never refreshed by a timer — the 0.1.44/45 timed seeds swallowed the user's
+    // live comment (log: 基线：8 条旧引用, dsh got 0). A change that brings in more than
+    // MAX_DELTA refs at once is the session restoring its history, not new comments.
+    const MAX_DELTA = 3
     const prev = inputBaseline.get(id)
-    inputBaseline.set(id, next)
     if (!prev) {
+      inputBaseline.set(id, next)
       log.appendLine(TAG + ' · chat 输入框基线：' + found.length + ' 条旧引用（不送 dsh）')
       return
     }
+    let delta = 0
+    for (const f of found) { if (!prev.has(f.key)) delta++ }
+    if (delta > MAX_DELTA) {
+      inputBaseline.set(id, next)
+      log.appendLine(TAG + ' · 一次出现 ' + delta + ' 条新引用（像是会话恢复），只更新基线不送 dsh')
+      return
+    }
+    inputBaseline.set(id, next)
     let fresh = 0
     for (const f of found) {
       if (prev.has(f.key)) continue
@@ -584,8 +595,6 @@ function startElementContextWatcher(context, log) {
   // opens, when it is still empty) — otherwise the first comment after a restart is
   // swallowed as part of the baseline.
   const seedBaseline = () => { try { scanNativeComments('', '') } catch { /* noop */ } }
-  setTimeout(seedBaseline, 1500)
-  setTimeout(seedBaseline, 8000)
   context.subscriptions.push(vscode.commands.registerCommand('dshReview.dumpDocs', () => {
     const docs = vscode.workspace.textDocuments
     log.appendLine(TAG + ' --- dump ' + docs.length + ' docs ---')

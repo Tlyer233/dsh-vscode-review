@@ -44,6 +44,17 @@
 - 版本说明:本修复与「元素批注」同日开发,原报 0.1.70/0.1.26 与批注功能撞号,rebase 后改号 0.1.71/0.1.28
 
 
+## dsh-review 0.1.71 + dsh-review-vscode 0.1.46 (2026-10-23) — 定时基线把用户刚批的那条吞了（dsh 收到 0）
+
+### 实测
+`doc-open scheme=chatSessionInput base=input-0 len=0` → `chat 输入框基线：8 条旧引用（不送 dsh）` → `chatInput change len=147`，dsh 0 个方块。
+0.1.44 加的两个 `setTimeout(seedBaseline, 1500 / 8000)` 会在用户已经批完之后才跑，把当时输入框里的内容（含刚批的那条）当基线登记 ⇒ 增量=0 ⇒ 什么都不送。
+
+### 改法
+- 基线**只立一次**（第一个快照），不再被定时器覆盖；`seedBaseline` 只在 composer 文档打开时调用（那时 len=0，是真·空基线）。
+- 一次变更里新增引用数 > 3 判定为「会话恢复历史」，只更新基线不送 dsh（`MAX_DELTA=3`，日志会写数量），避免一开 Copilot 就灌一串 chip。
+- 结果：正常一次 Enter = 1 条 delta = 1 个 chip；重启后第一条也不会被吞（composer 打开时基线是空的）。
+
 ## dsh-review 0.1.71 + dsh-review-vscode 0.1.45 (2026-10-23) — 原生批注只需输入框变更：不点 chip、不开文件、不碰标签
 
 ### 上一版剩下的唯一毛病
