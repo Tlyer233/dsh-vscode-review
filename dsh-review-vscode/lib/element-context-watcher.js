@@ -56,6 +56,16 @@ function startElementContextWatcher(context, log) {
   const stamp = () => new Date().toISOString()
   let seq = 0
 
+
+  // 0.1.61: declared up front. They used to sit below the first seedBaseline() call, so the
+  // seed hit a temporal-dead-zone ReferenceError, its try/catch swallowed it, and the
+  // scan logged nothing at all — which is why no [chip-watch] line ever appeared.
+  let lastScanLog = 0
+  let lastSelfDelete = 0
+  let lastCommentFile = ''
+  const deliveredFiles = new Map() // composer key -> [md paths]
+  let lastNoDocLog = 0
+
   // remove stale tmp file from a crashed previous run
   try {
     if (fs.existsSync(TMP_FILE)) {
@@ -793,11 +803,6 @@ function startElementContextWatcher(context, log) {
   // then (Copilot restored it), and the doc-open seed never fires for it — that race is
   // why the user's comment was swallowed as "基线：12 条旧引用".
   seedBaseline()
-  let lastScanLog = 0
-  let lastSelfDelete = 0
-  let lastCommentFile = ''
-  const deliveredFiles = new Map() // composer key -> [md paths]
-  let lastNoDocLog = 0
   context.subscriptions.push(vscode.commands.registerCommand('dshReview.dumpDocs', () => {
     const docs = vscode.workspace.textDocuments
     log.appendLine(TAG + ' --- dump ' + docs.length + ' docs ---')
