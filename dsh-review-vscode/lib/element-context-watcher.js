@@ -389,8 +389,15 @@ function startElementContextWatcher(context, log) {
   bridge.setReferenceDroppedHandler(async (payload) => {
     if (!cfg('bindDshRemoval', true)) return false
     const file = String((payload && payload.path) || '')
-    const ok = await dropCopilotLineForMd(file)
-    log.appendLine(TAG + ' · dsh 删方块 ' + file.split('/').pop() + ' -> ' + (ok ? '已删 Copilot 那行（页面图钉应随之消失）' : '没找到对应那行（可能已经删了或改过）'))
+    // 0.1.88: the native pin carries its own annotation text (aria-label / title), so clicking
+    // its delete button is the accurate route — VS Code then removes pin + chat attachment +
+    // composer line by itself. Editing the composer document is only the fallback for the case
+    // where no pin matched (a hidden element never gets a pin).
+    const pinOk = file && fs.existsSync(file) ? await removeNativePinForFile(file) : false
+    const ok = pinOk || (file ? await dropCopilotLineForMd(file) : false)
+    log.appendLine(TAG + ' · dsh 删方块 ' + file.split('/').pop() + ' -> ' + (pinOk
+      ? '已点掉图钉的删除按钮（原生图钉+附件+那行由 VS Code 自己清）'
+      : ok ? '已删 Copilot 那行（没匹配到图钉，走文档兜底）' : '没找到对应那行（可能已经删了或改过）'))
     return ok
   })
 
@@ -718,7 +725,26 @@ function startElementContextWatcher(context, log) {
         } else {
           log.appendLine(TAG + ' · 元素详情没拿到（探针没连上或元素已经变了）label=' + f.label)
         }
-        // 0.1.75: report the page's actual pin/overlay situation, so it is visible in the log
+        // 0.1.88: find the pin whose annotation matches this md's 批注 text and click its delete
+  // button over CDP. The md file we wrote carries both the text and the page URL.
+  async function removeNativePinForFile(file) {
+    try {
+      const md = fs.readFileSync(file, 'utf8')
+      const cm = /\n##\s*批注\s*\n+([\s\S]*?)(?:\n\n|```|$)/.exec(md)
+      const um = /^-\s*URL:\s*(\S+)/m.exec(md)
+      const body = cm ? String(cm[1]).trim() : ''
+      if (!body) { log.appendLine(TAG + ' · 撤图钉：md 里没有批注文字，跳过'); return false }
+      const url = (um && um[1]) || bridge.browserPageUrl() || ''
+      const r = await bridge.removePin(url, body)
+      log.appendLine(TAG + ' · 撤图钉：' + (r && r.ok ? '已点到删除按钮' : '没成：' + String((r && r.why) || '?')) + ' ｜ 批注=' + JSON.stringify(body).slice(0, 40))
+      return !!(r && r.ok)
+    } catch (e) {
+      log.appendLine(TAG + ' · 撤图钉失败: ' + String((e && e.message) || e))
+      return false
+    }
+  }
+
+  // 0.1.75: report the page's actual pin/overlay situation, so it is visible in the log
         // whether VS Code's pin is a DOM node we can reach at all.
         try {
           const st = await bridge.pageState(payload.url || '')
