@@ -19,6 +19,9 @@ function activate(context) {
   context.subscriptions.push(log)
   setLog((msg) => log.appendLine(String(msg)))
   log.appendLine('activate dsh-review-vscode')
+  // Interface-bound proxy serving the sidebar through a direct URL that
+  // `dshReview.setDshUrl` pinned (webviewUrl host is a real network IP).
+  let directProxy = null
 
   // Surface async pipeline failures (e.g. unhandled promise rejections) in this channel.
   try {
@@ -50,6 +53,30 @@ function activate(context) {
     context.subscriptions.push({ dispose: () => authProxy.close() })
   } catch (e) {
     log.appendLine('[auth-proxy] start failed: ' + String((e && e.message) || e))
+  }
+
+  // A direct URL pinned by `dshReview.setDshUrl` (host is a real interface IP,
+  // proxy on port+2) has to be re-served after every extension-host restart.
+  try {
+    const dconf = vscode.workspace.getConfiguration('dshReview')
+    const wv = String(dconf.get('webviewUrl') || '').trim()
+    const wu = String(dconf.get('webUrl') || '').trim()
+    if (wv && wu) {
+      const vw = new URL(wv)
+      const tw = new URL(wu)
+      const lh = vw.hostname
+      if (/^\d+\.\d+\.\d+\.\d+$/.test(lh) && lh !== '127.0.0.1' && Number(vw.port)) {
+        directProxy = startAuthProxy({
+          listenHost: lh, listenPort: Number(vw.port),
+          targetHost: tw.hostname, targetPort: Number(tw.port) || 80,
+          log: (msg) => log.appendLine('[direct-proxy] ' + msg),
+        })
+        context.subscriptions.push({ dispose: () => { try { directProxy && directProxy.close() } catch { /* noop */ } } })
+        setFrameBaseUrl('')
+      }
+    }
+  } catch (e) {
+    log.appendLine('[direct-proxy] start failed: ' + String((e && e.message) || e))
   }
 
   // Background dsh jobs → read-only VSCode terminals (SSE) + kill by id.
@@ -163,15 +190,18 @@ function activate(context) {
   context.subscriptions.push(vscode.commands.registerCommand('dshReview.restartDshProxy', () => restartDshProxy()))
   context.subscriptions.push(vscode.commands.registerCommand('dshReview.restartDshBili', () => restartDshBili()))
 
-  // Point the sidebar at an explicit dsh URL (host:port). Literal-IPv4 hosts
-  // get `dsh web --host <ip>`, so e.g. a Tailscale address is reachable from
-  // the Mac-side webview directly — no VS Code tunnel, no SSH forward.
+  // Point the sidebar at an explicit dsh URL (host:port). A literal non-loopback
+  // IPv4 (e.g. a Tailscale address) makes dsh bind that interface with
+  // `dsh web --host`, and a cookie-injecting proxy is bound to the same
+  // interface on port+2, so the Mac-side webview reaches everything directly —
+  // no VS Code tunnel, no SSH forward. A loopback host restores the standard
+  // auto-resolved proxy mode.
   context.subscriptions.push(vscode.commands.registerCommand('dshReview.setDshUrl', async () => {
     const conf = vscode.workspace.getConfiguration('dshReview')
     const current = String(conf.get('webviewUrl') || conf.get('webUrl') || '')
     let picked = await vscode.window.showInputBox({
       title: 'dsh: 侧栏 dsh 网址（输入后重启该地址的 dsh）',
-      prompt: '例 http://100.85.98.34:3080 或 100.85.98.34:3080；留空回车取消',
+      prompt: '例 100.85.98.34:3080（直连）或 3080（本机回环）；留空回车取消',
       value: current,
       ignoreFocusOut: true,
     })
@@ -183,14 +213,34 @@ function activate(context) {
       vscode.window.showErrorMessage('dshReview: 无效网址 ' + picked)
       return
     }
-    const target = u.protocol + '//' + u.host
+    const host = u.hostname
+    const port = Number(u.port) || 3080
+    const target = u.protocol + '//' + host + ':' + String(port)
+    const loopback = host === '127.0.0.1' || host === 'localhost' || host === '::1'
+    const isIp = /^\d+\.\d+\.\d+\.\d+$/.test(host)
+    if (directProxy) { try { directProxy.close() } catch { /* noop */ } directProxy = null }
     try {
       await conf.update('webUrl', target, vscode.ConfigurationTarget.Machine)
-      await conf.update('webviewUrl', target, vscode.ConfigurationTarget.Machine)
+      await conf.update('webviewUrl', (!loopback && isIp) ? 'http://' + host + ':' + String(port + 2) : '', vscode.ConfigurationTarget.Machine)
     } catch (e) {
       log.appendLine('setDshUrl settings update failed: ' + (e && e.message || e))
     }
     await restartDshAtUrl(target)
+    if (!loopback && isIp) {
+      try {
+        directProxy = startAuthProxy({
+          listenHost: host, listenPort: port + 2,
+          targetHost: host, targetPort: port,
+          log: (msg) => log.appendLine('[direct-proxy] ' + msg),
+        })
+        context.subscriptions.push({ dispose: () => { try { directProxy && directProxy.close() } catch { /* noop */ } } })
+        // The restart's reload happened before the proxy was up; redo it now.
+        reloadDshWebview(true)
+      } catch (e) {
+        log.appendLine('setDshUrl direct proxy failed: ' + (e && e.message || e))
+        vscode.window.showErrorMessage('dshReview: 直连代理启动失败 ' + String((e && e.message) || e))
+      }
+    }
   }))
 
   context.subscriptions.push(vscode.commands.registerCommand('dshReview.sendSelectionToDsh', () => sendEditorSelectionToDsh(log)))

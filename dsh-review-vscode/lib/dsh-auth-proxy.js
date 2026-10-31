@@ -89,6 +89,8 @@ function mintCookie(authority) {
 function startAuthProxy(opts) {
   const startPort = Number(opts.listenPort)
   const targetPort = Number(opts.targetPort)
+  const listenHost = String(opts.listenHost || '127.0.0.1')
+  const targetHost = String(opts.targetHost || '127.0.0.1')
   const log = typeof opts.log === 'function' ? opts.log : () => { }
   const maxPortAttempts = 12
   let authority = ''
@@ -99,8 +101,8 @@ function startAuthProxy(opts) {
   let rebindTimer = null
 
   // dsh validates the cookie against the authority it sees in the Host header
-  // (the TARGET port), not the proxy's own listen port. Mint for the target.
-  const targetAuthority = '127.0.0.1:' + String(targetPort)
+  // (the TARGET address), not the proxy's own listen port. Mint for the target.
+  const targetAuthority = targetHost + ':' + String(targetPort)
 
   const refresh = () => {
     cookie = mintCookie(targetAuthority)
@@ -122,10 +124,13 @@ function startAuthProxy(opts) {
     delete headers['if-modified-since']
     delete headers['if-unmodified-since']
     // dsh scopes the session cookie to the authority in the Host header; pin it
-    // to the target so the minted target-authority cookie validates.
+    // to the target so the minted target-authority cookie validates. The /api
+    // browser-trust fence then needs an Origin that matches that authority
+    // (loopback Origins pass on any port, non-loopback ones must match exactly).
     headers.host = targetAuthority
+    if (headers.origin) headers.origin = 'http://' + targetAuthority
     const up = http.request({
-      host: '127.0.0.1',
+      host: targetHost,
       port: targetPort,
       method: req.method,
       path: req.url,
@@ -150,7 +155,7 @@ function startAuthProxy(opts) {
     up.on('error', (e) => {
       log('upstream error: ' + String((e && e.message) || e))
       if (!res.headersSent) res.writeHead(502, { 'content-type': 'text/plain; charset=utf-8' })
-      res.end('dsh is not reachable on 127.0.0.1:' + String(targetPort) + '\n')
+      res.end('dsh is not reachable on ' + targetAuthority + '\n')
     })
     req.pipe(up)
   }
@@ -161,10 +166,11 @@ function startAuthProxy(opts) {
 
     // Upgrades (the Remote stream WebSocket) pass through with the same cookie.
     candidate.on('upgrade', (req, socket, head) => {
-      const up = net.connect(targetPort, '127.0.0.1', () => {
+      const up = net.connect(targetPort, targetHost, () => {
         const headers = Object.assign({}, req.headers)
         if (cookie) headers.cookie = cookie
         headers.host = targetAuthority
+        if (headers.origin) headers.origin = 'http://' + targetAuthority
         const lines = [String(req.method) + ' ' + String(req.url) + ' HTTP/1.1']
         for (const key of Object.keys(headers)) lines.push(key + ': ' + String(headers[key]))
         up.write(lines.join('\r\n') + '\r\n\r\n')
@@ -187,23 +193,24 @@ function startAuthProxy(opts) {
       log('listen failed: ' + String((e && e.message) || e))
     })
 
-    candidate.listen(port, '127.0.0.1', () => {
+    candidate.listen(port, listenHost, () => {
       if (closed) {
         try { candidate.close() } catch { /* noop */ }
         return
       }
       server = candidate
-      authority = '127.0.0.1:' + String(port)
+      authority = listenHost + ':' + String(port)
       url = 'http://' + authority
       try {
         refresh()
       } catch (e) {
         log('cannot mint session cookie: ' + String((e && e.message) || e))
       }
-      log('listening on ' + url + ' -> 127.0.0.1:' + String(targetPort))
+      log('listening on ' + url + ' -> ' + targetAuthority)
       // A user-pinned forward (SSH LocalForward) targets the preferred port,
-      // so when another window's proxy vacates it, climb back.
-      if (port !== startPort) scheduleRebind()
+      // so when another window's proxy vacates it, climb back. Only sane for
+      // the loopback default — an interface-bound direct proxy keeps its port.
+      if (port !== startPort && listenHost === '127.0.0.1') scheduleRebind()
     })
   }
   attempt(startPort, maxPortAttempts)
