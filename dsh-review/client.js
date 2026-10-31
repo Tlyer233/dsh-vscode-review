@@ -337,8 +337,51 @@ window.__ModuleLoader__.load({
      * (React immediately restores data-sidebar-collapsed).
      * @param {boolean} hidden
      */
+    // 0.2.0: zero ONLY the first grid track (sidebar) when hiding, preserving
+    // the third track (rightbar/workspace panel). We watch the frame's inline
+    // style and rewrite only track 1, surviving dsh React re-renders.
+    //
+    // Race-condition safe: we only WRITE when hidden (zero track 1). When
+    // visible, we never restore from a saved value — dsh owns the cols. This
+    // avoids stale restores that blank the sidebar when the workspace panel
+    // opens and dsh re-renders with new cols.
+    let railColsObserver = null;
+    let railOriginalCols = null;
+    function applyRailHiddenCols() {
+      try {
+        const hidden = document.documentElement.classList.contains("dsh-rail-hidden");
+        const frame = document.querySelector('[data-slot="root"] > *');
+        if (!frame) return;
+        const cols = frame.style.gridTemplateColumns;
+        if (!cols) return;
+        const parts = cols.split(/\s+/);
+        if (parts.length < 3) return;
+        if (hidden) {
+          if (parts[0] !== "0px") {
+            railOriginalCols = cols;
+            parts[0] = "0px";
+            frame.style.gridTemplateColumns = parts.join(" ");
+          }
+        } else if (railOriginalCols && cols !== railOriginalCols) {
+          // Restore once when un-hiding, then clear so dsh owns cols again.
+          frame.style.gridTemplateColumns = railOriginalCols;
+          railOriginalCols = null;
+        }
+      } catch (err) { /* noop */ }
+    }
+    function installRailColsObserver() {
+      if (railColsObserver) return;
+      const frame = document.querySelector('[data-slot="root"] > *');
+      if (!frame) return;
+      railColsObserver = new MutationObserver(applyRailHiddenCols);
+      railColsObserver.observe(frame, { attributes: true, attributeFilter: ["style"] });
+      applyRailHiddenCols();
+    }
+
     function setIframeRailHidden(hidden) {
       try { document.documentElement.classList.toggle("dsh-rail-hidden", !!hidden); } catch (err) { /* noop */ }
+      installRailColsObserver();
+      applyRailHiddenCols();
       persistIframeChrome({ railHidden: !!hidden });
       const btn = document.getElementById(IFRAME_RAIL_EXPAND_BTN_ID);
       if (!btn) return;
@@ -357,12 +400,74 @@ window.__ModuleLoader__.load({
       if (!bridgeActive && !vscodeIframeHint()) return;
       try { document.documentElement.classList.add("dsh-vscode-iframe"); } catch (err) { /* noop */ }
       const css = [
-        // Hide the 56px rail without fighting dsh React state.
-        // Newer dsh marks the frame grid data-sidebar-collapsed; older builds
-        // used data-details-collapsed, so match either.
-        "html.dsh-vscode-iframe.dsh-rail-hidden [data-sidebar-collapsed], html.dsh-vscode-iframe.dsh-rail-hidden [data-details-collapsed], html.dsh-vscode-iframe.dsh-rail-hidden [data-slot=\"root\"] > * {",
-        "  grid-template-columns: 0px minmax(0, 1fr) 0px !important;",
+        // Make chat content nearly fill the VS Code sidebar — keep a small
+        // breathing margin (8px) instead of the default 16px+8px+max-width.
+        "html.dsh-vscode-iframe .wSkVaW_body, html.dsh-vscode-iframe .wSkVaW_embeddedBody {",
+        "  --dsh-chat-content-width: 100%;",
+        "  --dsh-composer-card-max-width: 100%;",
+        "  --dsh-composer-side-clearance: 8px;",
+        "  --dsh-composer-dock-inset: 0px;",
         "}",
+        // Hero (empty state) root has padding: 0 24px — reduce to 8px.
+        "html.dsh-vscode-iframe .pXSMma_root {",
+        "  padding: 0 8px !important;",
+        "}",
+        // Composer dock root padding uses side-clearance var (now 8px).
+        "html.dsh-vscode-iframe .uV2eYG_root {",
+        "  padding: 0 8px 4px !important;",
+        "}",
+        // Compress the top header to one compact line in VS Code sidebar.
+        // Default: min-height 76px, padding 10px 28px 0 20px, tabs margin-top 10px.
+        // Hover-reveal: tabs overlay the title row, hidden until header hover.
+        "html.dsh-vscode-iframe .wSkVaW_header {",
+        "  min-height: 0 !important;",
+        "  padding: 4px 12px 4px 12px !important;",
+        "  position: relative;",
+        "}",
+        "html.dsh-vscode-iframe .wSkVaW_titleRow {",
+        "  min-height: 0 !important;",
+        "  padding-inline-start: 0 !important;",
+        "  transition: opacity 0.15s;",
+        "}",
+        // Tabs: hidden by default, overlay the title row on header hover.
+        // Same width as the title row for visual harmony.
+        "html.dsh-vscode-iframe .wSkVaW_tabs {",
+        "  grid-column: 2 !important;",
+        "  grid-row: 1 !important;",
+        "  margin-top: 0 !important;",
+        "  gap: 16px !important;",
+        "  padding-left: 0 !important;",
+        "  position: absolute;",
+        "  left: 12px;",
+        "  right: 12px;",
+        "  top: 50%;",
+        "  transform: translateY(-50%);",
+        "  visibility: hidden !important;",
+        "  opacity: 0 !important;",
+        "  pointer-events: none !important;",
+        "  transition: opacity 0.15s, visibility 0.15s;",
+        "  background: transparent;",
+        "  padding: 0 4px;",
+        "  border-radius: 4px;",
+        "  z-index: 10;",
+        "  height: fit-content;",
+        "  justify-content: flex-start;",
+        "}",
+        "html.dsh-vscode-iframe .wSkVaW_header:hover .wSkVaW_tabs {",
+        "  visibility: visible !important;",
+        "  opacity: 1 !important;",
+        "  pointer-events: auto !important;",
+        "}",
+        "html.dsh-vscode-iframe .wSkVaW_header:hover .wSkVaW_titleRow {",
+        "  opacity: 0 !important;",
+        "}",
+        "html.dsh-vscode-iframe .wSkVaW_tab {",
+        "  padding: 2px 4px 2px !important;",
+        "  font-size: 12px !important;",
+        "  line-height: 18px !important;",
+        "}",
+        // 0.2.0: sidebar track zeroing is done in JS (applyRailHiddenCols)
+        // to preserve the rightbar/workspace track. No CSS grid override here.
         // Right dock: RTL flips the first (sidebar) track to the right edge.
         // dsh drops data-sidebar-collapsed once the sidebar expands, so the
         // frame is also hooked through its stable root slot — otherwise the
@@ -444,10 +549,10 @@ window.__ModuleLoader__.load({
         // the rail sits on the left. children[0] of the frame grid is the
         // sidebar track in both dockings.
         const railEdgeRight = html.classList.contains("dsh-rail-right");
-        // Summon zone: only the rail's own edge, 14px.
+        // Summon zone: only the rail's own edge, 3px.
         const nearRailEdge = railEdgeRight
-          ? event.clientX >= w - 14
-          : event.clientX <= 14;
+          ? event.clientX >= w - 3
+          : event.clientX <= 3;
         if (nearRailEdge) {
           if (isHidden()) postScopeMessage("dshScopeDiag", { action: "ah-show edge" });
           show();
@@ -460,9 +565,11 @@ window.__ModuleLoader__.load({
             hideTimer = null;
             postScopeMessage("dshScopeDiag", { action: "ah-fire-hide x=" + Math.round(event.clientX) });
             if (!isHidden()) setIframeRailHidden(true);
-          }, 350);
+          }, 150);
         }
       }, { passive: true });
+
+      // (rightbar narrow hint moved to apply() level — see there)
     }
 
     const STATS_COMPACT_STYLE_ID = "dsh-review-compact-statsline";
@@ -567,13 +674,13 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * @returns {{ enabled: boolean, fileSend: string, snippetSend: string, sidebarSide: string, jobsTerminal: boolean, scopeFilter: boolean, autoWorkspace: boolean, openFilesInVscode: boolean }}
+     * @returns {{ enabled: boolean, fileSend: string, snippetSend: string, sidebarSide: string, jobsTerminal: boolean, scopeFilter: boolean, autoWorkspace: boolean, openFilesInVscode: boolean, claudeAdapt: boolean }}
      * @description Live 设置 → 代码审查 values; defaults if the scope is not ready.
      */
     function getReviewSettings() {
       // Default to pointer: matches the user's persisted yaml choice; fence
       // is only used when the live scope explicitly says fence.
-      const d = { enabled: true, fileSend: "path", snippetSend: "pointer", sidebarSide: "left", jobsTerminal: false, scopeFilter: true, autoWorkspace: true, openFilesInVscode: true };
+      const d = { enabled: true, fileSend: "path", snippetSend: "pointer", sidebarSide: "left", jobsTerminal: false, scopeFilter: true, autoWorkspace: true, openFilesInVscode: true, claudeAdapt: true };
       if (!reviewSettingsScope || typeof reviewSettingsScope.getSnapshot !== "function") return d;
       const snap = reviewSettingsScope.getSnapshot();
       const val = snap && snap.value;
@@ -591,6 +698,7 @@ window.__ModuleLoader__.load({
         scopeFilter: v.scopeFilter !== false,
         autoWorkspace: v.autoWorkspace !== false,
         openFilesInVscode: v.openFilesInVscode !== false,
+        claudeAdapt: v.claudeAdapt !== false,
       };
     }
 
@@ -2578,6 +2686,17 @@ window.__ModuleLoader__.load({
         return normalizeScopePath(e.workbench) === normalizeScopePath(workbench);
       });
 
+      // Claude-adapt palette: warm-black surface, terracotta accent, ivory text.
+      const claude = getReviewSettings().claudeAdapt;
+      const dockBg = claude ? "var(--dsw-alias-bg-layer-2, rgba(20,20,19,0.85))" : "var(--dsw-specific-tip, var(--dsh-color-surface, transparent))";
+      const dockBorder = claude ? "1px solid rgba(217,119,87,0.25)" : "1px solid var(--dsw-alias-border-l1, #80808059)";
+      const dockTextColor = claude ? "var(--dsw-alias-label-primary, #faf9f5)" : "var(--dsh-color-text, inherit)";
+      const acceptBg = claude ? "#d97757" : "var(--dsh-color-success, #3fb950)";
+      const rejectBg = claude ? "#b53333" : "var(--dsh-color-danger, #f85149)";
+      const fileLinkColor = claude ? "#d97757" : "var(--dsh-color-accent, #50a0ff)";
+      const createColor = claude ? "#55805e" : "var(--dsh-color-success, #3fb950)";
+      const deleteColor = claude ? "#cf5b5b" : "var(--dsh-color-danger, #f85149)";
+
       return h("div", {
         style: {
           margin: "0 auto 4px",
@@ -2587,8 +2706,8 @@ window.__ModuleLoader__.load({
           width: "calc(100% - var(--dsh-composer-side-clearance, 0px) * 2 - var(--dsh-composer-dock-inset, 0px) * 4)",
           maxWidth: "calc(var(--dsh-composer-card-max-width, 800px) - var(--dsh-composer-dock-inset, 0px) * 4)",
           borderRadius: "12px",
-          border: "1px solid var(--dsw-alias-border-l1, #80808059)",
-          background: "var(--dsw-specific-tip, var(--dsh-color-surface, transparent))",
+          border: dockBorder,
+          background: dockBg,
           fontSize: "13px",
           fontFamily: "var(--vscode-font-family, inherit)",
           lineHeight: "20px",
@@ -2599,8 +2718,8 @@ window.__ModuleLoader__.load({
           style: {
             display: "flex", alignItems: "center", gap: "8px",
             padding: "6px 10px", cursor: "pointer", userSelect: "none",
-            color: "var(--dsh-color-text, inherit)",
-            borderBottom: collapsed || live.length === 0 ? "none" : "1px solid var(--dsh-color-border, #80808030)",
+            color: dockTextColor,
+            borderBottom: collapsed || live.length === 0 ? "none" : "1px solid " + (claude ? "rgba(217,119,87,0.2)" : "var(--dsh-color-border, #80808030)"),
           }
         },
           h("span", { style: { fontSize: "11px", opacity: 0.6 } }, collapsed ? "\u25B6" : "\u25BC"),
@@ -2630,9 +2749,7 @@ window.__ModuleLoader__.load({
                 cursor: disabled ? "default" : "pointer",
                 userSelect: "none",
                 color: "#ffffff",
-                background: action === "accept"
-                  ? "var(--dsh-color-success, #3fb950)"
-                  : "var(--dsh-color-danger, #f85149)",
+                background: action === "accept" ? acceptBg : rejectBg,
                 opacity: disabled ? 0.35 : 1,
                 pointerEvents: disabled ? "none" : "auto",
               }
@@ -2653,14 +2770,12 @@ window.__ModuleLoader__.load({
             const isDelete = op === "delete";
             const isCreate = op === "create";
             const iconColor = isDelete
-              ? "var(--dsh-color-danger, #f85149)"
+              ? deleteColor
               : (isCreate
-                ? "var(--dsh-color-success, #3fb950)"
-                : "var(--dsh-color-accent, #50a0ff)");
+                ? createColor
+                : fileLinkColor);
             const nameDecor = isDelete ? "line-through" : "none";
-            const nameColor = isDelete
-              ? "var(--dsh-color-danger, #f85149)"
-              : "var(--dsh-color-accent, #50a0ff)";
+            const nameColor = isDelete ? deleteColor : fileLinkColor;
             return h("div", {
               key: entry.id || filePath,
               style: {
@@ -2864,6 +2979,7 @@ window.__ModuleLoader__.load({
           const [draftScopeFilter, setDraftScopeFilter] = useState(null);
           const [draftAutoWorkspace, setDraftAutoWorkspace] = useState(null);
           const [draftOpenFilesVs, setDraftOpenFilesVs] = useState(null);
+          const [draftClaudeAdapt, setDraftClaudeAdapt] = useState(null);
           const [saving, setSaving] = useState(false);
           const [failed, setFailed] = useState(false);
           const live = getReviewSettings();
@@ -2875,6 +2991,7 @@ window.__ModuleLoader__.load({
           const liveScopeFilter = live.scopeFilter;
           const liveAutoWorkspace = live.autoWorkspace;
           const liveOpenFilesVs = live.openFilesInVscode;
+          const liveClaudeAdapt = live.claudeAdapt;
           const shownEnabled = draftEnabled == null ? liveEnabled : draftEnabled;
           const shownFileSend = draftFileSend == null ? liveFileSend : draftFileSend;
           const shownSnippetSend = draftSnippetSend == null ? liveSnippetSend : draftSnippetSend;
@@ -2883,6 +3000,7 @@ window.__ModuleLoader__.load({
           const shownScopeFilter = draftScopeFilter == null ? liveScopeFilter : draftScopeFilter;
           const shownAutoWorkspace = draftAutoWorkspace == null ? liveAutoWorkspace : draftAutoWorkspace;
           const shownOpenFilesVs = draftOpenFilesVs == null ? liveOpenFilesVs : draftOpenFilesVs;
+          const shownClaudeAdapt = draftClaudeAdapt == null ? liveClaudeAdapt : draftClaudeAdapt;
           const dirty = shownEnabled !== liveEnabled
             || shownFileSend !== liveFileSend
             || shownSnippetSend !== liveSnippetSend
@@ -2890,7 +3008,8 @@ window.__ModuleLoader__.load({
             || shownJobsTerminal !== liveJobsTerminal
             || shownScopeFilter !== liveScopeFilter
             || shownAutoWorkspace !== liveAutoWorkspace
-            || shownOpenFilesVs !== liveOpenFilesVs;
+            || shownOpenFilesVs !== liveOpenFilesVs
+            || shownClaudeAdapt !== liveClaudeAdapt;
           const available = snap && snap.status === "ready";
           const writable = !!(snap && snap.writable);
 
@@ -2903,8 +3022,9 @@ window.__ModuleLoader__.load({
             setDraftScopeFilter(null);
             setDraftAutoWorkspace(null);
             setDraftOpenFilesVs(null);
+            setDraftClaudeAdapt(null);
             setFailed(false);
-          }, [liveEnabled, liveFileSend, liveSnippetSend, liveSidebarSide, liveJobsTerminal, liveScopeFilter, liveAutoWorkspace, liveOpenFilesVs]);
+          }, [liveEnabled, liveFileSend, liveSnippetSend, liveSidebarSide, liveJobsTerminal, liveScopeFilter, liveAutoWorkspace, liveOpenFilesVs, liveClaudeAdapt]);
 
           if (!available) return null;
 
@@ -2917,6 +3037,7 @@ window.__ModuleLoader__.load({
             setDraftScopeFilter(null);
             setDraftAutoWorkspace(null);
             setDraftOpenFilesVs(null);
+            setDraftClaudeAdapt(null);
             setFailed(false);
           }
 
@@ -2950,6 +3071,9 @@ window.__ModuleLoader__.load({
             }
             if (shownOpenFilesVs !== liveOpenFilesVs) {
               chain = chain.then(function () { return reviewScope.set("openFilesInVscode", shownOpenFilesVs); });
+            }
+            if (shownClaudeAdapt !== liveClaudeAdapt) {
+              chain = chain.then(function () { return reviewScope.set("claudeAdapt", shownClaudeAdapt); });
             }
             chain.then(
               function () { setSaving(false); discardDraft(); applyRailSideFromSettings(); },
@@ -3107,6 +3231,22 @@ window.__ModuleLoader__.load({
                   h("p", { className: "dshr-hint" }, "点击对话里的文件链接 / 产物卡片 / 行内文件提及时,在 VS Code 编辑器打开该文件,而不是 dsh 内置预览(仅 VS Code 侧栏内生效;关闭后恢复 dsh 原生预览)。默认开。"),
                 ),
               ),
+              h("div", { className: "dshr-field" },
+                h("input", {
+                  id: "dshr-claude-adapt",
+                  type: "checkbox",
+                  checked: shownClaudeAdapt,
+                  disabled: !writable || saving,
+                  onChange: function (e) {
+                    setDraftClaudeAdapt(!!e.target.checked);
+                    setFailed(false);
+                  },
+                }),
+                h("div", null,
+                  h("label", { htmlFor: "dshr-claude-adapt" }, "适配 Claude 界面"),
+                  h("p", { className: "dshr-hint" }, "开启后 Review Changes 待审栏使用 Claude 主题配色（暖黑底、陶橙点缀），与 dsh-claude-style / dsh-anthropic-fonts 协调。关闭恢复默认配色。默认开。"),
+                ),
+              ),
               h("div", { className: "dshr-footer" },
                 failed ? h("p", { className: "dshr-failed", role: "status" }, "保存失败") : null,
                 h("button", {
@@ -3159,6 +3299,36 @@ window.__ModuleLoader__.load({
       installIframeSidebarPeek();
       installIframeRailAutoHide();
       installReviewSettingsCard(ctx);
+      // 0.2.0: narrow-sidebar hint for the RIGHT sidebar (workspace files).
+      // dsh's computeColumns returns rightbar=0 when available width < 300px,
+      // so the expand button silently does nothing in a narrow VS Code iframe.
+      // Capture-phase listener so it fires even if dsh stops propagation.
+      let rightbarToastCooldown = false;
+      document.addEventListener("click", function (event) {
+        try {
+          const target = event.target;
+          if (!target || !target.closest) return;
+          const btn = target.closest('[data-sidebar-right-expand]');
+          if (!btn) return;
+          // 0.2.0: let dsh handle the sidebar collapse naturally when the
+          // rightbar opens. Auto-hide will hide the rail after mouse leaves.
+          // Only re-apply hidden if it was already hidden (dsh may expand it).
+          const wasHidden = document.documentElement.classList.contains("dsh-rail-hidden");
+          if (wasHidden) {
+            setTimeout(function () { setIframeRailHidden(true); }, 50);
+            setTimeout(function () { setIframeRailHidden(true); }, 300);
+          }
+          setTimeout(function () {
+            const rightbarCol = document.querySelector('[data-rightbar-col]');
+            const w = rightbarCol ? rightbarCol.getBoundingClientRect().width : 0;
+            if (w < 50 && !rightbarToastCooldown) {
+              rightbarToastCooldown = true;
+              showFloatingToast("侧栏太窄，无法打开工作区面板，请拉宽 VS Code 侧栏", false);
+              setTimeout(function () { rightbarToastCooldown = false; }, 3000);
+            }
+          }, 250);
+        } catch (err) { /* noop */ }
+      }, true);
       // Reverse workbench watchdog:
       // 1) VS Code has no folder open → force dsh home (no session) forever.
       // 2) Matching whitelist workspace → open the latest real session once
