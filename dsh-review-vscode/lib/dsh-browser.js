@@ -13,7 +13,8 @@ const fs = require('node:fs')
 const path = require('node:path')
 const os = require('node:os')
 const bridge = require('./element-bridge')
-const electron = require('electron')
+let electron = null
+try { electron = require('electron') } catch (e) { /* not available in remote extension host */ }
 const { execFile, execFileSync } = require('node:child_process')
 const crypto = require('node:crypto')
 
@@ -334,6 +335,25 @@ function configuredWebUrl() {
 }
 
 /**
+ * Resolve the dsh web URL through VS Code's port forwarding so the webview
+ * (which renders on the local machine) reaches the REMOTE dsh web server,
+ * not a local one. In local mode this is a no-op.
+ * The resolved URL is cached so reloads don't re-resolve.
+ */
+let remoteResolvedUrl = ''
+async function resolvedWebUrl() {
+  if (remoteResolvedUrl) return remoteResolvedUrl
+  const raw = configuredWebUrl()
+  try {
+    const ext = await vscode.env.asExternalUri(vscode.Uri.parse(raw))
+    remoteResolvedUrl = ext.toString(true)
+    return remoteResolvedUrl
+  } catch (e) {
+    return raw
+  }
+}
+
+/**
  * @typedef {{ type: string, name: string, data: string, bytes: number }} ClipboardImagePayload
  */
 
@@ -525,7 +545,7 @@ function dshWebviewHtml(url, opts) {
   return '' +
     '<!DOCTYPE html>' +
     '<html><head><meta charset="UTF-8">' +
-    '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; frame-src ' + safe + ' about:blank; style-src \'unsafe-inline\'; script-src \'unsafe-inline\';">' +
+    '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; frame-src ' + safe + ' http: https: about:blank; style-src \'unsafe-inline\'; script-src \'unsafe-inline\';">' +
     '<style>' +
     'html, body { width:100%; height:100%; margin:0; padding:0; overflow:hidden; background:var(--vscode-sideBar-background,#1e1e1e); color:var(--vscode-foreground,#ccc); font:13px/1.45 var(--vscode-font-family,system-ui,sans-serif); }' +
     'body { position:relative; display:flex; flex-direction:column; }' +
@@ -812,7 +832,7 @@ function reloadDshWebview(force, opts) {
   void force
   const view = state.dshView
   if (!view) return false
-  const url = configuredWebUrl()
+  const url = remoteResolvedUrl || configuredWebUrl()
   view.webview.html = dshWebviewHtml(url, opts)
   state.log('reload sidebar html ' + url)
   return true
@@ -1132,8 +1152,8 @@ function setupDshBrowser(context) {
   }))
 
   context.subscriptions.push(vscode.window.registerWebviewViewProvider('dshReview.dshWebview', {
-    resolveWebviewView(view) {
-      const url = configuredWebUrl()
+    async resolveWebviewView(view) {
+      const url = await resolvedWebUrl()
       view.webview.options = {
         enableScripts: true,
         enableCommandUris: ['dshReview.reloadSidebar'],
