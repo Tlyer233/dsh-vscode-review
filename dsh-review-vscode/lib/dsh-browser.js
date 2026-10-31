@@ -339,10 +339,21 @@ function configuredWebUrl() {
  * Resolve the dsh web URL through VS Code's port forwarding so the webview
  * (which renders on the local machine) reaches the REMOTE dsh web server,
  * not a local one. In local mode this is a no-op.
+ * `dshReview.webviewUrl` overrides the resolution entirely — set it to a
+ * port the user forwards themselves (e.g. an SSH LocalForward into the
+ * remote auth proxy), which is sturdier than VS Code's managed tunnels.
  * The resolved URL is cached so reloads don't re-resolve.
  */
 let remoteResolvedUrl = ''
 async function resolvedWebUrl() {
+  const override = String(cfg().get('webviewUrl') || '').trim()
+  if (override) {
+    if (remoteResolvedUrl !== override) {
+      remoteResolvedUrl = override
+      state.log('sidebar url via webviewUrl override ' + override)
+    }
+    return override
+  }
   if (remoteResolvedUrl) return remoteResolvedUrl
   const raw = configuredWebUrl()
   try {

@@ -96,6 +96,7 @@ function startAuthProxy(opts) {
   let cookie = ''
   let server = null
   let closed = false
+  let rebindTimer = null
 
   // dsh validates the cookie against the authority it sees in the Host header
   // (the TARGET port), not the proxy's own listen port. Mint for the target.
@@ -200,15 +201,47 @@ function startAuthProxy(opts) {
         log('cannot mint session cookie: ' + String((e && e.message) || e))
       }
       log('listening on ' + url + ' -> 127.0.0.1:' + String(targetPort))
+      // A user-pinned forward (SSH LocalForward) targets the preferred port,
+      // so when another window's proxy vacates it, climb back.
+      if (port !== startPort) scheduleRebind()
     })
   }
   attempt(startPort, maxPortAttempts)
+
+  /** While parked on a fallback port, periodically try to take back `startPort`. */
+  const scheduleRebind = () => {
+    if (rebindTimer || closed) return
+    rebindTimer = setInterval(() => {
+      if (closed) return
+      const probe = http.createServer()
+      probe.once('error', () => { try { probe.close() } catch { /* noop */ } })
+      probe.listen(startPort, '127.0.0.1', () => {
+        if (closed) {
+          try { probe.close() } catch { /* noop */ }
+          return
+        }
+        const old = server
+        server = probe
+        authority = '127.0.0.1:' + String(startPort)
+        url = 'http://' + authority
+        try { refresh() } catch (e) {
+          log('cannot mint session cookie on rebind: ' + String((e && e.message) || e))
+        }
+        log('listening on ' + url + ' -> 127.0.0.1:' + String(targetPort))
+        clearInterval(rebindTimer)
+        rebindTimer = null
+        try { if (old) old.close() } catch { /* noop */ }
+      })
+    }, 10000)
+    if (typeof rebindTimer.unref === 'function') rebindTimer.unref()
+  }
 
   return {
     get url() { return url },
     refresh,
     close: () => {
       closed = true
+      if (rebindTimer) { clearInterval(rebindTimer); rebindTimer = null }
       try { if (server) server.close() } catch { /* noop */ }
     },
   }

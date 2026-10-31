@@ -186,6 +186,11 @@
           "default": 3081,
           "markdownDescription": "Loopback port of the sidebar auth proxy. `dsh web` requires a browser session cookie the sidebar iframe cannot carry, so the sidebar loads `http://127.0.0.1:<this port>` and the extension injects the cookie while forwarding to `dshReview.webUrl`."
         },
+        "dshReview.webviewUrl": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Exact URL the sidebar iframe loads, bypassing VS Code's automatic port forwarding. For remote SSH: forward the remote auth proxy port yourself (e.g. `LocalForward 13081 127.0.0.1:3081` in `~/.ssh/config`) and set this machine setting to `http://127.0.0.1:13081`. Leave empty to auto-resolve."
+        },
         "dshReview.proxyPort": {
           "type": "number",
           "default": 7897,
