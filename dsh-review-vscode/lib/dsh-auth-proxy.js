@@ -97,10 +97,13 @@ function startAuthProxy(opts) {
   let server = null
   let closed = false
 
+  // dsh validates the cookie against the authority it sees in the Host header
+  // (the TARGET port), not the proxy's own listen port. Mint for the target.
+  const targetAuthority = '127.0.0.1:' + String(targetPort)
+
   const refresh = () => {
-    if (!authority) throw new Error('proxy is not listening yet')
-    cookie = mintCookie(authority)
-    log('minted session cookie for ' + authority)
+    cookie = mintCookie(targetAuthority)
+    log('minted session cookie for ' + targetAuthority)
   }
 
   /**
@@ -117,6 +120,9 @@ function startAuthProxy(opts) {
     delete headers['if-none-match']
     delete headers['if-modified-since']
     delete headers['if-unmodified-since']
+    // dsh scopes the session cookie to the authority in the Host header; pin it
+    // to the target so the minted target-authority cookie validates.
+    headers.host = targetAuthority
     const up = http.request({
       host: '127.0.0.1',
       port: targetPort,
