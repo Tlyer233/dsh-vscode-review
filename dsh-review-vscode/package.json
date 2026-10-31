@@ -109,6 +109,11 @@
         "title": "重启 dsh（bili 环境）"
       },
       {
+        "command": "dshReview.setDshUrl",
+        "category": "dsh",
+        "title": "指定侧栏 dsh 网址并重启（host:port 直连）"
+      },
+      {
         "command": "dshReview.browserComment.selftest",
         "category": "dsh",
         "title": "元素批注：探针自检（排障）"

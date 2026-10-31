@@ -687,10 +687,60 @@ async function stopDsh() {
   showDshOfflineOverlay()
 }
 
+/**
+ * Restart dsh bound to an explicit URL the user typed (e.g. a Tailscale
+ * address like http://100.85.98.34:3080). When the host is a literal IPv4,
+ * `dsh web --host` binds it to that interface so a Mac-side webview can reach
+ * the remote server directly, without VS Code tunnels or SSH forwards.
+ * @param {string} rawUrl absolute http(s) URL with host[:port]
+ */
+async function restartDshAtUrl(rawUrl) {
+  let u
+  try {
+    u = new URL(rawUrl)
+  } catch {
+    vscode.window.showErrorMessage('dshReview: invalid URL ' + rawUrl)
+    return
+  }
+  const host = u.hostname
+  const port = Number(u.port) || (u.protocol === 'https:' ? 443 : 80)
+  const token = ++restartToken
+  const stillCurrent = () => token === restartToken
+
+  showDshRestartingOverlay()
+  const killed = await stopDshProcess(port)
+  await waitUntil(async () => !(await portHasProcess(port)), 4000, 100, stillCurrent)
+  if (!stillCurrent()) return
+
+  // Base launch command with any previous --host/--port stripped, ours appended.
+  let command = dshCommand()
+    .replace(/\s--host\s+\S+/g, '')
+    .replace(/\s--port\s+\S+/g, '')
+    .trim()
+  if (/^\d+\.\d+\.\d+\.\d+$/.test(host)) command += ' --host ' + host
+  command += ' --port ' + String(port)
+  startDshProcessWith(command)
+
+  const up = await waitUntil(() => httpIsUp(rawUrl), 25000, 250, stillCurrent)
+  if (!stillCurrent()) return
+  if (up) {
+    await new Promise((resolve) => setTimeout(resolve, 150))
+    if (!stillCurrent()) return
+    reloadDshWebview(true)
+  } else {
+    showDshOfflineOverlay()
+  }
+  const bits = ['dsh restarted at ' + rawUrl]
+  if (killed > 0) bits.push('killed ' + killed + ' old process')
+  if (!up) bits.push('server did not come up on ' + rawUrl)
+  vscode.window.showInformationMessage(bits.join(' — '))
+}
+
 module.exports = {
   restartDsh,
   restartDshProxy,
   restartDshBili,
+  restartDshAtUrl,
   stopDsh,
   dshPort,
   dshCommand,

@@ -7,7 +7,7 @@ const { startPendingSync } = require('./lib/pending-sync.js')
 const {
   setLog, setupDshBrowser, sendRefsToDsh, state: dshState, setFrameBaseUrl, reloadDshWebview,
 } = require('./lib/dsh-browser.js')
-const { restartDsh, restartDshProxy, restartDshBili, stopDsh, dshPort } = require('./lib/dsh-process.js')
+const { restartDsh, restartDshProxy, restartDshBili, restartDshAtUrl, stopDsh, dshPort } = require('./lib/dsh-process.js')
 const { startAuthProxy } = require('./lib/dsh-auth-proxy.js')
 const { connectDshJobs } = require('./lib/dsh-jobs.js')
 const { startElementContextWatcher } = require('./lib/element-context-watcher.js')
@@ -162,6 +162,36 @@ function activate(context) {
   context.subscriptions.push(vscode.commands.registerCommand('dshReview.stopDsh', () => stopDsh()))
   context.subscriptions.push(vscode.commands.registerCommand('dshReview.restartDshProxy', () => restartDshProxy()))
   context.subscriptions.push(vscode.commands.registerCommand('dshReview.restartDshBili', () => restartDshBili()))
+
+  // Point the sidebar at an explicit dsh URL (host:port). Literal-IPv4 hosts
+  // get `dsh web --host <ip>`, so e.g. a Tailscale address is reachable from
+  // the Mac-side webview directly — no VS Code tunnel, no SSH forward.
+  context.subscriptions.push(vscode.commands.registerCommand('dshReview.setDshUrl', async () => {
+    const conf = vscode.workspace.getConfiguration('dshReview')
+    const current = String(conf.get('webviewUrl') || conf.get('webUrl') || '')
+    let picked = await vscode.window.showInputBox({
+      title: 'dsh: 侧栏 dsh 网址（输入后重启该地址的 dsh）',
+      prompt: '例 http://100.85.98.34:3080 或 100.85.98.34:3080；留空回车取消',
+      value: current,
+      ignoreFocusOut: true,
+    })
+    picked = String(picked || '').trim()
+    if (!picked) return
+    if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(picked)) picked = 'http://' + picked
+    let u
+    try { u = new URL(picked) } catch {
+      vscode.window.showErrorMessage('dshReview: 无效网址 ' + picked)
+      return
+    }
+    const target = u.protocol + '//' + u.host
+    try {
+      await conf.update('webUrl', target, vscode.ConfigurationTarget.Machine)
+      await conf.update('webviewUrl', target, vscode.ConfigurationTarget.Machine)
+    } catch (e) {
+      log.appendLine('setDshUrl settings update failed: ' + (e && e.message || e))
+    }
+    await restartDshAtUrl(target)
+  }))
 
   context.subscriptions.push(vscode.commands.registerCommand('dshReview.sendSelectionToDsh', () => sendEditorSelectionToDsh(log)))
   context.subscriptions.push(vscode.commands.registerCommand('dshReview.sendTerminalSelectionToDsh', () => sendTerminalSelectionToDsh(log)))
