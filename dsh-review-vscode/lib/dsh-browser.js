@@ -328,6 +328,7 @@ let frameBaseUrl = ''
  */
 function setFrameBaseUrl(url) {
   frameBaseUrl = String(url || '')
+  remoteResolvedUrl = '' // invalidate cached resolved URL — the origin changed
 }
 
 function configuredWebUrl() {
@@ -832,9 +833,12 @@ function reloadDshWebview(force, opts) {
   void force
   const view = state.dshView
   if (!view) return false
-  const url = remoteResolvedUrl || configuredWebUrl()
-  view.webview.html = dshWebviewHtml(url, opts)
-  state.log('reload sidebar html ' + url)
+  // Resolve through port forwarding (remote) or use directly (local).
+  void resolvedWebUrl().then((url) => {
+    if (state.dshView !== view) return // view changed meanwhile
+    view.webview.html = dshWebviewHtml(url, opts)
+    state.log('reload sidebar html ' + url)
+  })
   return true
 }
 
