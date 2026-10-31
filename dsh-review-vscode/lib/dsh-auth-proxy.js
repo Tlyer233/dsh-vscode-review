@@ -163,6 +163,7 @@ function startAuthProxy(opts) {
       const up = net.connect(targetPort, '127.0.0.1', () => {
         const headers = Object.assign({}, req.headers)
         if (cookie) headers.cookie = cookie
+        headers.host = targetAuthority
         const lines = [String(req.method) + ' ' + String(req.url) + ' HTTP/1.1']
         for (const key of Object.keys(headers)) lines.push(key + ': ' + String(headers[key]))
         up.write(lines.join('\r\n') + '\r\n\r\n')
