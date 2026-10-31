@@ -14,7 +14,7 @@ const REVIEW_NS = 'dsh-review'
 /**
  * Minimal schemastery-shaped schema: callable resolver + toJSON for describe().
  * @param {unknown} value
- * @returns {{ enabled: boolean, fileSend: string, snippetSend: string, sidebarSide: string, jobsTerminal: boolean, scopeFilter: boolean, autoWorkspace: boolean, openFilesInVscode: boolean }}
+ * @returns {{ enabled: boolean, fileSend: string, snippetSend: string, sidebarSide: string, jobsTerminal: boolean, scopeFilter: boolean, autoWorkspace: boolean, openFilesInVscode: boolean, claudeAdapt: boolean }}
  */
 function reviewConfigSchema(value) {
   const v = value && typeof value === 'object' ? value : {}
@@ -32,6 +32,8 @@ function reviewConfigSchema(value) {
     // On by default: in the VS Code workbench the built-in document preview
     // duplicates the editor the user is already looking at.
     openFilesInVscode: v.openFilesInVscode !== false,
+    // Adapt dock/sidebar chrome to the Claude theme (warm-black, terracotta).
+    claudeAdapt: v.claudeAdapt !== false,
   }
 }
 reviewConfigSchema.toJSON = function toJSON() {
@@ -46,6 +48,7 @@ reviewConfigSchema.toJSON = function toJSON() {
       scopeFilter: { type: 'boolean', default: true },
       autoWorkspace: { type: 'boolean', default: true },
       openFilesInVscode: { type: 'boolean', default: true },
+      claudeAdapt: { type: 'boolean', default: true },
     },
   }
 }
