@@ -707,7 +707,7 @@ async function realDeleteMiscChips() {
       ' x.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window })); n++; }' +
       ' return "swept:" + n; })()')
     return Number(String(raw).split(':')[1] || 0)
-  } catch (e) { dshState.log.appendLine('[anno] misc sweep failed: ' + String(e).slice(0, 90)); return 0 }
+  } catch (e) { dshState.log('[anno] misc sweep failed: ' + String(e).slice(0, 90)); return 0 }
 }
 async function realDeleteChip(name) {
   annoDeletesInFlight++
@@ -1607,7 +1607,7 @@ async function annoPut(targetPath, content) {
   }
 }
 async function annoSendSync(req) {
-  dshState.log.appendLine('[env] send window=' + (annoIsRemoteWindow() ? 'REMOTE(' + vscode.env.remoteName + ')' : 'LOCAL') +
+  dshState.log('[env] send window=' + (annoIsRemoteWindow() ? 'REMOTE(' + vscode.env.remoteName + ')' : 'LOCAL') +
     ' | chips=' + annoCurrentChips.length + ' driver=' + (dshState.annoDriver ? 'yes' : 'NO') + ' busy=' + (annoSendBusy ? 'yes' : 'no') + ' heapOn=' + annoHeapOn())
   // (0.1.183) req numbers RESET on every client page load (annoPrepSeq starts
   // at 0 again) while this Set lived for the whole extension process: after a
@@ -1884,7 +1884,7 @@ function annoMirrorOnState(chips, lines, log) {
         if (annoCaptureFiles.has(k) || annoCaptureInflight.has(k)) continue
         annoCaptureInflight.add(k)
         void annoQuietCapture(c, i, k)
-          .catch((e) => dshState.log.appendLine('[anno] quiet capture failed @' + c.name + ': ' + String(e).slice(0, 90)))
+          .catch((e) => dshState.log('[anno] quiet capture failed @' + c.name + ': ' + String(e).slice(0, 90)))
           .finally(() => annoCaptureInflight.delete(k))
       }
       annoPushDockList()
