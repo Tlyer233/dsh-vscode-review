@@ -3838,13 +3838,23 @@ window.__ModuleLoader__.load({
             if (hits[i][2] >= 1000) hits[i][0].nodeValue = hits[i][1].replace(/[\d,]+(?=\s*tok)/, annoFmtTok(hits[i][2]));
           }
           if (hits.length && !pop.querySelector("[data-dshr-tok-total]")) {
+            // Mimic the popover's own metric-item structure so label/value get
+            // the native styles; put it in the GRID container as a full-width
+            // row spanning both columns (inserting into one cell squeezed and
+            // word-wrapped the label, user: "不太协调").
+            var valNode = hits[hits.length - 1][0].parentElement;
+            var item = valNode.parentElement;
+            var grid = item.parentElement;
             var row = document.createElement("div");
             row.setAttribute("data-dshr-tok-total", "1");
-            row.style.cssText = "display:flex;justify-content:space-between;gap:12px;margin-top:6px;padding-top:6px;border-top:1px solid rgba(128,128,128,.25);font-weight:600";
-            var lab = document.createElement("span"); lab.textContent = "Total (in + out)";
-            var val = document.createElement("span"); val.textContent = annoFmtTok(total) + " tok";
+            row.style.cssText = "display:flex;align-items:baseline;justify-content:space-between;gap:10px;grid-column:1/-1;margin-top:2px";
+            var lab = document.createElement("div"); lab.textContent = "Total (in + out)";
+            lab.style.fontSize = (getComputedStyle(item.firstElementChild || item).fontSize) || "12px";
+            lab.style.opacity = "0.75";
+            var val = document.createElement("div"); val.textContent = annoFmtTok(total) + " tok";
+            val.style.cssText = "font-weight:600;white-space:nowrap;text-align:right";
             row.appendChild(lab); row.appendChild(val);
-            hits[hits.length - 1][0].parentElement.parentElement.appendChild(row);
+            grid.appendChild(row);
           }
         } finally { pop.__dshrStatBusy = false; }
       } catch (err) { /* cosmetic only */ }
