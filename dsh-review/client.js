@@ -134,21 +134,20 @@ window.__ModuleLoader__.load({
       if (!els) return;
       if (annoAnimT) { clearInterval(annoAnimT); annoAnimT = null; }
       const t0 = Date.now();
-      // (0.2.43) 开局直接跳 30% (user Quote "你改下试试" on my "粗暴档" line):
-      // p = 30 + 64*(1-(1-t/45s)^2) — bar lands at 30% the instant the card
-      // appears, then decelerates toward 94; prepared tops to 100.
-      const START = 30, T = 45000, ceil = 94;
-      try { els.bar.style.width = START + "%"; } catch (err) { /* noop */ }
- // (0.2.42) 30s launch window: the bar ROARS
-      // early then asymptotes — real captures run 20-40s, so with T=60/90 the
-      // user only ever saw the front segment + the final jump-to-100 sprint,
-      // which read as slow-then-fast ("还是先慢后快"). Now: 94% is reached at
-      // T, prepared tops the last ~6% — perceived motion is fast-then-slow.
+      // (0.2.45) user ruling: roar to 66% fast, then a long slow crawl.
+      // phase1 (0-6s):  66*(1-(1-t/6)^2)          — steep launch, soft landing at 66
+      // phase2 (6-60s): 66+30*(1-(1-(t-6)/54)^2)  — slow creep toward 96
+      // prepared tops to 100. Continuous, monotonic, no abrupt jump.
+      const P1 = 6000, C1 = 66, P2 = 54000, C2 = 96;
+      try { window.parent.postMessage({ type: "dshPasteLog", line: "[paste] prog animator start (client 0.2.45, 66-then-crawl)" }, "*"); } catch (err) { /* noop */ }
       annoAnimT = setInterval(function () {
         try {
           const cur = parseFloat(els.bar.style.width) || 0;
-          const f = Math.min(1, (Date.now() - t0) / T);
-          const g = 1 - f; const p = Math.max(cur, START + (ceil - START) * (1 - g * g)); // monotonic
+          const el2 = Date.now() - t0;
+          let p;
+          if (el2 <= P1) { const g1 = 1 - el2 / P1; p = C1 * (1 - g1 * g1); }
+          else { const f2 = Math.min(1, (el2 - P1) / P2); const g2 = 1 - f2; p = C1 + (C2 - C1) * (1 - g2 * g2); }
+          p = Math.max(cur, p); // monotonic
           els.bar.style.width = p + "%";
         } catch (err) { if (annoAnimT) { clearInterval(annoAnimT); annoAnimT = null; } }
       }, 100);

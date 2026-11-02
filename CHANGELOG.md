@@ -1,5 +1,12 @@
 # Changelog
 
+## 进度条终稿:6 秒轰鸣到 66%,之后 54 秒慢爬到 96(2026-11-02, 客户端 0.2.45)
+
+用户批注令:"直接30%太突兀, 应快速到66% 然后慢慢长"。两段二次(连续单调无跳变):phase1 `66×(1-(1-t/6s)²)`(1s 20 / 2s 37 / 4s 59 / 6s 66),phase2 `66+30×(1-(1-(t-6s)/54s)²)`(15s 75 / 30s 87 / 45s 94 / 60s 96),prepared 推最后 4%。
+
+**同时定案"怎么重启都吃不到新代码":** combo 合并包的 URL 带 `rev=<服务器启动令牌>`,Dsh 不重启 rev 不变 → 浏览器对同一 rev 直接**缓存命中**(实测 transferSize=0),页面重载一万次也是旧包。规矩:**改 client 后必须 重启 Dsh(换 rev)→ 再重载页面**;验证只看扩展日志自证行(现为 `client 0.2.45, 66-then-crawl`)。此前几轮"没对齐/没变化"全部是拿 0.2.4x 旧包在测。
+
+## 段落批注 pill 发完不消失:空串 sid 被 falsy 判据跳过 clear(2026-11-02, 客户端 0.2.44)
 ## 段落批注 pill 发完不消失:空串 sid 被 falsy 判据跳过 clear(2026-11-02, 客户端 0.2.44)
 
 截图实证:消息已带 Quote/Comment 发出(全链日志绿:prepared 142chars→send 404),但 composer 上方 pill 仍挂着——"对齐"指的是**发送后 pill 没清**。根因:`markAnnoSend` 存 sid 用 `(para && para.sid) || null` 把**空串 sid 挤成 null**,prepared/timeout 两处 clear 又写 `if (p.sid && ...)`——dsha 的 sid 解析在批注创建/发送时都可能落到 `""`(onScreen() 找不到在屏行),于是 clear 被当"没有"跳过,pending 原封不动。三刀:存 sid 改 `para ? String(para.sid) : null`;两处判据改 `!== null`(空串也清)。pill 计数"11"= 用户批注文本笔误,非缺陷。
