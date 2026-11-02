@@ -3875,6 +3875,20 @@ window.__ModuleLoader__.load({
         } finally { pop.__dshrStatBusy = false; }
       } catch (err) { /* cosmetic only */ }
     }
+    function annoFindTokGrid() {
+      try {
+        var w = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+        var n, pop = null;
+        while ((n = w.nextNode())) {
+          var t = String(n.nodeValue).trim();
+          if (/token\s*(usage|用量)|session\s*statistics|会话统计/i.test(t)) { pop = n.parentElement; break; }
+        }
+        // (2.1.7) React's DOM order for the two section headings is NOT
+        // stable — climb to the subtree that actually holds "<number> tok".
+        while (pop && pop !== document.body && !/[\d,]{3,}\s*tok/.test(pop.textContent || "")) pop = pop.parentElement;
+        return (pop && pop !== document.body) ? pop : null;
+      } catch (err) { return null }
+    }
     function annoWatchContextPopover(e) {
       try {
         var trg = e && e.target && e.target.closest ? e.target.closest('[aria-label*="of context used"], [aria-label*="上下文已用"]') : null;
@@ -3882,31 +3896,26 @@ window.__ModuleLoader__.load({
         setTimeout(function () {
           try {
             // the popover renders near the trigger; locate it via the unique literals
-            var w = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
-            var n, pop = null;
-            while ((n = w.nextNode())) {
-              var t = String(n.nodeValue).trim();
-              if (/token\s*(usage|用量)|session\s*statistics|会话统计/i.test(t)) { pop = n.parentElement; break; }
-            }
-            // (2.1.7) React's DOM order for the two section headings is NOT
-            // stable (walker hit "Token usage" first this render, "Session
-            // statistics" last time — grid visual order != DOM order). The old
-            // climb-until-"Token usage"-inside rule then STOPPED at the heading
-            // itself (parent already contains its own text: 11 chars, zero
-            // numbers) and restatized an empty shell. Climb until the subtree
-            // actually holds a "<number> tok" value instead — that is the real
-            // Token-usage grid, where both the K/M rewrites and the Total row
-            // belong.
-            while (pop && pop !== document.body && !/[\d,]{3,}\s*tok/.test(pop.textContent || "")) pop = pop.parentElement;
-            if (!pop || pop === document.body) { return; }
+            var pop = annoFindTokGrid();
+            if (!pop) return;
             annoRestatize(pop);
-            if (pop.__dshrStatObs) return;
+            // (2.1.9) THE LIVE-SESSION KILLER: while the agent runs, session
+            // stats refresh continuously and React REMOUNTS the popover's
+            // inner nodes; an observer parked on the grid died with the
+            // detached copy, leaving raw numbers and no Total (user's mac
+            // page, caught red-handed by CDP: one Total written, then gone).
+            // Park the observer on the [role=dialog] wrapper (survives inner
+            // remounts) and RE-LOCATE the grid on every mutation.
+            var dlg = pop.closest ? pop.closest('[role="dialog"]') : null;
+            if (!dlg) dlg = pop;
+            if (dlg.__dshrStatObs) return;
             var obs = new MutationObserver(function () {
-              if (!pop.isConnected) { try { obs.disconnect(); } catch (err) { /* gone */ } return; }
-              annoRestatize(pop);
+              if (!dlg.isConnected) { try { obs.disconnect(); } catch (err) { /* gone */ } return; }
+              var g2 = annoFindTokGrid();
+              if (g2) annoRestatize(g2);
             });
-            obs.observe(pop, { childList: true, subtree: true, characterData: true });
-            pop.__dshrStatObs = obs;
+            obs.observe(dlg, { childList: true, subtree: true, characterData: true });
+            dlg.__dshrStatObs = obs;
           } catch (err) { /* cosmetic only */ }
         }, 150);
       } catch (err) { /* cosmetic only */ }
