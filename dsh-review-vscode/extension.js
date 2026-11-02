@@ -1528,6 +1528,14 @@ async function evalOnChip(byHost, chip, evalOn, log) {
 }
 
 async function annoSendSync(req) {
+  // (0.1.183) req numbers RESET on every client page load (annoPrepSeq starts
+  // at 0 again) while this Set lived for the whole extension process: after a
+  // refresh, req=1 was "already posted" forever -> blank sends hung the full
+  // 75s timeout ("空白也卡"). The dedupe only needs to cover ONE send's
+  // main-path+finally double-post, so clear it when a new request arrives.
+  // Duplicate answers that leak across generations are harmless: the client
+  // ignores prepared() for unknown reqs.
+  annoPreparedPostedFor.clear()
   if (annoSendBusy) {
     // A read is already running for this send — do NOT double-drive the widget
     // and do NOT answer with a stale block; the running read will post for req.

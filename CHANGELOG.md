@@ -1,5 +1,9 @@
 # Changelog
 
+## 刷新页面后连空白消息都卡 75s(2026-11-02, 扩展 0.1.183)
+
+`annoPreparedPostedFor`(防重答复去重集)**只加不清**:客户端每次页面加载 req 重新从 1 计数,扩展进程却活着整个 session → 刷新后 req=1 被判"已答过",`annoPostPrepared` 静默吞掉,composer 空等到 75s 超时。0.2.27 起"空白也问扩展"让此雷必踩。修:`annoSendSync` 入口清集——去重只需覆盖单次发送的 主路径+finally 双答;跨代重复答客户端按未知 req 忽略,无害。
+
 ## 段落批注并入 dsh-review 客户端:统一 Enter 总闸(2026-11-02, 客户端 0.2.30)
 
 dsh-annotate(选段落→批注→打包发送)原是同页第二个 client 插件,与 dsh-review 的 markAnnoSend **各挂各的 Enter**:它 document-capture 先手 stopPropagation,浏览器标注拦截被挤掉;抓取在飞时两边互锁 → "发不出去"。按用户令**整编内化**:
