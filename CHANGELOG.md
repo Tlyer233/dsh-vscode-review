@@ -1,5 +1,19 @@
 # Changelog
 
+## 附件全家族:清全场·带勾选(2026-11-02, 扩展 0.1.184 / 客户端 0.2.31)
+
+堆全谱实证: Copilot 一切附件同族 `{id,kind,name,value}` — `element`(R8s+imageData)/`image`(JPEG)/`file`(URI;**代码段=file+range 行切片**)/`generic`(**终端选区/选中文本=value 即正文**,bundle 原文:`addContext({id:'terminal-selection-…',kind:'generic',value:selection})`)/`instruction`(title)。
+
+用户双令:①设置加复选框 `annoCarryMisc` **默认关=只发①浏览器标注②浏览器截图**(③④⑤dsh 自有实现);②**防御规则:发送后只要 Copilot 有任何东西,无论勾选与否一律清空;勾选只决定带不带**。
+
+- observer `readChips`:识别全部 aria 前缀(element/file/image/context/other),`kind` 随 chip 流转;Suggested 提示 chip 仍除外
+- `annoChipKeys` 非 element 加 kind 前缀防串号;预留仅 element
+- `anno-heap.js`:misc kinds 常扫;写手在扩展侧按 `annoHeapMiscOn()` 门控(文件读全文≤300KB/range 切行/generic 落文本,按 entry id 去重)
+- `realDeleteMiscChips` 扫场:发送后 ✕-click **所有**非 element 附件 chip(找 remove/close/delete  affordance),在 `✕-deleted N` 后追加 `misc sweep N`
+- block 三节:元素标注列表(不变)+ 截图附件节 + **附加上下文附件节**(勾选时列 misc 文件)
+- 版本对账:0.1.183 的 req 撞车修复实际装在 182 目录里(label 跳过,代码为准);本次 182→184 一次带上
+
+## 段落批注并入 dsh-review 客户端:统一 Enter 总闸(2026-11-02, 客户端 0.2.30)
 ## 刷新页面后连空白消息都卡 75s(2026-11-02, 扩展 0.1.183)
 
 `annoPreparedPostedFor`(防重答复去重集)**只加不清**:客户端每次页面加载 req 重新从 1 计数,扩展进程却活着整个 session → 刷新后 req=1 被判"已答过",`annoPostPrepared` 静默吞掉,composer 空等到 75s 超时。0.2.27 起"空白也问扩展"让此雷必踩。修:`annoSendSync` 入口清集——去重只需覆盖单次发送的 主路径+finally 双答;跨代重复答客户端按未知 req 忽略,无害。

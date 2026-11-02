@@ -73,12 +73,22 @@ function observerSource() {
     for (var i = 0; i < chips.length; i++) {
       var c = chips[i];
       var aria = c.getAttribute('aria-label') || '';
-      // Only real element annotations; skip "Suggested browser context" chips.
-      if (aria.indexOf('Attached element,') !== 0) continue;
-      var m = /^Attached element, (.+) \\(Delete\\)$/.exec(aria);
-      var name = m ? m[1] : aria;
+      // (0.1.184) CLEAR-EVERYTHING rule: ALL real attachments are tracked now —
+      // element / file (incl. code-snippet ranges) / image / context (terminal
+      // selection). 'Suggested ...' hints stay excluded. kind rides along.
+      var PREFIX = [['Attached element,', 'element'], ['Attached file,', 'file'], ['Attached image,', 'image'], ['Attached context,', 'generic']];
+      var kind = null, rest = '';
+      for (var q = 0; q < PREFIX.length; q++) {
+        if (aria.indexOf(PREFIX[q][0]) === 0) { kind = PREFIX[q][1]; rest = aria.slice(PREFIX[q][0].length); break; }
+      }
+      if (!kind) {
+        if (aria.indexOf('Suggested') === 0) continue;
+        if (aria.indexOf('(Delete)') === -1) continue;
+        kind = 'other'; rest = aria;
+      }
+      var name = rest.replace(/ \(Delete\)$/, '');
       var x = c.querySelector('a.monaco-button.codicon-close-compact, a.codicon-close-compact');
-      out.push({ name: name, aria: aria, hasX: !!x });
+      out.push({ name: name, aria: aria, kind: kind, hasX: !!x });
     }
     return out;
   }

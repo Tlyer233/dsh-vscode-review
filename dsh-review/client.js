@@ -969,7 +969,7 @@ window.__ModuleLoader__.load({
     function getReviewSettings() {
       // Default to pointer: matches the user's persisted yaml choice; fence
       // is only used when the live scope explicitly says fence.
-      const d = { enabled: true, fileSend: "path", snippetSend: "pointer", sidebarSide: "left", jobsTerminal: false, scopeFilter: true, autoWorkspace: true, openFilesInVscode: true, claudeAdapt: true, annotationToDsh: true, hideHoverCard: false, annoHeapBridge: true };
+      const d = { enabled: true, fileSend: "path", snippetSend: "pointer", sidebarSide: "left", jobsTerminal: false, scopeFilter: true, autoWorkspace: true, openFilesInVscode: true, claudeAdapt: true, annotationToDsh: true, hideHoverCard: false, annoHeapBridge: true, annoCarryMisc: false };
       if (!reviewSettingsScope || typeof reviewSettingsScope.getSnapshot !== "function") return d;
       const snap = reviewSettingsScope.getSnapshot();
       const val = snap && snap.value;
@@ -991,6 +991,7 @@ window.__ModuleLoader__.load({
         annotationToDsh: v.annotationToDsh !== false,
         hideHoverCard: v.hideHoverCard === true,
         annoHeapBridge: v.annoHeapBridge !== false,
+        annoCarryMisc: v.annoCarryMisc === true,
       };
     }
 
@@ -3370,6 +3371,7 @@ window.__ModuleLoader__.load({
           const [draftAnnotationToDsh, setDraftAnnotationToDsh] = useState(null);
           const [draftHideHoverCard, setDraftHideHoverCard] = useState(null);
           const [draftAnnoHeapBridge, setDraftAnnoHeapBridge] = useState(null);
+          const [draftAnnoCarryMisc, setDraftAnnoCarryMisc] = useState(null);
           const [saving, setSaving] = useState(false);
           const [failed, setFailed] = useState(false);
           const live = getReviewSettings();
@@ -3385,6 +3387,7 @@ window.__ModuleLoader__.load({
           const liveAnnotationToDsh = live.annotationToDsh;
           const liveHideHoverCard = live.hideHoverCard;
           const liveAnnoHeapBridge = live.annoHeapBridge;
+          const liveAnnoCarryMisc = live.annoCarryMisc;
           const shownEnabled = draftEnabled == null ? liveEnabled : draftEnabled;
           const shownFileSend = draftFileSend == null ? liveFileSend : draftFileSend;
           const shownSnippetSend = draftSnippetSend == null ? liveSnippetSend : draftSnippetSend;
@@ -3397,6 +3400,7 @@ window.__ModuleLoader__.load({
           const shownAnnotationToDsh = draftAnnotationToDsh == null ? liveAnnotationToDsh : draftAnnotationToDsh;
           const shownHideHoverCard = draftHideHoverCard == null ? liveHideHoverCard : draftHideHoverCard;
           const shownAnnoHeapBridge = draftAnnoHeapBridge == null ? liveAnnoHeapBridge : draftAnnoHeapBridge;
+          const shownAnnoCarryMisc = draftAnnoCarryMisc == null ? liveAnnoCarryMisc : draftAnnoCarryMisc;
           const dirty = shownEnabled !== liveEnabled
             || shownFileSend !== liveFileSend
             || shownSnippetSend !== liveSnippetSend
@@ -3408,7 +3412,8 @@ window.__ModuleLoader__.load({
             || shownClaudeAdapt !== liveClaudeAdapt
             || shownAnnotationToDsh !== liveAnnotationToDsh
             || shownHideHoverCard !== liveHideHoverCard
-            || shownAnnoHeapBridge !== liveAnnoHeapBridge;
+            || shownAnnoHeapBridge !== liveAnnoHeapBridge
+            || shownAnnoCarryMisc !== liveAnnoCarryMisc;
           const available = snap && snap.status === "ready";
           const writable = !!(snap && snap.writable);
 
@@ -3423,10 +3428,11 @@ window.__ModuleLoader__.load({
             setDraftOpenFilesVs(null);
             setDraftClaudeAdapt(null);
             setDraftAnnotationToDsh(null);
+            setDraftAnnoCarryMisc(null);
             setDraftAnnoHeapBridge(null);
             setDraftHideHoverCard(null);
             setFailed(false);
-          }, [liveEnabled, liveFileSend, liveSnippetSend, liveSidebarSide, liveJobsTerminal, liveScopeFilter, liveAutoWorkspace, liveOpenFilesVs, liveClaudeAdapt, liveAnnotationToDsh, liveHideHoverCard, liveAnnoHeapBridge]);
+          }, [liveEnabled, liveFileSend, liveSnippetSend, liveSidebarSide, liveJobsTerminal, liveScopeFilter, liveAutoWorkspace, liveOpenFilesVs, liveClaudeAdapt, liveAnnotationToDsh, liveHideHoverCard, liveAnnoHeapBridge, liveAnnoCarryMisc]);
 
           if (!available) return null;
 
@@ -3441,6 +3447,7 @@ window.__ModuleLoader__.load({
             setDraftOpenFilesVs(null);
             setDraftClaudeAdapt(null);
             setDraftAnnotationToDsh(null);
+            setDraftAnnoCarryMisc(null);
             setDraftAnnoHeapBridge(null);
             setDraftHideHoverCard(null);
             setFailed(false);
@@ -3488,6 +3495,9 @@ window.__ModuleLoader__.load({
             }
             if (shownAnnoHeapBridge !== liveAnnoHeapBridge) {
               chain = chain.then(function () { return reviewScope.set("annoHeapBridge", shownAnnoHeapBridge); });
+            }
+            if (shownAnnoCarryMisc !== liveAnnoCarryMisc) {
+              chain = chain.then(function () { return reviewScope.set("annoCarryMisc", shownAnnoCarryMisc); });
             }
             chain.then(
               function () { setSaving(false); discardDraft(); applyRailSideFromSettings(); },
@@ -3707,6 +3717,22 @@ window.__ModuleLoader__.load({
                 h("div", null,
                   h("label", { htmlFor: "dshr-anno-heap" }, "发送时堆直读标注（免 hover）"),
                   h("p", { className: "dshr-hint" }, "开启（默认）：发送带标注时对工作台内存做堆快照，直读 Copilot 附件母本（官方全文含完整 CSS + pick 时截图，顺带收取整页/区域截图附件），不合成 hover；快照+解析约 15-40 秒，进度环显示。关闭或堆路任何一步失败：自动回落悬浮卡老路。"),
+                ),
+              ),
+              h("div", { className: "dshr-field" },
+                h("input", {
+                  id: "dshr-anno-carry-misc",
+                  type: "checkbox",
+                  checked: shownAnnoCarryMisc,
+                  disabled: !writable || saving,
+                  onChange: function (e) {
+                    setDraftAnnoCarryMisc(!!e.target.checked);
+                    setFailed(false);
+                  },
+                }),
+                h("div", null,
+                  h("label", { htmlFor: "dshr-anno-carry-misc" }, "发送时也携带 文件/代码段/终端 附件"),
+                  h("p", { className: "dshr-hint" }, "默认关闭：只携带 ①浏览器元素标注 ②浏览器截图（Copilot 输入区里的文件 / 代码段 / 终端选区附件只清不带——这三类 dsh 有自己的实现）。开启后：这三类附件也从内存母本直读——文件按路径取全文、代码段按行切片、终端取选中正文，各自落文件并入消息。注意：无论是否勾选，发送后 Copilot 里的全部附件（元素/文件/代码段/终端/截图）都会被清空——勾选只决定「内容是否随消息带走」，不决定「清不清」。"),
                 ),
               ),
               h("div", { className: "dshr-footer" },
