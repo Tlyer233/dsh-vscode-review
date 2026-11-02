@@ -4,10 +4,23 @@ $ErrorActionPreference = 'Stop'
 
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $ExtId = 'dsn.dsh-review-vscode'
-$ExtVer = '0.1.0'
+# (2.1.0) read the REAL extension version — the hardcoded 0.1.0 installed
+# every release into a stale-named folder for a year.
+function Get-PkgVersion([string]$Path) {
+  $t = $Path
+  $raw = if (Test-Path $Path) {
+    $bytes = [System.IO.File]::ReadAllBytes($Path)
+    if ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) {
+      [System.Text.UTF8Encoding]::new($false).GetString($bytes, 3, $bytes.Length - 3)
+    } else { [System.Text.UTF8Encoding]::new($false).GetString($bytes) }
+  } else { throw "missing $Path" }
+  return ((ConvertFrom-Json $raw).version)
+}
 $DshPlugin = Join-Path $Root 'dsh-review'
 $VscodeSrc = Join-Path $Root 'dsh-review-vscode'
 $VscodeExtDir = if ($env:VSCODE_EXTENSIONS_DIR) { $env:VSCODE_EXTENSIONS_DIR } else { Join-Path $env:USERPROFILE '.vscode\extensions' }
+$ExtVer = Get-PkgVersion (Join-Path $Root 'dsh-review-vscode\package.json')
+$PlugVer = Get-PkgVersion (Join-Path $Root 'dsh-review\package.json')
 
 # Write JSON array as UTF-8 without BOM. PS 5.1 `ConvertTo-Json` + `Set-Content UTF8` breaks VS Code:
 # one item becomes `{...}` not `[{...}]`, and UTF8 encoding adds a BOM.
@@ -61,11 +74,12 @@ function Install-VscodeExtensionCli {
 
 function Merge-ArgvJson {
   param([string]$File, [string]$Id)
+  # (2.1.0) CDP 9223 (element-annotation heap bridge) rides the same merge.
   $dir = Split-Path -Parent $File
   if (-not (Test-Path $dir)) {
     New-Item -ItemType Directory -Force -Path $dir | Out-Null
   }
-  $fresh = "{`n`t`"enable-proposed-api`": [`"$Id`"]`n}`n"
+  $fresh = "{`n`t`"enable-proposed-api`": [`"$Id`"],`n`t`"remote-debugging-port`": `"9223`"`n}`n"
   if (-not (Test-Path $File)) {
     Write-Utf8NoBom -Path $File -Text $fresh
     Write-Host "created $File"
@@ -96,12 +110,58 @@ function Merge-ArgvJson {
   $brace = [regex]::Match($text, '(?m)^[ \t]*\{')
   if ($brace.Success) {
     $at = $brace.Index + $brace.Length
-    $text = $text.Insert($at, "`n`t`"enable-proposed-api`": [`"$Id`"],")
+    $insert = "`n`t`"enable-proposed-api`": [`"$Id`"],"
+    if ($text -notmatch '"remote-debugging-port"') { $insert += "`n`t`"remote-debugging-port`": `"9223`"," }
+    $text = $text.Insert($at, $insert)
   } else {
     $text = $fresh
   }
   Write-Utf8NoBom -Path $File -Text ($text.TrimEnd() + "`n")
   Write-Host "updated $File"
+}
+
+# (2.1.0) ported from install.sh merge_cdp_port: add the key when the file
+# already has enable-proposed-api but no port (the fresh-file case is covered
+# by $fresh above).
+function Merge-CdpPort {
+  param([string]$File)
+  if (-not (Test-Path $File)) { return }
+  $text = Read-TextBestEffort -Path $File
+  if ($text -match '"remote-debugging-port"') { Write-Host "cdp port already set in $File"; return }
+  $brace = [regex]::Match($text, '(?m)^[ \t]*\{')
+  if (-not $brace.Success) { return }
+  $at = $brace.Index + $brace.Length
+  $text = $text.Insert($at, "`n`t`"remote-debugging-port`": `"9223`",")
+  Write-Utf8NoBom -Path $File -Text ($text.TrimEnd() + "`n")
+  Copy-Item $File "$File.bak-$(Get-Date -Format yyyyMMddHHmmss)" -Force
+  Write-Host "remote-debugging-port=9223 in $File (needs full VS Code quit+relaunch)"
+}
+
+# (2.1.0) remote windows must run this extension UI-side (heap bridge + Copilot
+# live on the local machine); mirrors the manual settings.json edit proven on
+# the Mac ssh window.
+function Merge-RemoteExtensionKind {
+  param([string]$File, [string]$Id)
+  $dir = Split-Path -Parent $File
+  if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
+  if (-not (Test-Path $File)) {
+    Write-Utf8NoBom -Path $File -Text "{`n`t`"remote.extensionKind`": { `"$Id`": [ `"ui`" ] }`n}`n"
+    Write-Host "created $File (remote.extensionKind=ui)"
+    return
+  }
+  $text = Read-TextBestEffort -Path $File
+  if ($text -match '"remote\.extensionKind"' -and $text.IndexOf($Id) -ge 0) { Write-Host "remote.extensionKind already lists $Id"; return }
+  Copy-Item $File "$File.bak-$(Get-Date -Format yyyyMMddHHmmss)" -Force
+  if ($text -match '"remote\.extensionKind"\s*:\s*\{') {
+    $m = [regex]::Match($text, '"remote\.extensionKind"\s*:\s*\{')
+    $text = $text.Insert($m.Index + $m.Length, " `"$Id`": [ `"ui`" ],")
+  } else {
+    $brace = [regex]::Match($text, '(?m)^[ \t]*\{')
+    if (-not $brace.Success) { Write-Host "settings.json unreadable shape, skipped: $File"; return }
+    $text = $text.Insert($brace.Index + $brace.Length, "`n`t`"remote.extensionKind`": { `"$Id`": [ `"ui`" ] },")
+  }
+  Write-Utf8NoBom -Path $File -Text ($text.TrimEnd() + "`n")
+  Write-Host "remote.extensionKind += $Id ui ($File)"
 }
 
 function Sync-VscodeExtensionCatalog {
@@ -190,8 +250,11 @@ function Install-DshPlugin {
   } finally {
     Pop-Location
   }
-  $tgz = Get-ChildItem -Path $cache -Filter 'dsh-review-*.tgz' -File | Sort-Object LastWriteTime -Descending | Select-Object -First 1
-  if (-not $tgz) { throw "pack produced no tarball in $cache" }
+  # (2.1.0) pin by the EXACT version name — newest-by-mtime raced clock edits,
+  # and glob order is lexical (install.sh 0.2.9-vs-0.2.13 incident).
+  $tgzFile = Join-Path $cache "dsh-review-$PlugVer.tgz"
+  if (-not (Test-Path $tgzFile)) { throw "pack produced no $tgzFile" }
+  $tgz = Get-Item $tgzFile
   Write-Host "packed $($tgz.FullName)"
   Write-Host 'installing a copy into the web profile (not a source-tree link)'
   & dsh plugin --profile web add $tgz.FullName --force
@@ -226,13 +289,13 @@ function Reset-ShadowStore {
   Write-Host "emptied pending $pend\*.json"
 }
 
-Write-Host '=== [1/4] Install dsh plugin (dsh-review) ===' -ForegroundColor Cyan
+Write-Host "=== [1/5] Install dsh plugin (dsh-review v$PlugVer) ===" -ForegroundColor Cyan
 if (-not (Get-Command dsh -ErrorAction SilentlyContinue)) {
   throw 'missing command: dsh'
 }
 Install-DshPlugin
 
-Write-Host '=== [2/4] Install VS Code extension ===' -ForegroundColor Cyan
+Write-Host "=== [2/5] Install VS Code extension v$ExtVer ===" -ForegroundColor Cyan
 if (-not (Test-Path $VscodeSrc)) {
   throw "missing $VscodeSrc"
 }
@@ -254,7 +317,10 @@ if ($vsix) {
   Copy-Item (Join-Path $VscodeSrc 'extension.js') $dest
   Copy-Item (Join-Path $VscodeSrc 'package.json') $dest
   Copy-Item -Recurse (Join-Path $VscodeSrc 'lib') $dest
-  Copy-Item -Recurse (Join-Path $VscodeSrc 'media') $dest
+  $nm = Join-Path $VscodeSrc 'node_modules'
+  if (Test-Path $nm) { Copy-Item -Recurse $nm $dest } else { Write-Host 'WARNING: no node_modules in source; run npm install in dsh-review-vscode first (heap bridge needs ws)' -ForegroundColor Yellow }
+  $media = Join-Path $VscodeSrc 'media'
+  if (Test-Path $media) { Copy-Item -Recurse $media $dest }
   $scripts = Join-Path $VscodeSrc 'scripts'
   if (Test-Path $scripts) { Copy-Item -Recurse $scripts $dest }
   Sync-VscodeExtensionCatalog -ExtDir $VscodeExtDir -Id $ExtId -Ver $ExtVer -Mode 'copy'
@@ -266,25 +332,43 @@ if ($vsix) {
   }
 }
 
-Write-Host '=== [3/4] Enable editorInsets in VS Code argv.json ===' -ForegroundColor Cyan
+Write-Host '=== [3/5] argv.json: editorInsets + CDP 9223 (9223 = heap bridge) ===' -ForegroundColor Cyan
 $argvFile = Join-Path $env:USERPROFILE '.vscode\argv.json'
 Merge-ArgvJson -File $argvFile -Id $ExtId
+Merge-CdpPort -File $argvFile
 if (-not (Select-String -LiteralPath $argvFile -Pattern ([regex]::Escape($ExtId)) -Quiet -ErrorAction SilentlyContinue)) {
   throw "argv.json missing $ExtId (editorInsets will not work): $argvFile"
 }
-Write-Host "argv.json = $argvFile" -ForegroundColor Yellow
+# Windows VS Code reads %APPDATA%\Code\argv.json — the old script skipped it.
+if ($env:APPDATA) {
+  $appArgv = Join-Path $env:APPDATA 'Code\argv.json'
+  Merge-ArgvJson -File $appArgv -Id $ExtId
+  Merge-CdpPort -File $appArgv
+  $insApp = Join-Path $env:APPDATA 'Code - Insiders\argv.json'
+  if (Test-Path (Split-Path $insApp)) { Merge-ArgvJson -File $insApp -Id $ExtId; Merge-CdpPort -File $insApp }
+}
 $insiders = Join-Path $env:USERPROFILE '.vscode-insiders\argv.json'
 if (Test-Path (Split-Path $insiders)) {
   Merge-ArgvJson -File $insiders -Id $ExtId
+  Merge-CdpPort -File $insiders
+}
+Write-Host "argv.json = $argvFile (+ %APPDATA%\Code)" -ForegroundColor Yellow
+
+Write-Host '=== [4/5] user settings: remote.extensionKind = ui (SSH windows) ===' -ForegroundColor Cyan
+if ($env:APPDATA) {
+  Merge-RemoteExtensionKind -File (Join-Path $env:APPDATA 'Code\User\settings.json') -Id $ExtId
+  $insSet = Join-Path $env:APPDATA 'Code - Insiders\User\settings.json'
+  if (Test-Path (Split-Path $insSet)) { Merge-RemoteExtensionKind -File $insSet -Id $ExtId }
 }
 
-Write-Host '=== [4/4] Reset dsh-review shadow git ===' -ForegroundColor Cyan
+Write-Host '=== [5/5] Reset dsh-review shadow git ===' -ForegroundColor Cyan
 Reset-ShadowStore
 
 Write-Host '=== Done ===' -ForegroundColor Cyan
 Write-Host '1. Completely quit VS Code (File > Exit, not just close the window), then reopen. argv.json is only read at startup.' -ForegroundColor Yellow
 Write-Host '2. Restart dsh web (or use the sidebar Restart button).' -ForegroundColor Yellow
 Write-Host '3. Shadow store was wiped (repo.git + pending/*.json). Unreviewed diffs are gone.' -ForegroundColor Yellow
+Write-Host '3b. CDP check once VS Code is back:  Invoke-WebRequest http://127.0.0.1:9223/json/list' -ForegroundColor Yellow
 Write-Host "editorInsets argv.json id: $ExtId" -ForegroundColor Yellow
 Write-Host 'dsh-review is copied into ~/.dsh/profiles/web (source folder can be deleted).' -ForegroundColor Yellow
 Write-Host "Re-run this script to upgrade both the dsh plugin and the VS Code extension." -ForegroundColor Yellow

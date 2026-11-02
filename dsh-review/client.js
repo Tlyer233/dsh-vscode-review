@@ -107,6 +107,58 @@ window.__ModuleLoader__.load({
     let annoForwarding = false;
     let annoPrepSeq = 0;
     const annoPrepPending = new Map();
+    // (2.1.1) SEND-POINT GATE (user: "能不绑定enter吗? 直接卡dsh的发送"): the
+    // upstream composer has exactly ONE submit funnel — sink -> conversation
+    // .sendSession(session, text, attachmentIds, mode, signal) (verified in
+    // dsh-client-ui-conversation/lib/client.js 4685+15884). We wrap it on the
+    // instance we already hold. Enter, the Send button, and the accelerated
+    // chord ALL arrive here, with the GUI-already-resolved mode ('queue'|
+    // 'steer') as a parameter — no busyEnter guessing needed on this path.
+    // Other inputs' Enter (e.g. the AskUserQuestion custom-answer field) never
+    // touches sendSession, so it stops being intercepted at all. The old Enter
+    // interception stays ONLY as fallback for builds without sendSession.
+    const annoGatePending = new Map();
+    function annoSendGate(orig, session, text, attachmentIds, mode, signal) {
+      try {
+        if (!vscodeIframeHint() || !getReviewSettings().annotationToDsh) return orig(session, text, attachmentIds, mode, signal);
+        if (annoForwarding) return orig(session, text, attachmentIds, mode, signal);
+        const t = String(text == null ? "" : text);
+        if (t.trim() !== "" && t.trimStart().charAt(0) === "/") {
+          try { window.parent.postMessage({ type: "dshPasteLog", line: "[send] gate: slash command pass-through" }, "*"); } catch (err) { /* noop */ }
+          return orig(session, text, attachmentIds, mode, signal);
+        }
+        let para = null;
+        try { if (window.__dshaPeek) para = window.__dshaPeek(); } catch (err) { /* noop */ }
+        if (para === null && annoDockChips.length === 0) return orig(session, text, attachmentIds, mode, signal);
+        const req = ++annoPrepSeq;
+        const base = para ? (t === "" ? para.text : t + "\n\n" + para.text) : t;
+        try { window.parent.postMessage({ type: "dshPasteLog", line: "[send] gate: block request req=" + req + " mode=" + String(mode) }, "*"); } catch (err) { /* noop */ }
+        return new Promise(function (resolve) {
+          let done = false;
+          const settle = function (block) {
+            if (done) return;
+            done = true;
+            annoGatePending.delete(req);
+            const b = String(block || "");
+            const finalText = b === "" ? base : (base === "" ? b : base + "\n\n" + b);
+            try { if (para && para.sid !== null && para.sid !== undefined && window.__dshaClear) window.__dshaClear(para.sid); } catch (err) { /* noop */ }
+            const go = function () { resolve(orig(session, finalText, attachmentIds, mode, signal)); };
+            try { annoProgFinish(go); } catch (err) { go(); }
+          };
+          annoGatePending.set(req, settle);
+          try { annoProgStart(req); } catch (err) { /* noop */ }
+          try { window.parent.postMessage({ type: "dshAnnoPrepareReq", req: req }, "*"); } catch (err) { settle(annoComposeBatch()); }
+          setTimeout(function () {
+            if (!annoGatePending.has(req)) return;
+            try { window.parent.postMessage({ type: "dshPasteLog", line: "[send] gate: prepared timeout 75s -> self-composed" }, "*"); } catch (err) { /* noop */ }
+            settle(annoComposeBatch());
+          }, 75000);
+        });
+      } catch (err) {
+        try { window.parent.postMessage({ type: "dshPasteLog", line: "[send] gate error -> native passthrough: " + String(err).slice(0, 90) }, "*"); } catch (e2) { /* noop */ }
+        return orig(session, text, attachmentIds, mode, signal);
+      }
+    }
     // (0.2.22) SEND PROGRESS UI: while a send is held for the Copilot read,
     // LOCK the composer (disabled input) and ring it with a progress bar;
     // bar full (dshAnnoPrepared) = the message goes out. Stages from the
@@ -233,6 +285,8 @@ window.__ModuleLoader__.load({
       if (!vscodeIframeHint()) return false;
       if (!getReviewSettings().annotationToDsh) return false;
       if (annoForwarding) return false;
+      // (2.1.1) sendSession gate active -> native submit; the gate does the work.
+      if (window.__dshrSendWrapped === true) return false;
       const now = Date.now();
       if (now - lastAnnoSendMark < 200) return false;  // debounce: one gesture, one send
       lastAnnoSendMark = now;
@@ -316,6 +370,8 @@ window.__ModuleLoader__.load({
     }
     try {
       window.__dshrAnnoPrepared = function (req, block) {
+        const g = annoGatePending.get(req);
+        if (g) { annoGatePending.delete(req); g(String(block || "")); return; }
         const p = annoPrepPending.get(req);
         if (!p) return;
         annoPrepPending.delete(req);
@@ -5185,6 +5241,20 @@ window.__ModuleLoader__.load({
           if (conversation && conversation.input && typeof conversation.input.shell === "function") {
             inputHub = conversation.input;
             conversationApi = conversation;
+            // (2.1.1) wrap the single composer submit funnel (see annoSendGate).
+            try {
+              if (conversationApi && typeof conversationApi.sendSession === "function" && !conversationApi.__dshrSendWrapped) {
+                const origSendSession = conversationApi.sendSession.bind(conversationApi);
+                conversationApi.sendSession = function (session, text, attachmentIds, mode, signal) {
+                  return annoSendGate(origSendSession, session, text, attachmentIds, mode, signal);
+                };
+                conversationApi.__dshrSendWrapped = true;
+                try { window.__dshrSendWrapped = true; } catch (err) { /* noop */ }
+                try { window.parent.postMessage({ type: "dshPasteLog", line: "[send] sendSession gate installed (client 2.1.1)" }, "*"); } catch (err) { /* noop */ }
+              }
+            } catch (err) {
+              try { window.parent.postMessage({ type: "dshPasteLog", line: "[send] gate install failed: " + String(err).slice(0, 90) }, "*"); } catch (e2) { /* noop */ }
+            }
           } else {
             console.warn("[dsh-review] native chip pipeline unavailable (no conversation.input.shell); refs will fall back to text");
           }

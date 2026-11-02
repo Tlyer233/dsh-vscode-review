@@ -7,6 +7,12 @@
 
 用户双截图实锤矛盾:ssh 页面设置=Steer、原生 Enter 会插话,插件却读 queue → 排队。定罪:web profile 无 settings 持久 provider,**Steer 只活在页面内存 store**;configForms/describe 读的是持久文档=永远默认 queue。上游字典(`input.send.steer`=插话发送/Steer message,`input.send.queue`=排队发送/Queue message,仅在 running+纯文本草稿时渲染到发送钮 aria)给出零依赖真相源。优先级改为 **实时钮 aria > configForms > describe > queue**,日志带 `client 2.0.51` 指纹。
 
+## 2.1.1 客户端 + 2.1.0 全栈:发送改卡 `conversation.sendSession` 单漏斗(Enter 绑定退役为兜底)(2026-11-02)
+
+- 用户令:"能不绑定 enter 吗?直接卡 dsh 的发送"。上游源码(exa+本地 lib 双证)钉死 composer 唯一发送漏斗:`sink → conversation.sendSession(session, text, attachmentIds, mode, signal)`(client.js 4685/15884)。在已持有的 conversationApi 实例上包裹该方法:Enter/Send 按钮/加速键全部经此,且 **mode 由 GUI 按你的设置算好当参数传入**(queue/steer 不再靠插件猜);提问卡"自定义答案"等输入框的 Enter 根本不经过 sendSession → 不再被误当 dsh 发送。
+- 旧 Enter 拦截仅在**无 sendSession 的老 dsh** 上兜底(`window.__dshrSendWrapped` 在场即让位)。slash 直通/pill 追加/75s 超时自发语义原样搬进 gate。日志 `[send] sendSession gate installed (client 2.1.1)` 为启用铁证。
+- Windows `install.ps1` 移植到 2.1.0 规格:真实版本号(旧脚本硬编码 0.1.0!)、`%APPDATA%\Code\argv.json`(Windows 真位置,旧脚本只写 ~/.vscode)、CDP 9223、node_modules 拷贝(堆桥依赖 ws,旧脚本漏拷=装了即废)、remote.extensionKind=ui、tgz 版本钉死。install.sh 同步补 remote.extensionKind。三件套统一 v2.1.0 发 GitHub Release(assets: 插件 tgz + 扩展 vsix)。
+
 # Changelog
 
 ## 2.0.3:修 2.0.2 回归——dshState.log 是函数不是 channel(本机也卡的元凶)(2026-11-02)
