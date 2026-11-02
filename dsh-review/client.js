@@ -134,8 +134,11 @@ window.__ModuleLoader__.load({
       if (!els) return;
       if (annoAnimT) { clearInterval(annoAnimT); annoAnimT = null; }
       const t0 = Date.now();
-      const T = 60000, ceil = 96; // (0.2.40) shorter launch window: steeper start
-      try { window.parent.postMessage({ type: "dshPasteLog", line: "[paste] prog animator start (client 0.2.41, quad T=60s)" }, "*"); } catch (err) { /* noop */ }
+      const T = 30000, ceil = 94; // (0.2.42) 30s launch window: the bar ROARS
+      // early then asymptotes — real captures run 20-40s, so with T=60/90 the
+      // user only ever saw the front segment + the final jump-to-100 sprint,
+      // which read as slow-then-fast ("还是先慢后快"). Now: 94% is reached at
+      // T, prepared tops the last ~6% — perceived motion is fast-then-slow.
       annoAnimT = setInterval(function () {
         try {
           const cur = parseFloat(els.bar.style.width) || 0;
