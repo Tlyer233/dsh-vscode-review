@@ -189,7 +189,12 @@ window.__ModuleLoader__.load({
       const now = Date.now();
       if (now - lastAnnoSendMark < 200) return false;  // debounce: one gesture, one send
       lastAnnoSendMark = now;
-      if (annoDockChips.length === 0) return false;    // NO annotations: fully native Enter
+      // (0.2.27) DOCK IS NOT GROUND TRUTH: the extension re-checks its own
+      // beacon state (annoCurrentChips) and answers '' instantly when Copilot
+      // is truly empty (no flash, ~100ms round trip). Killing this early
+      // return fixes the stale-dock class: annotations created while the
+      // toggle was OFF never reached our dock, sends then bypassed capture
+      // entirely ("我标注了, copilot有, 但没带上").
       const draft = annoReadDraft(event).trim();
       // (0.2.19) USER-FINAL ORDER — ALWAYS read Copilot FIRST, send after.
       // No fast path on stale lists: the extension does the authoritative read

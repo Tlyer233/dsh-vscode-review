@@ -1,5 +1,14 @@
 # Changelog
 
+## 开关重开后标注"没带上"根治(2026-11-02, 扩展 0.1.179 / 客户端 0.2.27)
+
+日志铁证:标注发生在 `annotationToDsh=off` 窗口内 → `annoMirrorOnState` 的开关闸把预留+dock 推送整段跳过(日志 0 条 quiet capture),重开开关后 Copilot 状态无变化 → beacon 不再触发 → 客户端 dock 永远 chips=0 → `markAnnoSend` 提前放行原生发送。用户症状:"我标注了, copilot有, 但没有带上"。
+
+- 客户端 0.2.27(**根治**):删掉 `annoDockChips.length===0 → return false` 早退——**dock 不是真值**,扩展手里有 beacon 实况(annoCurrentChips),真空时它秒答 ''(无闪、~100ms),有货就收。此类"陈旧 dock 漏发"永绝
+- 扩展 0.1.179(加固):`annoResyncIfOn` 挂进 onState beacon(去重),开关重开后的**任何**一次 beacon 都会补预留+推 dock
+- 用户裁定记录:"你 dsh 进度条渲染就行, 有进度条用户会接受" —— 堆路 15-40s 保持进度环, 不做加速特化
+
+
 ## Heap-Bridge 进插件:发送主管线换血(2026-11-02, 扩展 0.1.178 / 客户端 0.2.26)
 
 用户裁定两枚:①Heap-Bridge=发送默认主路(hover 卡降兜底,一行不删);②heap 路 value **原样全写含全 CSS**(不再剥 KEY COMPUTED STYLES 节,那是 hover 截断时代的遗物)。

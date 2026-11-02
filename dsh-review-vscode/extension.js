@@ -110,7 +110,7 @@ function activate(context) {
         log: (msg) => log.appendLine('[anno] ' + msg),
         cdpPort: 9223,
         getDshHostPort: dshComposerHostPort,
-        onState: (chips, lines) => { annoWidgetBeaconed(); annoMirrorOnState(chips, lines, log) },
+        onState: (chips, lines) => { annoWidgetBeaconed(); annoMirrorOnState(chips, lines, log); annoResyncIfOn(chips, lines, log) },
         // (0.1.119) 打开即回 (user's "0.0000000001ms"): the moment Copilot
         // opens, return to dsh — no debounce. Exception: while annoSendSync is
         // reading/deleting (freeze) or ✕ deletes are in flight, keep it open,
@@ -1357,7 +1357,33 @@ function annoPushDockList() {
   } catch (e) { log.appendLine('[anno] dock push failed: ' + String(e).slice(0, 100)) }
 }
 
-/** Quietly capture ONE beaconed chip: read-only, no clicks, no deletion. */
+/**
+ * (0.1.179) TOGGLE-RESYNC: the feature-on gate in annoMirrorOnState skips
+ * reservations while annotationToDsh is off; re-enabling the toggle produced
+ * NO new beacon (Copilot state unchanged) -> the dsh dock stayed chips=0 and
+ * sends bypassed the whole capture ("我标注了, copilot有, 但没带上"). Fix: the
+ * beacon handler calls this on EVERY state message (deduped inside); once the
+ * feature is on it re-runs the reservation for all current chips.
+ */
+let annoResyncDone = ''
+function annoResyncIfOn(chips, lines, log) {
+  if (!annoFeatureOn()) { annoResyncDone = ''; return }
+  if (!dshState.annoDriver) return
+  const keys = annoChipKeys(chips)
+  const sig = keys.join('|')
+  if (sig === annoResyncDone) return
+  annoResyncDone = sig
+  for (let i = 0; i < chips.length; i++) {
+    const k = keys[i]
+    if (!annoCaptureFiles.has(k)) {
+      log.appendLine('[anno] resync: feature re-enabled — reserving chip #' + (i + 1) + ' @' + chips[i].name)
+      void annoQuietCapture(chips[i], i, k)
+    }
+  }
+  annoPushDockList()
+}
+
+
 async function annoQuietCapture(chip, idx, key) {
   const log = dshState.logChannel
   // (0.1.176) USER RULING — UNIFY ON THE HOVER CARD: at annotation time we
