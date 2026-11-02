@@ -4230,7 +4230,37 @@ window.__ModuleLoader__.load({
           }
           return openKnownSession(sessions, anyId, matches[0] && matches[0].path);
         }
-        if (matches.length === 0) return false;
+        if (matches.length === 0) {
+          // (2.1.10, user spec 2026-11-02) blank-land across ALL workspaces:
+          // the window has folders but NO dsh workspace matches the whitelist
+          // (matches empty) and native restore landed on NOTHING (current
+          // undefined → hero). The old code returned false and left the hero
+          // forever ("刷新后不默认打开最近对话"). Open the most recently
+          // UPDATED real session globally — only once the lists are truly
+          // ready, so a half-hydrated store never wins the race. When a real
+          // session IS currently open (current defined), we do NOT touch it.
+          if (current === undefined && (vscodeScopePaths.length > 0 || vscodeScopeRawPaths.length > 0)) {
+            let wsReady = false, ssReady = false;
+            try { wsReady = (workspaces.list.getSnapshot() || {}).phase === "ready"; } catch (e) { /* keep false */ }
+            try { ssReady = (sessions.list.getSnapshot() || {}).phase === "ready"; } catch (e) { /* keep false */ }
+            if (wsReady && ssReady) {
+              let best = null, bestAt = -Infinity;
+              for (let wi = 0; wi < items.length; wi++) {
+                const w = items[wi];
+                const ids = Array.isArray(w && w.sessionIds) ? w.sessionIds : [];
+                for (let si = 0; si < ids.length; si++) {
+                  const sum = byId[ids[si]];
+                  if (!isRealSession(sum) || sum.archived) continue;
+                  const at = typeof sum.updatedAt === "number" ? sum.updatedAt : 0;
+                  if (at > bestAt) { best = ids[si]; bestAt = at; }
+                }
+              }
+              if (best) return openKnownSession(sessions, best, "");
+              landDone = true; // lists ready, genuinely no sessions → hero is correct
+            }
+          }
+          return false;
+        }
         return connectNewSession(matches[0], workspaces, sessions);
       }
 
