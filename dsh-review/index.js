@@ -38,9 +38,6 @@ function reviewConfigSchema(value) {
     // Copilot flow (off). The extension reads this to decide interception.
     annotationToDsh: v.annotationToDsh !== false,
     annoHeapBridge: v.annoHeapBridge !== false,
-    // (0.2.33) carry ③files ④snippets ⑤terminal attachments too (default OFF:
-    // dsh has its own implementations; the clear-everything rule applies either way)
-    annoCarryMisc: v.annoCarryMisc === true,
   }
 }
 reviewConfigSchema.toJSON = function toJSON() {
@@ -58,7 +55,6 @@ reviewConfigSchema.toJSON = function toJSON() {
       claudeAdapt: { type: 'boolean', default: true },
       annotationToDsh: { type: 'boolean', default: true },
       annoHeapBridge: { type: 'boolean', default: true },
-      annoCarryMisc: { type: 'boolean', default: false },
     },
   }
 }

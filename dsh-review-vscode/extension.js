@@ -1070,14 +1070,6 @@ function annoChipKeys(chips) {
  * Screenshot ATTACHMENTS (kind:'image', "Browser Screenshot"/"Area") are a
  * freebie of the same scan and land as extra files listed in the block.
  */
-function annoHeapMiscOn() {
-  // (0.1.184) ③文件/④代码段/⑤终端 attachments: OFF by default (the user has
-  // their own implementations for these); checkbox annoCarryMisc turns them on.
-  try {
-    const raw = JSON.parse(fs.readFileSync(path.join(os.homedir(), '.dsh', 'review', 'shadow', 'settings.json'), 'utf8'))
-    return raw.annoCarryMisc === true
-  } catch (e) { return false }
-}
 function annoHeapOn() {
   try {
     const raw = JSON.parse(fs.readFileSync(path.join(os.homedir(), '.dsh', 'review', 'shadow', 'settings.json'), 'utf8'))
@@ -1085,7 +1077,6 @@ function annoHeapOn() {
   } catch (e) { return true }
 }
 let annoHeapShots = [] // attachment screenshot files collected this send
-let annoHeapMisc = [] // (0.1.184) file/snippet/terminal files collected this send
 function annoHeapElLine(E) {
   const l = String(E.value || '').split('\n').find((x) => x.indexOf('Element:') === 0) || ''
   return l.slice(9).trim()
@@ -1136,7 +1127,7 @@ async function annoHeapCaptureNow() {
   const log = dshState.logChannel
   let prefer = ''
   try { prefer = (vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders[0] && vscode.workspace.workspaceFolders[0].name) || '' } catch (e) { /* noop */ }
-  return annoHeap.capture({ preferTitle: prefer, includeMisc: true, log })
+  return annoHeap.capture({ preferTitle: prefer, log })
 }
 function annoHeapPairFill(chips, keysSend, data) {
   const log = dshState.logChannel
@@ -1146,7 +1137,7 @@ function annoHeapPairFill(chips, keysSend, data) {
     if (c.kind && c.kind !== 'element') {
       // (0.1.184) attachments ride the misc/shot sections; the row only marks
       // them handled so no hover/page fallback writer touches them.
-      return { name: c.name, text: null, source: (annoHeapMiscOn() || c.kind === 'image') ? 'misc' : 'misc-skip', file: null, shot: null, kind: c.kind }
+      return { name: c.name, text: null, source: 'misc', file: null, shot: null, kind: c.kind }
     }
     const E = annoHeapPick(c.name, data.entries, used)
     if (!E) return { name: c.name, text: null, source: 'heap-miss', file: annoCaptureFiles.get(keysSend[i]) || null, shot: null }
@@ -1180,36 +1171,7 @@ function annoHeapPairFill(chips, keysSend, data) {
       log.appendLine('[trump] heap shot: ' + p + ' (' + I.len + 'B)')
     } catch (e) { log.appendLine('[trump] heap shot failed: ' + String(e).slice(0, 90)) }
   }
-  // (0.1.184) ③file ④snippet(file+range) ⑤terminal/generic — opt-in (annoCarryMisc)
-  annoHeapMisc = []
-  const miscSeen = new Set()
-  const KIND_LABEL = { file: '文件', generic: '终端/选区文本', instruction: '规则', image: '图片' }
-  if (!annoHeapMiscOn()) log.appendLine('[trump] heap misc: carry OFF — attachments cleared but not appended')
-  for (const M of (annoHeapMiscOn() ? data.misc || [] : [])) {
-    if (!M || M.err) continue
-    const key = M.id || (M.kind + '|' + M.name + '|' + (M.uri || ''))
-    if (!key || miscSeen.has(key)) continue
-    miscSeen.add(key)
-    try {
-      let body = '# kind: ' + M.kind + ' (' + (KIND_LABEL[M.kind] || M.kind) + ')' +
-        '\n# name: ' + (M.fullName || M.name || '(无名)') +
-        '\n# id: ' + M.id +
-        (M.uri ? '\n# path: ' + M.uri + (M.range ? '  L' + M.range.start + '-' + M.range.end : '') : '') +
-        '\n# via: dsh-review (heap-bridge misc, no hover)\n\n'
-      if (M.uri) {
-        try {
-          const rawTxt = fs.readFileSync(M.uri, 'utf8')
-          body += M.range ? rawTxt.split('\n').slice(Math.max(0, M.range.start - 1), M.range.end).join('\n') : rawTxt.slice(0, 300000)
-        } catch (err) { body += '(读取失败: ' + err.message + ')' }
-      } else body += M.text || '(无文本值)'
-      const safeName = String(M.fullName || M.name || M.kind).replace(/[^a-zA-Z0-9._ -]+/g, '_').replace(/\s+/g, '_').slice(0, 40)
-      const f = path.join(dir, stamp + '-misc-' + (annoHeapMisc.length + 1) + '-' + safeName + '.txt')
-      fs.writeFileSync(f, body)
-      annoHeapMisc.push({ name: M.fullName || M.name || M.kind, label: KIND_LABEL[M.kind] || M.kind, file: f })
-      log.appendLine('[trump] heap misc: ' + f + ' [' + M.kind + ']')
-    } catch (e) { log.appendLine('[trump] heap misc failed: ' + String(e).slice(0, 90)) }
-  }
-  log.appendLine('[trump] heap paired: ' + out.filter((x) => x.source === 'heap').length + '/' + chips.length + ' chip(s), ' + annoHeapShots.length + ' shot(s), ' + annoHeapMisc.length + ' misc(s)')
+  log.appendLine('[trump] heap paired: ' + out.filter((x) => x.source === 'heap').length + '/' + chips.length + ' chip(s), ' + annoHeapShots.length + ' shot(s)')
   return out
 }
 
@@ -1635,7 +1597,7 @@ async function annoSendSync(req) {
   // it is empty here, Copilot holds nothing for us — a plain dsh send (or a
   // stop-button click that the composer heuristics mistook for send) must not
   // flash the panel at all. Fixes the user's "空发送/暂停也闪 copilot".
-  if (!annoCurrentChips.length && !annoHeapMiscOn()) {
+  if (!annoCurrentChips.length) {
     log.appendLine('[anno] consumed: no Copilot annotations pending — stay quiet (no flash)')
     annoPostPrepared(req, '')
     annoSendBusy = false // (0.1.180) THE leak: answered but stayed busy -> every later send hit "during busy" and hung 75s with zero annotations (user: "没标注直接卡死")
@@ -1643,27 +1605,6 @@ async function annoSendSync(req) {
   }
   // Freeze the flash-back-to-dsh: a beacon fired by the flash below would
   // otherwise hide the widget before we read it (the capture-0-chips bug).
-  // (0.1.184) chips==0 BUT annoCarryMisc on: heap-probe anyway (no flash
-  // needed — the bridge never touches the panel); plain send if truly empty.
-  if (!annoCurrentChips.length) {
-    try {
-      const only = await annoHeapCaptureNow()
-      const ctxsOnly = annoHeapPairFill([], annoChipKeys([]), only)
-      void ctxsOnly
-      const hasAny = annoHeapShots.length || annoHeapMisc.length
-      let blk = ''
-      if (hasAny) {
-        const ls = ['本次发送附带 Copilot 输入区附件:']
-        for (const sp of annoHeapShots) ls.push('   截图文件: ' + sp)
-        annoHeapMisc.forEach((m, n) => ls.push('   ' + (n + 1) + '. ' + m.name + ' [' + m.label + '] 内容文件: ' + m.file))
-        blk = ls.join('\n')
-      }
-      annoLastBlock = blk
-      annoPostPrepared(req, blk)
-    } catch (e) { annoPostPrepared(req, '') }
-    annoSendBusy = false
-    return
-  }
   annoFreezeReturn = true
   try {
     // (0.1.120) 0s 发送闪回: the reopen path reads straight from the FLASH
@@ -1793,11 +1734,6 @@ async function annoSendSync(req) {
         lines.push('浏览器截图附件(随本次标注捕获):')
         for (const sp of annoHeapShots) lines.push('   截图文件: ' + sp)
       }
-      if (annoHeapMisc && annoHeapMisc.length) {
-        lines.push('')
-        lines.push('附加上下文附件(文件/代码段/终端,随本次发送捕获):')
-        annoHeapMisc.forEach((m, n) => lines.push('   ' + (n + 1) + '. ' + m.name + ' [' + m.label + '] 内容文件: ' + m.file))
-      }
       annoPreparedBlock = capIdx.length ? lines.join('\n') : ''
       annoLastBlock = annoPreparedBlock
       log.appendLine('[trump] ③ block ready pre-cleanup (' + capIdx.length + ' rows)')
@@ -1890,7 +1826,7 @@ function annoMirrorOnState(chips, lines, log) {
         const c = annoCurrentChips[i]
         if (annoBaseline.has(c.name)) continue
         // (0.1.184) reservations are ELEMENT-only; file/generic/image travel
-        // via the send-time heap misc/shot sections (annoCarryMisc = carry).
+        // via the send-time heap shot section (attachments cleared, not carried).
         if (annoCurrentChips[i].kind && annoCurrentChips[i].kind !== 'element') continue
         if (annoCaptureFiles.has(k) || annoCaptureInflight.has(k)) continue
         annoCaptureInflight.add(k)

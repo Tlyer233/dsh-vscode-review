@@ -51,18 +51,6 @@ const DUMP_ELEMENT = `function(){ try {
   return JSON.stringify({ name: this.name || '', fullName: this.fullName || this.name || '', id: this.id || '', value: String(v), img: img, imgLen: imgLen, mime: this.imageMimeType || 'image/jpeg', dims: this.dimensions || null, anc: (this.ancestors || []).length, attrs: this.attributes || null, inner: this.innerText || '' });
 } catch (e) { return JSON.stringify({ err: e.message }); } }`
 
-const DUMP_MISC = `function(){ try {
-  var out = { kind: String(this.kind || ''), name: this.name || '', fullName: this.fullName || this.name || '', id: String(this.id || '') };
-  var v = this.value;
-  if (typeof v === 'function') { try { v = v(); } catch (e) { v = undefined; } }
-  if (v && typeof v === 'object') {
-    if (v.uri && (v.uri.fsPath || v.uri.path)) { out.uri = String(v.uri.fsPath || v.uri.path); if (v.range) { try { out.range = { start: v.range.startLineNumber || 1, end: v.range.endLineNumber || 1 }; } catch (e) { /* noop */ } } }
-    else if (v.fsPath !== undefined || (v.path && v.scheme)) out.uri = String(v.fsPath || v.path);
-    else { try { out.text = JSON.stringify(v).slice(0, 4000); } catch (e) { out.text = ''; } }
-  } else if (v !== undefined && v !== null) out.text = String(v);
-  return JSON.stringify(out);
-} catch (e) { return JSON.stringify({ err: e.message }); } }`
-
 const DUMP_IMAGE = `function(){ try {
   var raw = this.value; if (typeof raw === 'function') raw = raw();
   if (raw && !(raw instanceof Uint8Array)) raw = (raw.buffer instanceof ArrayBuffer) ? new Uint8Array(raw.buffer, raw.byteOffset || 0, raw.byteLength !== undefined ? raw.byteLength : undefined) : (raw.buffer ? new Uint8Array(raw.buffer) : new Uint8Array(raw));
@@ -83,7 +71,6 @@ async function capture(opts) {
   const log = (opts && opts.log) || { appendLine: () => {} }
   const port = (opts && opts.port) || 9223
   const prefer = (opts && opts.preferTitle) || ''
-  const includeMisc = !!(opts && opts.includeMisc) // (0.1.184) 文件/代码段/终端: opt-in
   const targets = await getTargets(port)
   const pages = targets.filter((x) => x.type === 'page' && String(x.url || '').indexOf('vscode-file') === 0)
   if (!pages.length) throw new Error('no workbench CDP target on ' + port)
@@ -143,7 +130,7 @@ async function capture(opts) {
     for (let n = 0; n < nodeCount; n++) starts[n + 1] = starts[n] + nodes[n * NF + iEC] * 3
     const tn = (o) => typeNames[nodes[o * NF + iType]]
     const sOf = (o) => { const tt = tn(o); if (tt === 'string' || tt === 'concatenated string') { const s = strings[nodes[o * NF + iName]]; return typeof s === 'string' ? s : '' } return null }
-    const elementIds = [], imageIds = [], miscIds = []
+    const elementIds = [], imageIds = []
     for (let n = 0; n < nodeCount; n++) {
       if (nodes[n * NF + iType] !== T_OBJ) continue
       if (nodes[n * NF + iEC] < 3) continue
@@ -158,7 +145,6 @@ async function capture(opts) {
       }
       if (kind === 'element' && val && val.indexOf('Attached Element Context') === 0) elementIds.push(String(nodes[n * NF + iId]))
       else if (kind === 'image') imageIds.push(String(nodes[n * NF + iId]))
-      else if (includeMisc && kind && kind !== 'element' && kind !== 'image') miscIds.push(String(nodes[n * NF + iId]))
     }
     // drop the giant graph before bridging (memory)
     log.appendLine('[anno][heap] scan: ' + elementIds.length + ' element, ' + imageIds.length + ' image entries — bridging live')
@@ -169,7 +155,7 @@ async function capture(opts) {
       let g = null
       try {
         g = await send('HeapProfiler.getObjectByHeapObjectId', { heapSnapshotObjectId: sid, objectId: sid })
-      } catch (e) { return }
+      } catch (e) { log.appendLine('[anno][heap] bridge entry skipped: ' + String(e.message).slice(0, 90)); return }
       if (!g || g.error) return
       const oid = g.result && g.result.result ? g.result.result.objectId : (g.result && g.result.objectId)
       if (!oid) return
@@ -177,14 +163,12 @@ async function capture(opts) {
         const d = await send('Runtime.callFunctionOn', { objectId: oid, functionDeclaration: fn, returnByValue: true, declaration: false })
         const E = JSON.parse(String(((d.result || {}).result || {}).value || '{}'))
         if (E && !E.err) out.push(E)
-      } catch (e) { /* one bad entry must not sink the batch */ }
+      } catch (e) { log.appendLine('[anno][heap] dump entry skipped: ' + String(e.message).slice(0, 90)) }
     }
     for (const sid of elementIds) await bridge(sid, DUMP_ELEMENT, entries)
     for (const sid of imageIds) await bridge(sid, DUMP_IMAGE, images)
-    const misc = []
-    for (const sid of miscIds) await bridge(sid, DUMP_MISC, misc)
     if (!entries.length && !images.length) throw new Error('heap held no attachment entries (bridge empty)')
-    return { entries, images, misc }
+    return { entries, images }
   } finally {
     if (fd !== null) { try { fs.closeSync(fd) } catch (e) { /* noop */ } }
     try { fs.unlinkSync(snapPath) } catch (e) { /* noop */ }

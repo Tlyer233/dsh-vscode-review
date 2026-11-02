@@ -1,5 +1,12 @@
 # Changelog
 
+## 用户裁决:砍掉③④⑤,只留①浏览器标注+②图片,设置也删(2026-11-02, 扩展 0.1.187 / 客户端 0.2.37)
+
+"还是不行, 这样吧不要文件那些了, 只有浏览器标注和图片 / 把设置删了"。misc(文件/代码段/终端)全链拆除:anno-heap 不再扫/桥/返回 misc(删 DUMP_MISC 等),extension 删 annoHeapMiscOn/annoHeapMisc/pairFill 写块/chips==0-misc-only 支/block 附加上下文节,client 删 annoCarryMisc 复选框全链(defaults/normalize/draft/live/shown/dirty/deps/reset/save/JSX),index.js 删 schema 两行。**只保留 element(标注)+image(截图)两类**,清全场规则(所有 chip 无论类型发送后一律 ✕ 清)不变。
+
+顺带补上 0.2.36 **从未写盘**的两刀(仓库 grep=0 铁证,又一桩半套病):client `setAnnoDockChips` 存 kind + `annoComposeBatch` 只列 element——这解释了 15:17 轮为何还出现 `@Terminal Selection (待补)`(客户端 dock 自拼块把附件也列了)。anno-heap 桥加**失败可见日志**(`bridge entry skipped: ...`),不再静默。grep 归零核验:`annoCarryMisc/annoHeapMisc`=0。
+
+## 桥"无响应"挂死全链 + dock 自拼块混列附件(2026-11-02, 扩展 0.1.186 / 客户端 0.2.36)
 ## 桥"无响应"挂死全链 + dock 自拼块混列附件(2026-11-02, 扩展 0.1.186 / 客户端 0.2.36)
 
 15:12 测试轮日志时序定罪(行号即顺序):`PrepareReq(256) → captured 8 → scan 3e+2i bridging(268) → 发送739(269)`,**中间没有 heap paired / prepared posted / bridge failed**——`getObjectByHeapObjectId` 的响应永不到达(无 error 无 response,GC 竞速),promise 悬空 → annoSendSync 卡死 → prepared 永不回 → 第二次 Enter 走 busy 直发,内容是客户端 dock 自拼块:`@Terminal Selection 全文文件:(待补)`×4 混列、无截图/misc 节。两修:
