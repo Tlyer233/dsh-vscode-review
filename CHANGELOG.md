@@ -1,5 +1,15 @@
 # Changelog
 
+## 段落批注并入 dsh-review 客户端:统一 Enter 总闸(2026-11-02, 客户端 0.2.30)
+
+dsh-annotate(选段落→批注→打包发送)原是同页第二个 client 插件,与 dsh-review 的 markAnnoSend **各挂各的 Enter**:它 document-capture 先手 stopPropagation,浏览器标注拦截被挤掉;抓取在飞时两边互锁 → "发不出去"。按用户令**整编内化**:
+
+- 其 client.js **原样并入** `dsh-review/client.js`(剥 loader 壳成 IIFE,react 走我们 require;`apply` 串进我们 apply,inject 增补 locale/uiConversation)
+- **一个总闸**:`window.__dshrWillTakeEnter()`(gate 开 && 无抓取在飞 = 我们接管;否则段落照旧自己发)
+- **合并发送**:被接管的那次 Enter 里,段落批注经 `__dshaPeek` 拼进 draft,随浏览器 block 一起走;发成功 `__dshaClear`;抓取在飞时走 `__dshaFlushNow`(段落即刻经 composer 按钮发,不被扣)
+- 独立插件已从 profiles/web **卸载**(防止双挂载复活)
+
+## 抓取进行中的第二条消息不再被吞进队列(2026-11-02, 客户端 0.2.29)
 ## 抓取进行中的第二条消息不再被吞进队列(2026-11-02, 客户端 0.2.29)
 
 日志还原:第一条(带标注)发送被扣住等堆路 15-40s,期间用户又按 Enter → 旧代码 `annoProgReq!==null → return true` 把它也扣下 → dsh 队列**合并**进那条长 prompt 一起发出,用户侧看两条消息挂着 ×"发不出去"。修:抓取在飞时的后续 Enter **立即走原生队列发送**(它不需要 block)。附带定调:拦截**不看**正文是否 @了 chip——标注永远自动随发(第一版误加"引用才拦"当场撤回)。
