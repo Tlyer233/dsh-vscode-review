@@ -1,5 +1,12 @@
 # Changelog
 
+## 无标注发送卡死 75s 根治(2026-11-02, 扩展 0.1.180)
+
+0.2.27 把"问不问扩展"的决定权移给扩展后,潜伏的 **annoSendBusy 泄漏** 浮出水面:`annoSendSync` 四个早退(busy 忽略/无 driver/开关 off/**空标注**)都 `return`,其中空标注那条**答了但不清 busy** → 下一次发送撞 `during busy — ignored`(不回答) → 客户端握着进度环干等 75s。用户症状:"copilot 没有标注,直接卡死,发都发不出去"。
+
+四处早退全部补齐两条铁律——**每个 req 必回答(空串也算)、每条 return 必清 busy**;busy 撞车时也秒答 ''(请求者永不被晾)。
+
+## 开关重开后标注"没带上"根治(2026-11-02, 扩展 0.1.179 / 客户端 0.2.27)
 ## 开关重开后标注"没带上"根治(2026-11-02, 扩展 0.1.179 / 客户端 0.2.27)
 
 日志铁证:标注发生在 `annotationToDsh=off` 窗口内 → `annoMirrorOnState` 的开关闸把预留+dock 推送整段跳过(日志 0 条 quiet capture),重开开关后 Copilot 状态无变化 → beacon 不再触发 → 客户端 dock 永远 chips=0 → `markAnnoSend` 提前放行原生发送。用户症状:"我标注了, copilot有, 但没有带上"。

@@ -1515,19 +1515,26 @@ async function annoSendSync(req) {
   if (annoSendBusy) {
     // A read is already running for this send — do NOT double-drive the widget
     // and do NOT answer with a stale block; the running read will post for req.
-    log.appendLine('[anno] send req ' + req + ' during busy — ignored')
+    log.appendLine('[anno] send req ' + req + ' during busy — answered plain')
+    annoPostPrepared(req, '') // (0.1.180) requester MUST get an answer — silence here froze the composer 75s
     return
   }
   annoSendBusy = true
   const log = dshState.logChannel
   const driver = dshState.annoDriver
-  if (!driver) return
+  if (!driver) { // (0.1.180) answer + clear busy on EVERY exit
+    annoSendBusy = false
+    annoPostPrepared(req, '')
+    return
+  }
   // (0.1.115) Toggle off = feature does not exist: no capture, no clear, no
   // flash-back. The consume message itself only arrives when the client's own
   // gate passes, but the extension re-checks here (event-time file read) so the
   // sidebar behaves identically even if an older client still posts it.
   if (!annoFeatureOn()) {
     log.appendLine('[anno] consumed ignored: annotationToDsh=off (feature silent)')
+    annoSendBusy = false // (0.1.180) no busy leak
+    annoPostPrepared(req, '')
     return
   }
   // (0.1.148) NO-ANNOTATION = NO-FLASH. annoCurrentChips is fed by the render
@@ -1539,6 +1546,7 @@ async function annoSendSync(req) {
   if (!annoCurrentChips.length) {
     log.appendLine('[anno] consumed: no Copilot annotations pending — stay quiet (no flash)')
     annoPostPrepared(req, '')
+    annoSendBusy = false // (0.1.180) THE leak: answered but stayed busy -> every later send hit "during busy" and hung 75s with zero annotations (user: "没标注直接卡死")
     return
   }
   // Freeze the flash-back-to-dsh: a beacon fired by the flash below would
