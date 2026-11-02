@@ -118,6 +118,7 @@ window.__ModuleLoader__.load({
     // touches sendSession, so it stops being intercepted at all. The old Enter
     // interception stays ONLY as fallback for builds without sendSession.
     const annoGatePending = new Map();
+    var annoIframeBootAt = Date.now();
     function annoSendGate(orig, session, text, attachmentIds, mode, signal) {
       try {
         if (!vscodeIframeHint() || !getReviewSettings().annotationToDsh) return orig(session, text, attachmentIds, mode, signal);
@@ -4239,7 +4240,12 @@ window.__ModuleLoader__.load({
           // UPDATED real session globally — only once the lists are truly
           // ready, so a half-hydrated store never wins the race. When a real
           // session IS currently open (current defined), we do NOT touch it.
-          if (current === undefined && (vscodeScopePaths.length > 0 || vscodeScopeRawPaths.length > 0)) {
+          // (2.1.11) the ssh window often has NO folder open (scopePaths
+          // empty, "attached-to-host" windows) — Policy-1 pins it home, but
+          // the USER spec is "after a refresh, blank → jump to most recently
+          // active". Confine to the first 10s of this iframe's life so a
+          // later manual "home" click is never hijacked.
+          if (current === undefined && Date.now() - annoIframeBootAt < 10000) {
             let wsReady = false, ssReady = false;
             try { wsReady = (workspaces.list.getSnapshot() || {}).phase === "ready"; } catch (e) { /* keep false */ }
             try { ssReady = (sessions.list.getSnapshot() || {}).phase === "ready"; } catch (e) { /* keep false */ }
