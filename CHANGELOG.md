@@ -1,5 +1,20 @@
 # Changelog
 
+## 2.0.3:修 2.0.2 回归——dshState.log 是函数不是 channel(本机也卡的元凶)(2026-11-02)
+
+2.0.2 门闩埋点写 `dshState.log.appendLine(...)`,而 `dshState.log` 是 setLog 注入的**函数** → annoSendSync 第一行即 TypeError → promise reject(日志只余 'consume failed: dshState.log.appendLine is not a function')→ 所有窗口(含本机)prepared 永不回 → 75s 卡。同款误用共 3 处,全改 `dshState.log(...)`。教训:**用 dshState 记日志前先 grep 该属性既有用法**。
+
+## 2.0.2:SSH 窗口远程投递(workspace.fs 走现成 ssh 通道写 3080)+ 发送门闩日志(2026-11-02)
+
+- 用户令:"local 照旧(重启即清的临时目录);ssh 就写过去(那边是 Linux)"。实现:`annoAuthority()` 取工作区 vscode-remote authority → annoPut 经 `workspace.fs` 写远程 `/tmp/dsh-trump/`(与 Mac tmp 同语义,重启自清);块里的路径即 Linux 真路径,agent 直接可读。写失败→Mac 本地副本+日志。三个写手同步化 await。2.0.1 另有 `[env] window=LOCAL|REMOTE` 打印。3080 老 dsh-annotate 与老扩展副本 0.1.107 已删。
+
+## 2.1.0 扩展 + 2.0.49 客户端:粘贴文件远程上传 + slash 命令放行 + 发送模式跟随用户设置(2026-11-02)
+
+- **粘贴远程上传(U 方案)**:ssh 窗口里从访达复制文件粘贴进 dsh → 经现成 ssh 通道上传到 3080 `/tmp/dsh-paste/<stamp>-<name>/`,引用改写为 Linux 路径;目录递归(≤200 文件/64MB);超限/失败保留 Mac 原路径+日志,粘贴绝不吞。本机窗口行为一字未动。新公共模块 `lib/remote-put.js`;dsh-browser 两个消费点异步分流。`sendFileToDsh` 目录判定改 `workspace.fs.stat`(远端感知)。
+- **slash 命令放行(实拍:/plan 不被识别)**:markAnnoSend 门口——草稿以 `/` 开头 → 原生发送,零拦截零追加;pill 留架随下一条普通消息走。
+- **发送模式跟随设置("我设置是 steer 插入,就要按设置来")**:`__dshrAnnoPrompt` 弃硬编码 queue;`annoPromptMode()` 镜像 GUI resolveSubmitMode:空闲=queue(=直发),生成中=`ui-conversation.busyEnter` 偏好;读不到设置面退 queue(零回归)。日志 `[paste] prompt mode=…(busyEnter=… running=…)`。
+
+
 # v2.0.0(2026-11-02)— 堆桥全链路定版:扩展 2.0.0 / dsh 客户端 2.0.0
 
 标注→dsh 主管线自 Heap-Bridge 起全面换脑,本次定版内容:

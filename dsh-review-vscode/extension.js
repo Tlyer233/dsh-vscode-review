@@ -303,11 +303,16 @@ function activate(context) {
       return
     }
     const fsx = require('node:fs')
-    const refs = list.map((u) => {
+    // (2.1.0) remote-aware dir check: in an SSH window u.fsPath is a Linux path
+    // that does not exist on the Mac (ui extension), so workspace.fs.stat (the
+    // ssh channel) is the primary probe; node fs stays as local fallback.
+    const refs = []
+    for (const u of list) {
       let isDir = false
-      try { isDir = fsx.statSync(u.fsPath).isDirectory() } catch { /* keep as file */ }
-      return { kind: isDir ? 'folder' : 'file', path: u.fsPath }
-    })
+      try { isDir = (await vscode.workspace.fs.stat(u)).type === vscode.FileType.Directory }
+      catch (e) { try { isDir = fsx.statSync(u.fsPath).isDirectory() } catch (e2) { /* keep as file */ } }
+      refs.push({ kind: isDir ? 'folder' : 'file', path: u.fsPath })
+    }
     log.appendLine('[sendFileToDsh] n=' + refs.length + ' first=' + refs[0].path)
     const ok = await sendRefsToDsh(refs, refs.map((r) => r.path).join('\n'))
     if (!ok) log.appendLine('[sendFileToDsh] sidebar not ready')

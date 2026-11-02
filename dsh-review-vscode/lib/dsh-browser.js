@@ -12,6 +12,7 @@ const vscode = require('vscode')
 const fs = require('node:fs')
 const path = require('node:path')
 const os = require('node:os')
+const remotePut = require('./remote-put.js')
 let electron = null
 try { electron = require('electron') } catch (e) { /* not available in remote extension host */ }
 const { execFile, execFileSync } = require('node:child_process')
@@ -935,6 +936,67 @@ function parseNsfilenamesPlist(xml) {
 }
 
 /**
+ * (2.1.0) Paste-file REMOTE DELIVERY (U plan, user-approved): an SSH window's
+ * agent lives on the Linux host, so Mac clipboard paths are useless there.
+ * Upload each file through the already-authenticated ssh channel (remote-put)
+ * into /tmp/dsh-paste/<stamp>-<name>/ and reference the LINUX path. Caps:
+ * 64MB per file, 200 files per folder; over-cap or failed items KEEP the Mac
+ * path (logged) — the paste itself is never swallowed. Local windows never
+ * enter this function.
+ * @param {string[]} macPaths
+ * @returns {Promise<Array<{kind: string, path: string}>>}
+ */
+async function uploadPastedPathsForRemote(macPaths) {
+  const PASTE_MAX_FILE = 64 * 1024 * 1024
+  const PASTE_MAX_DIR_FILES = 200
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
+  const walk = (root, acc) => {
+    let entries = []
+    try { entries = fs.readdirSync(root, { withFileTypes: true }) } catch (e) { return }
+    for (const en of entries) {
+      if (acc.length >= PASTE_MAX_DIR_FILES) return
+      const full = path.join(root, en.name)
+      if (en.isDirectory()) walk(full, acc)
+      else if (en.isFile()) acc.push(full)
+    }
+  }
+  const out = []
+  for (const p of macPaths) {
+    try {
+      const st = fs.existsSync(p) ? fs.statSync(p) : null
+      const base = (path.basename(p) || 'file').replace(/[^a-zA-Z0-9._ -]+/g, '_')
+      if (st && st.isDirectory()) {
+        const files = []
+        walk(p, files)
+        const dirTgt = '/tmp/dsh-paste/' + stamp + '-' + base
+        let ok = 0
+        for (const f of files) {
+          try {
+            const rel = f.slice(p.length + 1).split(path.sep).join('/')
+            await remotePut.put(dirTgt + '/' + rel, f)
+            ok++
+          } catch (e) { state.log('[paste] dir file skipped: ' + f + ' (' + String(e.message || e).slice(0, 60) + ')') }
+        }
+        state.log('[paste] remote-uploaded dir: ' + p + ' -> ' + dirTgt + ' n=' + ok + '/' + files.length)
+        out.push({ kind: 'folder', path: dirTgt })
+      } else if (st && st.size <= PASTE_MAX_FILE) {
+        const tgt = '/tmp/dsh-paste/' + stamp + '-' + base
+        await remotePut.put(tgt, p)
+        state.log('[paste] remote-uploaded: ' + p + ' -> ' + tgt + ' (' + st.size + 'B)')
+        out.push({ kind: 'file', path: tgt })
+      } else {
+        state.log('[paste] remote-upload skipped (' + (st ? 'size ' + st.size : 'missing') + '): ' + p)
+        out.push({ kind: 'file', path: p })
+      }
+    } catch (e) {
+      state.log('[paste] remote-upload FAILED: ' + p + ' — Mac path kept: ' + String(e.message || e).slice(0, 90))
+      out.push({ kind: 'file', path: p })
+    }
+  }
+  return out
+}
+
+/**
  * macOS, no Electron: ask AppKit for the pasteboard file items via JXA.
  * 0.1.24 — VS Code 1.142's extension host no longer exposes electron.clipboard
  * ("Cannot read properties of undefined (reading 'readBuffer')"), which killed
@@ -1231,11 +1293,12 @@ function setupDshBrowser(context) {
           const paths = clipboardFilePaths()
           state.log('paste file-ref names=' + JSON.stringify(msg.names || []) + ' paths=' + paths.length)
           if (paths.length) {
-            const refs = paths.map((p) => ({
-              kind: fs.existsSync(p) && fs.statSync(p).isDirectory() ? 'folder' : 'file',
-              path: p,
-            }))
-            void sendRefsToDsh(refs, paths.join('\n'))
+            void (async () => {
+              const refs = remotePut.remoteAuthority()
+                ? await uploadPastedPathsForRemote(paths)
+                : paths.map((p) => ({ kind: fs.existsSync(p) && fs.statSync(p).isDirectory() ? 'folder' : 'file', path: p }))
+              void sendRefsToDsh(refs, refs.map((r) => r.path).join('\n'))
+            })()
           } else {
             state.log('paste file-ref: clipboard has no file paths (bitmap paste stays native)')
           }
@@ -1412,12 +1475,13 @@ function setupDshBrowser(context) {
           // paths, insert native reference chips instead and skip both.
           const clipPaths = clipboardFilePaths()
           if (clipPaths.length) {
-            state.log('paste: file-promise clipboard -> refs n=' + clipPaths.length)
-            const refs = clipPaths.map((p) => ({
-              kind: fs.existsSync(p) && fs.statSync(p).isDirectory() ? 'folder' : 'file',
-              path: p,
-            }))
-            void sendRefsToDsh(refs, clipPaths.join('\n'))
+            state.log('paste: file-promise clipboard -> refs n=' + clipPaths.length + (remotePut.remoteAuthority() ? ' (REMOTE: uploading via ssh channel)' : ''))
+            void (async () => {
+              const refs = remotePut.remoteAuthority()
+                ? await uploadPastedPathsForRemote(clipPaths)
+                : clipPaths.map((p) => ({ kind: fs.existsSync(p) && fs.statSync(p).isDirectory() ? 'folder' : 'file', path: p }))
+              void sendRefsToDsh(refs, refs.map((r) => r.path).join('\n'))
+            })()
             return
           }
           vscode.env.clipboard.readText().then((text) => {

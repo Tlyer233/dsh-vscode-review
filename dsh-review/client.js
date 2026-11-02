@@ -243,6 +243,14 @@ window.__ModuleLoader__.load({
       // toggle was OFF never reached our dock, sends then bypassed capture
       // entirely ("我标注了, copilot有, 但没带上").
       const draft = annoReadDraft(event).trim();
+      // (2.0.49) SLASH COMMANDS PASS UNTOUCHED: /plan, /mode … must arrive at
+      // dsh exactly as typed or they stop being commands (user: "我/plan无法被
+      // dsh识别为mode"). No interception, no append — pending pills stay on the
+      // pill shelf and ride the next plain send.
+      if (draft !== "" && /^\//.test(draft)) {
+        try { window.parent.postMessage({ type: "dshPasteLog", line: "[paste] slash command send -> native pass-through (no anno touch)" }, "*"); } catch (err) { /* noop */ }
+        return false;
+      }
       // (0.2.29 note) Do NOT gate on "@name in draft": annotations ride
       // AUTOMATICALLY on any send — the user's prose never mentions them.
       // (0.2.30) UNIFIED ENTER ORCHESTRATOR (dsh-annotate internalized): the
@@ -4552,6 +4560,32 @@ window.__ModuleLoader__.load({
       // IDLE and while GENERATING, no button, no Enter simulation, no draft
       // timing games. Exposed globally for the anno prepare protocol (the
       // markAnnoSend closure sits at module scope, outside apply(ctx)).
+      // (2.0.49) Send mode follows the USER's own setting, mirroring the GUI's
+      // resolveSubmitMode: idle -> queue (== direct send); busy -> the stored
+      // ui-conversation.busyEnter preference ("queue" | "steer"). Settings read
+      // best-effort via ctx.remote.settings.describe; unreadable => queue
+      // (today's behavior, never a regression). Mode is logged for proof.
+      function annoPromptMode() {
+        try {
+          let pref = "queue";
+          try {
+            const st = ctx.remote && ctx.remote.settings && typeof ctx.remote.settings.describe === "function"
+              ? ctx.remote.settings.describe("ui-conversation") : null;
+            const v = st && st.value ? (typeof st.value.get === "function" ? st.value.get("busyEnter") : st.value.busyEnter) : null;
+            if (v === "steer" || v === "queue") pref = v;
+          } catch (err) { /* settings plane unavailable on this build */ }
+          let running = false;
+          try {
+            const sid = currentSessionId();
+            const sc = sid && ctx.sessions.scope(sid);
+            const se = sc && ctx.sessions.sessionOf(sc);
+            running = !!(se && (se.status === "running" || se.running === true || se.isRunning === true));
+          } catch (err) { /* unknown => treat idle */ }
+          const mode = running && pref === "steer" ? "steer" : "queue";
+          try { window.parent.postMessage({ type: "dshPasteLog", line: "[paste] prompt mode=" + mode + " (busyEnter=" + pref + " running=" + running + ")" }, "*"); } catch (err2) { /* noop */ }
+          return mode;
+        } catch (err) { return "queue" }
+      }
       try {
         window.__dshrAnnoPrompt = function (text) {
           try {
@@ -4561,7 +4595,7 @@ window.__ModuleLoader__.load({
             if (scope === undefined) return false;
             const session = ctx.sessions.sessionOf(scope);
             if (session === undefined) return false;
-            Promise.resolve(session.prompt([{ type: "text", text: String(text) }], "queue")).catch(function () { /* core surfaces errors */ });
+            Promise.resolve(session.prompt([{ type: "text", text: String(text) }], annoPromptMode())).catch(function () { /* core surfaces errors */ });
             return true;
           } catch (err) { return false; }
         };
