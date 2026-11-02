@@ -42,6 +42,9 @@ function reviewConfigSchema(value) {
     // the read window only, DOM still readable.
     hideHoverCard: v.hideHoverCard === true,
     annoHeapBridge: v.annoHeapBridge !== false,
+    // (0.2.33) carry ③files ④snippets ⑤terminal attachments too (default OFF:
+    // dsh has its own implementations; the clear-everything rule applies either way)
+    annoCarryMisc: v.annoCarryMisc === true,
   }
 }
 reviewConfigSchema.toJSON = function toJSON() {
@@ -60,6 +63,7 @@ reviewConfigSchema.toJSON = function toJSON() {
       annotationToDsh: { type: 'boolean', default: true },
       hideHoverCard: { type: 'boolean', default: false },
       annoHeapBridge: { type: 'boolean', default: true },
+      annoCarryMisc: { type: 'boolean', default: false },
     },
   }
 }
