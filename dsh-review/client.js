@@ -4568,6 +4568,27 @@ window.__ModuleLoader__.load({
       function annoPromptMode() {
         try {
           let pref = "queue";
+          // (2.0.51) TRUTH SOURCE #0 = the live composer send-button label,
+          // which ui-conversation renders from the policy's in-memory store
+          // (dict keys verified in upstream lib/client.js: "input.send.steer"
+          // = 插话发送/Steer message, "input.send.queue" = 排队发送/Queue message
+          // — only rendered while running with a plain draft). The web profile
+          // has no settings persistence provider, so durable reads (configForms
+          // / remote.settings.describe) only ever see defaults — that is why a
+          // page visibly set to Steer read as queue (user screenshots 21:16 +
+          // 21:51). Precedence: live DOM > configForms > describe > queue.
+          try {
+            const card0 = document.querySelector("[data-composer-card]");
+            if (card0) {
+              const bs = card0.querySelectorAll("button");
+              for (let bi = 0; bi < bs.length; bi++) {
+                const a = String(bs[bi].getAttribute("aria-label") || "");
+                if (/插话发送|Steer message/i.test(a)) { pref = "steer"; break; }
+                if (/排队发送|Queue message/i.test(a)) { pref = "queue"; break; }
+              }
+            }
+          } catch (err) { /* label not in a policy state */ }
+          if (pref === "queue") {
           // (2.0.50) PRIMARY SOURCE = ctx.configForms, the exact host the GUI's
           // own ComposerSubmissionPolicy adopts (ui-conversation client.js
           // ~19539: new ComposerSubmissionPolicy(ctx.configForms.get(
@@ -4588,6 +4609,7 @@ window.__ModuleLoader__.load({
               if (v2 === "steer" || v2 === "queue") pref = v2;
             } catch (err) { /* settings plane unavailable */ }
           }
+          }
           let running = false;
           try {
             const sid = currentSessionId();
@@ -4596,7 +4618,7 @@ window.__ModuleLoader__.load({
             running = !!(se && (se.status === "running" || se.running === true || se.isRunning === true));
           } catch (err) { /* unknown => treat idle */ }
           const mode = running && pref === "steer" ? "steer" : "queue";
-          try { window.parent.postMessage({ type: "dshPasteLog", line: "[paste] prompt mode=" + mode + " (busyEnter=" + pref + " running=" + running + ")" }, "*"); } catch (err2) { /* noop */ }
+          try { window.parent.postMessage({ type: "dshPasteLog", line: "[paste] prompt mode=" + mode + " (busyEnter=" + pref + " running=" + running + " client 2.0.51)" }, "*"); } catch (err2) { /* noop */ }
           return mode;
         } catch (err) { return "queue" }
       }
