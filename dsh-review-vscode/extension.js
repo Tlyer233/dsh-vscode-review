@@ -1110,11 +1110,11 @@ function annoHeapPick(name, entries, used) {
   }
   return best
 }
-function annoWriteHeapFile(i, name, comment, E, keepPath) {
+async function annoWriteHeapFile(i, name, comment, E, keepPath) {
   const log = dshState.logChannel
   try {
-    const dir = path.join(os.tmpdir(), 'dsh-trump')
-    fs.mkdirSync(dir, { recursive: true })
+    const dir = annoAnnoDir()
+    if (!annoAuthority()) fs.mkdirSync(dir, { recursive: true })
     const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
     const safe = String(name).replace(/[^a-zA-Z0-9_-]+/g, '_').slice(0, 40)
     const f = keepPath || path.join(dir, stamp + '-' + (i + 1) + '-' + safe + '.txt')
@@ -1122,7 +1122,7 @@ function annoWriteHeapFile(i, name, comment, E, keepPath) {
     if (E.img) {
       const ext = String(E.mime || '').indexOf('png') !== -1 ? '.png' : '.jpg'
       const ip = f.replace(/\.txt$/, '') + ext
-      fs.writeFileSync(ip, Buffer.from(E.img, 'base64'))
+      await annoPut(ip, Buffer.from(E.img, 'base64'))
       imgRef = '## SCREENSHOT (pick-time, ' + (E.imgLen || 0) + 'B)\n文件: ' + ip + '\n\n'
     }
     const head = '# element: ' + (E.fullName || E.name || name) +
@@ -1130,7 +1130,7 @@ function annoWriteHeapFile(i, name, comment, E, keepPath) {
       '\n# time: ' + new Date().toString() +
       '\n# entry id: ' + (E.id || '') +
       '\n# via: dsh-review (heap-bridge, no hover)\n\n' + imgRef
-    fs.writeFileSync(f, head + E.value + '\n')
+    await annoPut(f, head + E.value + '\n')
     log.appendLine('[trump] heap file: ' + f + ' (' + String(E.value).length + 'B value' + (E.img ? ', img ' + E.imgLen + 'B' : '') + ')')
     return f
   } catch (e) { log.appendLine('[trump] heap file write failed: ' + String(e).slice(0, 100)); return null }
@@ -1141,11 +1141,11 @@ async function annoHeapCaptureNow() {
   try { prefer = (vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders[0] && vscode.workspace.workspaceFolders[0].name) || '' } catch (e) { /* noop */ }
   return annoHeap.capture({ preferTitle: prefer, log })
 }
-function annoHeapPairFill(chips, keysSend, data) {
+async function annoHeapPairFill(chips, keysSend, data) {
   const log = dshState.logChannel
   const used = new Set()
   annoHeapShots = []
-  const out = chips.map((c, i) => {
+  const out = await Promise.all(chips.map(async (c, i) => {
     if (c.kind && c.kind !== 'element') {
       // (0.1.184) attachments ride the misc/shot sections; the row only marks
       // them handled so no hover/page fallback writer touches them.
@@ -1155,12 +1155,12 @@ function annoHeapPairFill(chips, keysSend, data) {
     if (!E) return { name: c.name, text: null, source: 'heap-miss', file: annoCaptureFiles.get(keysSend[i]) || null, shot: null }
     used.add(E.id)
     const keep = annoCaptureFiles.get(keysSend[i]) || null
-    const f = annoWriteHeapFile(i, c.name, (chips[i] && chips[i].text) || '', E, keep)
+    const f = await annoWriteHeapFile(i, c.name, (chips[i] && chips[i].text) || '', E, keep)
     if (f) { annoCaptureFiles.set(keysSend[i], f); annoPendingFullKeys.delete(keysSend[i]) }
     return { name: c.name, text: E.value, source: 'heap', file: f, shot: null }
-  })
-  const dir = path.join(os.tmpdir(), 'dsh-trump')
-  try { fs.mkdirSync(dir, { recursive: true }) } catch (e) { /* noop */ }
+  }))
+  const dir = annoAnnoDir()
+  if (!annoAuthority()) { try { fs.mkdirSync(dir, { recursive: true }) } catch (e) { /* noop */ } }
   const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
   // (0.1.182) each attachment appears MULTIPLE times in the heap (input model
   // + session copies); some copies carry 0 bytes. Keep only the BEST copy per
@@ -1178,7 +1178,7 @@ function annoHeapPairFill(chips, keysSend, data) {
       const safe = key.replace(/[^a-zA-Z0-9_ -]+/g, '_').replace(/\s+/g, '_').slice(0, 40)
       const ext = String(I.mime || '').indexOf('png') !== -1 ? '.png' : '.jpg'
       const p = path.join(dir, stamp + '-shot-' + safe + ext)
-      fs.writeFileSync(p, Buffer.from(I.b, 'base64'))
+      p = await annoPut(p, Buffer.from(I.b, 'base64'))
       annoHeapShots.push(p)
       log.appendLine('[trump] heap shot: ' + p + ' (' + I.len + 'B)')
     } catch (e) { log.appendLine('[trump] heap shot failed: ' + String(e).slice(0, 90)) }
@@ -1187,11 +1187,11 @@ function annoHeapPairFill(chips, keysSend, data) {
   return out
 }
 
-function annoWriteFile(i, name, comment, text, via) {
+async function annoWriteFile(i, name, comment, text, via) {
   const log = dshState.logChannel
   try {
-    const dir = path.join(os.tmpdir(), 'dsh-trump')
-    fs.mkdirSync(dir, { recursive: true })
+    const dir = annoAnnoDir()
+    if (!annoAuthority()) fs.mkdirSync(dir, { recursive: true })
     const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
     const safe = String(name).replace(/[^a-zA-Z0-9_-]+/g, '_').slice(0, 40)
     const f = path.join(dir, stamp + '-' + (i + 1) + '-' + safe + '.txt')
@@ -1199,7 +1199,7 @@ function annoWriteFile(i, name, comment, text, via) {
       '\n# comment: ' + (comment || '') +
       '\n# time: ' + new Date().toString() +
       '\n# via: dsh-review (' + (via || 'send') + ')\n\n'
-    fs.writeFileSync(f, head + (text == null ? '(no context captured)' : text))
+    await annoPut(f, head + (text == null ? '(no context captured)' : text))
     log.appendLine('[trump] file: ' + f)
     return f
   } catch (e) { log.appendLine('[trump] file write failed: ' + String(e).slice(0, 100)); return null }
@@ -1449,7 +1449,7 @@ async function annoQuietCapture(chip, idx, key) {
   // ids included — gets its full content at SEND time from its hover card
   // (最准, one uniform source); page-side full read survives only as the
   // FALLBACK when a card capture fails for an id-bearing chip.
-  const f = annoWriteFile(idx, chip.name, chip.text || '', '(全文待补:发送时 hover 卡片补入本文件)', 'reserved')
+  const f = await annoWriteFile(idx, chip.name, chip.text || '', '(全文待补:发送时 hover 卡片补入本文件)', 'reserved')
   if (f) {
     annoCaptureFiles.set(key, f)
     annoPendingFullKeys.add(key)
@@ -1572,8 +1572,43 @@ async function evalOnChip(byHost, chip, evalOn, log) {
 function annoIsRemoteWindow() {
   try { return !!vscode.env.remoteName } catch (e) { return false }
 }
+// (2.0.2) REMOTE DELIVERY: in an SSH window the agent lives on the Linux host,
+// so annotation files must live THERE. vscode.workspace.fs writes through the
+// ALREADY-OPEN ssh channel given a vscode-remote URI (authority rides along
+// from the open workspace folder) — no scp/proxy/password. Local windows keep
+// the old /var/folders behaviour bit-for-bit.
+function annoAuthority() {
+  try {
+    const f = (vscode.workspace.workspaceFolders || [])[0]
+    return (annoIsRemoteWindow() && f && f.uri.authority) ? f.uri.authority : null
+  } catch (e) { return null }
+}
+function annoAnnoDir() { return annoAuthority() ? '/tmp/dsh-trump' : path.join(os.tmpdir(), 'dsh-trump') }
+async function annoPut(targetPath, content) {
+  const buf = Buffer.isBuffer(content) ? content : Buffer.from(String(content), 'utf8')
+  const auth = annoAuthority()
+  if (!auth) {
+    fs.mkdirSync(path.dirname(targetPath), { recursive: true })
+    fs.writeFileSync(targetPath, buf)
+    return targetPath
+  }
+  const uri = (pp) => vscode.Uri.from({ scheme: 'vscode-remote', authority: auth, path: pp })
+  try {
+    await vscode.workspace.fs.createDirectory(uri(path.posix.dirname(targetPath)))
+    await vscode.workspace.fs.writeFile(uri(targetPath), buf)
+    dshState.log('[anno] remote-delivered: ' + targetPath + ' (' + buf.length + 'B) via ' + auth)
+    return targetPath
+  } catch (e) {
+    const lp = path.join(os.tmpdir(), 'dsh-trump', path.posix.basename(targetPath))
+    fs.mkdirSync(path.dirname(lp), { recursive: true })
+    fs.writeFileSync(lp, buf)
+    dshState.log('[anno] remote-write FAILED (' + String(e.message || e).slice(0, 90) + ') — local copy kept: ' + lp)
+    return lp
+  }
+}
 async function annoSendSync(req) {
-  dshState.log.appendLine('[env] send window=' + (annoIsRemoteWindow() ? 'REMOTE(' + vscode.env.remoteName + ')' : 'LOCAL'))
+  dshState.log.appendLine('[env] send window=' + (annoIsRemoteWindow() ? 'REMOTE(' + vscode.env.remoteName + ')' : 'LOCAL') +
+    ' | chips=' + annoCurrentChips.length + ' driver=' + (dshState.annoDriver ? 'yes' : 'NO') + ' busy=' + (annoSendBusy ? 'yes' : 'no') + ' heapOn=' + annoHeapOn())
   // (0.1.183) req numbers RESET on every client page load (annoPrepSeq starts
   // at 0 again) while this Set lived for the whole extension process: after a
   // refresh, req=1 was "already posted" forever -> blank sends hung the full
@@ -1683,7 +1718,7 @@ async function annoSendSync(req) {
       annoPostProg(req, 1) // heap snapshot starting
       try {
         const heapData = await annoHeapCaptureNow()
-        ctxs2 = annoHeapPairFill(chips, keysSend, heapData)
+        ctxs2 = await annoHeapPairFill(chips, keysSend, heapData)
         annoPostProg(req, 2)
       } catch (e) {
         log.appendLine('[anno][heap] bridge failed (' + String(e).slice(0, 130) + ') — NO FALLBACK (user ruling): sending without fresh content')
@@ -1728,7 +1763,7 @@ async function annoSendSync(req) {
           if (d2) fullF = await annoWriteFull(si, cx.name, (chips[si] && chips[si].text) || '', d2, 'page')
         }
         if (!fullF && cx.source === 'hover' && cx.text) fullF = await annoWriteCardFile(si, cx.name, (chips[si] && chips[si].text) || '', cx.text, cx.shot, null)
-        cx.file = fullF || annoWriteFile(si, cx.name, (chips[si] && chips[si].text) || '', cx.text, cx.source || 'send')
+        cx.file = fullF || await annoWriteFile(si, cx.name, (chips[si] && chips[si].text) || '', cx.text, cx.source || 'send')
         if (cx.file) annoCaptureFiles.set(keysSend[si], cx.file)
       }
     } catch (e) { log.appendLine('[trump] file dir failed: ' + String(e).slice(0, 100)) }
@@ -1740,11 +1775,13 @@ async function annoSendSync(req) {
       const capIdx = []
       chips.forEach((c, i) => { if (!annoBaseline.has(c.name) && (!c.kind || c.kind === 'element')) capIdx.push(i) })
       const lines = ['以下是我对浏览器元素的标注(全文见各文件):', '']
-      capIdx.forEach((i, n) => {
+      for (let k = 0; k < capIdx.length; k++) {
+        const i = capIdx[k]
+        const n = k
         const cx = ctxs2[i] || {}
         lines.push((n + 1) + '. @' + cx.name + '  注释: ' + ((chips[i] && chips[i].text) || '(无)'))
-        lines.push('   全文文件: ' + (cx.file || (annoWriteFile(i, cx.name, (chips[i] && chips[i].text) || '', cx.text, 'send') || '(写盘失败)')))
-      })
+        lines.push('   全文文件: ' + (cx.file || (await annoWriteFile(i, cx.name, (chips[i] && chips[i].text) || '', cx.text, 'send')) || '(写盘失败)'))
+      }
       if (annoHeapShots && annoHeapShots.length) {
         lines.push('')
         lines.push('浏览器截图附件(随本次标注捕获):')
