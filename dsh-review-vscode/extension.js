@@ -1122,11 +1122,22 @@ function annoHeapPairFill(chips, keysSend, data) {
   const dir = path.join(os.tmpdir(), 'dsh-trump')
   try { fs.mkdirSync(dir, { recursive: true }) } catch (e) { /* noop */ }
   const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
+  // (0.1.182) each attachment appears MULTIPLE times in the heap (input model
+  // + session copies); some copies carry 0 bytes. Keep only the BEST copy per
+  // attachment NAME (max byte length, non-zero) and write it once — the old
+  // naive loop let a 0-byte twin overwrite the real 163KB screenshot.
+  const best = new Map()
   for (const I of data.images || []) {
+    if (!I || !I.len || !I.b) continue
+    const key = String(I.name || 'image')
+    const prev = best.get(key)
+    if (!prev || I.len > prev.len) best.set(key, I)
+  }
+  for (const [key, I] of best) {
     try {
-      const safe = String(I.name || 'image').replace(/[^a-zA-Z0-9_ -]+/g, '_').slice(0, 40)
+      const safe = key.replace(/[^a-zA-Z0-9_ -]+/g, '_').replace(/\s+/g, '_').slice(0, 40)
       const ext = String(I.mime || '').indexOf('png') !== -1 ? '.png' : '.jpg'
-      const p = path.join(dir, stamp + '-shot-' + safe.replace(/\s+/g, '_') + ext)
+      const p = path.join(dir, stamp + '-shot-' + safe + ext)
       fs.writeFileSync(p, Buffer.from(I.b, 'base64'))
       annoHeapShots.push(p)
       log.appendLine('[trump] heap shot: ' + p + ' (' + I.len + 'B)')
