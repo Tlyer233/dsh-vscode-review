@@ -243,8 +243,24 @@ install_dsh_plugin() {
   [ -f "$tgz" ] || die "pack produced no $cache/dsh-review-$plug_ver.tgz"
   echo "packed $tgz"
   echo "installing a copy into the web profile (not a source-tree link)"
+  # (2.1.7 incident) pnpm LOCK POISON: an early `add <folder>` recorded
+  # dsh-review as link:<repo> inside pnpm-lock.yaml; afterwards every
+  # add file:<tgz> kept re-creating the SYMLINK (lock wins over package.json),
+  # silently defeating "copy, not link" — and our post-install version checks
+  # read THROUGH the link (repo files), so they always passed. Detect the link
+  # (or a link: line for dsh-review in the lock) and REMOVE first, which purges
+  # the lock entry, then add. Idempotent: no-op on healthy copy installs.
+  local lockfile="$HOME/.dsh/profiles/web/pnpm-lock.yaml"
+  if [ -L "$HOME/.dsh/profiles/web/node_modules/dsh-review" ] \
+     || grep -q "link:[^ ]*dsh-review" "$lockfile" 2>/dev/null; then
+    echo "healing link-poisoned dsh-review install (remove + re-add)"
+    dsh plugin --profile web remove dsh-review || true
+  fi
   # --force: same version must still replace the previous tarball copy.
   dsh plugin --profile web add "$tgz" --force
+  if [ -L "$HOME/.dsh/profiles/web/node_modules/dsh-review" ]; then
+    die "install ended as a symlink again — lock not healed; run: dsh plugin --profile web remove dsh-review && dsh plugin --profile web add $tgz --force"
+  fi
   # Installed: drop stale tarballs, keep only the recorded one.
   local keep
   keep="$(basename "$tgz")"

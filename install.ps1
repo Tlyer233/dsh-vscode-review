@@ -257,6 +257,16 @@ function Install-DshPlugin {
   $tgz = Get-Item $tgzFile
   Write-Host "packed $($tgz.FullName)"
   Write-Host 'installing a copy into the web profile (not a source-tree link)'
+  # (2.1.7 incident, ported) pnpm lock may pin dsh-review as link:<folder>;
+  # remove first so the lock entry is purged and the copy actually lands.
+  $lock = Join-Path $env:USERPROFILE '.dsh\profiles\web\pnpm-lock.yaml'
+  $linked = $false
+  try {
+    $nm = Get-Item (Join-Path $env:USERPROFILE '.dsh\profiles\web\node_modules\dsh-review') -ErrorAction SilentlyContinue
+    if ($nm -and ($nm.Attributes -band [IO.FileAttributes]::ReparsePoint)) { $linked = $true }
+    if (-not $linked -and (Test-Path $lock) -and (Select-String -LiteralPath $lock -Pattern 'link:[^ ]*dsh-review' -Quiet)) { $linked = $true }
+  } catch { $linked = $false }
+  if ($linked) { Write-Host 'healing link-poisoned dsh-review install (remove + re-add)'; & dsh plugin --profile web remove dsh-review 2>$null | Out-Null }
   & dsh plugin --profile web add $tgz.FullName --force
   if ($LASTEXITCODE -ne 0) { throw 'dsh plugin add failed' }
   # Installed: drop stale tarballs, keep only the recorded one.
