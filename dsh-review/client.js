@@ -125,9 +125,9 @@ window.__ModuleLoader__.load({
         return true;
       } catch (err) { return false }
     };
-    // (0.2.38) ONE upward-opening quadratic (user: "开口向上的二次曲线"):
-    // p(t) = (t/T)^2 * ceil — starts slow, accelerates into the finish.
-    // T = expected worst-case capture time; prepared answer jumps to 100.
+    // (0.2.39) quadratic, FAST-then-SLOW (user: "刚开始快, 后面慢, 你反了"):
+    // p(t) = ceil * (1 - (1 - t/T)^2) — quick launch, even decelerating creep
+    // toward the cap; prepared answer jumps to 100.
     function annoAnimTo(target, ratePerSec) {
       void target; void ratePerSec;
       const els = annoProgEls;
@@ -139,7 +139,7 @@ window.__ModuleLoader__.load({
         try {
           const cur = parseFloat(els.bar.style.width) || 0;
           const f = Math.min(1, (Date.now() - t0) / T);
-          const p = Math.max(cur, f * f * ceil); // monotonic
+          const g = 1 - f; const p = Math.max(cur, (1 - g * g) * ceil); // monotonic
           els.bar.style.width = p + "%";
         } catch (err) { if (annoAnimT) { clearInterval(annoAnimT); annoAnimT = null; } }
       }, 100);
