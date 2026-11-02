@@ -1,5 +1,10 @@
 # Changelog
 
+## 插件卡一点就消失:改名漏网引用砸崩设置区(2026-11-02, 客户端 0.2.32)
+
+ego-browser 复现抓到现形:`ReferenceError: shownShowHoverCard is not defined` × N → `slot entry crashed in 'plugins.bundle.config'`。0.2.28 把 showHoverCard 极性改名成 hideHoverCard 时,JSX 里 **checked:/onChange 两行因缩进不同没被锚点命中**,声明已改名、引用还是旧名 → 点开"代码审查"设置区(重渲染)整个 section 崩没。修两行残留,0.2.32 部署后 ego 回归:点开后 section 常驻、三个新开关都在、console 零报错。教训入法:**改名必须 grep 全词计数归零,缩进敏感锚点先 sed -n l 验字节**。
+
+## 附件全家族:清全场·带勾选(2026-11-02, 扩展 0.1.184 / 客户端 0.2.31)
 ## 附件全家族:清全场·带勾选(2026-11-02, 扩展 0.1.184 / 客户端 0.2.31)
 
 堆全谱实证: Copilot 一切附件同族 `{id,kind,name,value}` — `element`(R8s+imageData)/`image`(JPEG)/`file`(URI;**代码段=file+range 行切片**)/`generic`(**终端选区/选中文本=value 即正文**,bundle 原文:`addContext({id:'terminal-selection-…',kind:'generic',value:selection})`)/`instruction`(title)。

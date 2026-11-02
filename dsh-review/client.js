@@ -3691,10 +3691,10 @@ window.__ModuleLoader__.load({
                 h("input", {
                   id: "dshr-hover-card",
                   type: "checkbox",
-                  checked: shownShowHoverCard,
+                  checked: shownHideHoverCard,
                   disabled: !writable || saving,
                   onChange: function (e) {
-                    setDraftShowHoverCard(!!e.target.checked);
+                    setDraftHideHoverCard(!!e.target.checked);
                     setFailed(false);
                   },
                 }),
