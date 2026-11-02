@@ -221,6 +221,8 @@ window.__ModuleLoader__.load({
       // toggle was OFF never reached our dock, sends then bypassed capture
       // entirely ("我标注了, copilot有, 但没带上").
       const draft = annoReadDraft(event).trim();
+      // (0.2.29 note) Do NOT gate on "@name in draft": annotations ride
+      // AUTOMATICALLY on any send — the user's prose never mentions them.
       // (0.2.19) USER-FINAL ORDER — ALWAYS read Copilot FIRST, send after.
       // No fast path on stale lists: the extension does the authoritative read
       // (page rebuild + hover + file writes) and answers dshAnnoPrepared the
@@ -229,7 +231,11 @@ window.__ModuleLoader__.load({
       // Ask the extension; it flashes, hovers, fills the reserved files, then
       // answers with the finished block — we submit at that moment. 8s
       // timeout submits anyway (with whatever rows we have).
-      if (annoProgReq !== null) return true; // already held for a send — swallow extra Enter/click
+      // (0.2.29) A capture is already in flight for an earlier send. Holding
+      // THIS Enter too (old behavior) queued it and the queue merge shipped it
+      // inside the earlier prompt — the user saw "发不出去". Submit instantly
+      // via the normal queue path instead; it needs no attachment block.
+      if (annoProgReq !== null) return false;
       const req = ++annoPrepSeq;
       annoPrepPending.set(req, { draft: draft, at: Date.now() });
       annoProgStart(req);
