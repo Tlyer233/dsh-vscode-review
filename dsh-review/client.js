@@ -3847,22 +3847,30 @@ window.__ModuleLoader__.load({
             if (hits[i][2] >= 1000) hits[i][0].textContent = annoFmtTok(hits[i][2]) + " tok";
           }
           if (hits.length && !pop.querySelector("[data-dshr-tok-total]")) {
-            // Mimic the popover's own metric-item structure so label/value get
-            // the native styles; put it in the GRID container as a full-width
-            // row spanning both columns (inserting into one cell squeezed and
-            // word-wrapped the label, user: "不太协调").
+            // (2.1.5) CLONE the native Output metric cell and rewrite its two
+            // leaf texts: position, color, size then inherit 100% (hand-rolled
+            // row sat flush-right and bold — user: "往左一点, 颜色和上面一样").
             var item = hits[hits.length - 1][0].parentElement;
             var grid = item.parentElement;
-            var row = document.createElement("div");
-            row.setAttribute("data-dshr-tok-total", "1");
-            row.style.cssText = "display:flex;align-items:baseline;justify-content:space-between;gap:10px;grid-column:1/-1;margin-top:2px";
-            var lab = document.createElement("div"); lab.textContent = "Total (in + out)";
-            lab.style.fontSize = (getComputedStyle(item.firstElementChild || item).fontSize) || "12px";
-            lab.style.opacity = "0.75";
-            var val = document.createElement("div"); val.textContent = annoFmtTok(total) + " tok";
-            val.style.cssText = "font-weight:600;white-space:nowrap;text-align:right";
-            row.appendChild(lab); row.appendChild(val);
-            grid.appendChild(row);
+            if (grid) {
+              var clone = item.cloneNode(true);
+              clone.setAttribute("data-dshr-tok-total", "1");
+              var ce = clone.querySelectorAll("span,div,b,strong");
+              var valEl = null, labEl = null;
+              for (var c = 0; c < ce.length; c++) {
+                var cel = ce[c];
+                if (cel.children.length > 0) continue;
+                var tct = String(cel.textContent || "").trim();
+                if (!tct) continue;
+                if (/^[\d.,]+\s*[KMGT]?\s*tok$/i.test(tct)) { valEl = cel; }
+                else if (tct.indexOf("tok") === -1 && !labEl) { labEl = cel; }
+              }
+              if (labEl && valEl) {
+                labEl.textContent = "Total";
+                valEl.textContent = annoFmtTok(total) + " tok";
+                grid.appendChild(clone);
+              }
+            }
           }
         } finally { pop.__dshrStatBusy = false; }
       } catch (err) { /* cosmetic only */ }
