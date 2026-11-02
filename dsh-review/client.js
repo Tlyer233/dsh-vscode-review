@@ -3806,6 +3806,76 @@ window.__ModuleLoader__.load({
       });
     }
 
+    // (2.1.2) "of context used" popover: 576,167,879 tok -> 576.2M tok + one
+    // TOTAL (in+out) row. EVENT-driven: fires on the trigger click; a scoped
+    // MutationObserver watches ONLY the open popover (React live-updates would
+    // clobber a one-shot rewrite) and is DISCONNECTED when the popover leaves
+    // the DOM — zero timers, zero global polling (user rule: 别轮询).
+    function annoFmtTok(n) {
+      n = Number(n) || 0;
+      if (n >= 1e6) return (n / 1e6).toFixed(1) + "M";
+      if (n >= 1e3) return (n / 1e3).toFixed(1) + "K";
+      return String(n);
+    }
+    function annoRestatize(pop) {
+      try {
+        if (!pop || !pop.isConnected) return;
+        if (pop.__dshrStatBusy) return;
+        pop.__dshrStatBusy = true;
+        try {
+          var w = document.createTreeWalker(pop, NodeFilter.SHOW_TEXT);
+          var re = /^([\d,]+)\s*tok$/;
+          var hits = [], m, total = 0;
+          while ((m = w.nextNode())) {
+            var t = String(m.nodeValue).trim();
+            var mm = re.exec(t);
+            if (!mm) continue;
+            var v = parseInt(mm[1].replace(/,/g, ""), 10) || 0;
+            hits.push([m, t, v]);
+            total += v;
+          }
+          for (var i = 0; i < hits.length; i++) {
+            if (hits[i][2] >= 1000) hits[i][0].nodeValue = hits[i][1].replace(/[\d,]+(?=\s*tok)/, annoFmtTok(hits[i][2]));
+          }
+          if (hits.length && !pop.querySelector("[data-dshr-tok-total]")) {
+            var row = document.createElement("div");
+            row.setAttribute("data-dshr-tok-total", "1");
+            row.style.cssText = "display:flex;justify-content:space-between;gap:12px;margin-top:6px;padding-top:6px;border-top:1px solid rgba(128,128,128,.25);font-weight:600";
+            var lab = document.createElement("span"); lab.textContent = "Total (in + out)";
+            var val = document.createElement("span"); val.textContent = annoFmtTok(total) + " tok";
+            row.appendChild(lab); row.appendChild(val);
+            hits[hits.length - 1][0].parentElement.parentElement.appendChild(row);
+          }
+        } finally { pop.__dshrStatBusy = false; }
+      } catch (err) { /* cosmetic only */ }
+    }
+    function annoWatchContextPopover(e) {
+      try {
+        var trg = e && e.target && e.target.closest ? e.target.closest('[aria-label*="of context used"]') : null;
+        if (!trg) return;
+        setTimeout(function () {
+          try {
+            // the popover renders near the trigger; locate it via the unique literals
+            var w = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+            var n, pop = null;
+            while ((n = w.nextNode())) {
+              var t = String(n.nodeValue).trim();
+              if (t === "Token usage" || t === "Session statistics") { pop = n.parentElement; break; }
+            }
+            while (pop && pop !== document.body && !(pop.textContent || "").match(/Token usage/)) pop = pop.parentElement;
+            if (!pop || pop === document.body) { return; }
+            annoRestatize(pop);
+            if (pop.__dshrStatObs) return;
+            var obs = new MutationObserver(function () {
+              if (!pop.isConnected) { try { obs.disconnect(); } catch (err) { /* gone */ } return; }
+              annoRestatize(pop);
+            });
+            obs.observe(pop, { childList: true, subtree: true, characterData: true });
+            pop.__dshrStatObs = obs;
+          } catch (err) { /* cosmetic only */ }
+        }, 150);
+      } catch (err) { /* cosmetic only */ }
+    }
     function apply(ctx) {
       installIframeSidebarPeek();
       installIframeRailAutoHide();
@@ -5251,6 +5321,10 @@ window.__ModuleLoader__.load({
                 conversationApi.__dshrSendWrapped = true;
                 try { window.__dshrSendWrapped = true; } catch (err) { /* noop */ }
                 try { window.parent.postMessage({ type: "dshPasteLog", line: "[send] sendSession gate installed (client 2.1.1)" }, "*"); } catch (err) { /* noop */ }
+              if (!window.__dshrStatClick) {
+                window.__dshrStatClick = true;
+                document.addEventListener("click", annoWatchContextPopover, true);
+              }
               }
             } catch (err) {
               try { window.parent.postMessage({ type: "dshPasteLog", line: "[send] gate install failed: " + String(err).slice(0, 90) }, "*"); } catch (e2) { /* noop */ }
