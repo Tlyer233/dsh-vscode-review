@@ -134,7 +134,7 @@ window.__ModuleLoader__.load({
       if (!els) return;
       if (annoAnimT) { clearInterval(annoAnimT); annoAnimT = null; }
       const t0 = Date.now();
-      const T = 90000, ceil = 96;
+      const T = 60000, ceil = 96; // (0.2.40) shorter launch window: steeper start
       annoAnimT = setInterval(function () {
         try {
           const cur = parseFloat(els.bar.style.width) || 0;
