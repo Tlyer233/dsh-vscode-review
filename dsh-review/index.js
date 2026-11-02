@@ -14,7 +14,7 @@ const REVIEW_NS = 'dsh-review'
 /**
  * Minimal schemastery-shaped schema: callable resolver + toJSON for describe().
  * @param {unknown} value
- * @returns {{ enabled: boolean, fileSend: string, snippetSend: string, sidebarSide: string, jobsTerminal: boolean, scopeFilter: boolean, autoWorkspace: boolean, openFilesInVscode: boolean, claudeAdapt: boolean }}
+ * @returns {{ enabled: boolean, fileSend: string, snippetSend: string, sidebarSide: string, jobsTerminal: boolean, scopeFilter: boolean, autoWorkspace: boolean, openFilesInVscode: boolean, claudeAdapt: boolean, annotationToDsh: boolean }}
  */
 function reviewConfigSchema(value) {
   const v = value && typeof value === 'object' ? value : {}
@@ -34,6 +34,13 @@ function reviewConfigSchema(value) {
     openFilesInVscode: v.openFilesInVscode !== false,
     // Adapt dock/sidebar chrome to the Claude theme (warm-black, terracotta).
     claudeAdapt: v.claudeAdapt !== false,
+    // Route browser element annotations to dsh (on) or keep VS Code's native
+    // Copilot flow (off). The extension reads this to decide interception.
+    annotationToDsh: v.annotationToDsh !== false,
+    // On (default): the synthetic hover during send-read may show Copilot's
+    // hover card. Off: the card is visually hidden (visibility:hidden) for
+    // the read window only, DOM still readable.
+    showHoverCard: v.showHoverCard !== false,
   }
 }
 reviewConfigSchema.toJSON = function toJSON() {
@@ -49,6 +56,8 @@ reviewConfigSchema.toJSON = function toJSON() {
       autoWorkspace: { type: 'boolean', default: true },
       openFilesInVscode: { type: 'boolean', default: true },
       claudeAdapt: { type: 'boolean', default: true },
+      annotationToDsh: { type: 'boolean', default: true },
+      showHoverCard: { type: 'boolean', default: true },
     },
   }
 }

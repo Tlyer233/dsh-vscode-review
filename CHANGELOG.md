@@ -1,5 +1,423 @@
 # Changelog
 
+## ★ 大版本:Heap-Bridge——零 hover 零 click 直取 Copilot 附件全量(2026-11-02,方法论 v1.0)
+
+**本轮没动插件一行代码,但找到了整条管线的"母本"。** 结论链(源码+堆双重实证):
+
+- Copilot 每个附件 chip 背后是 JS 堆里的 entry 对象:`{id, name, kind:'element', value=官方 R8s 全文, imageData=pick 时截图字节, ancestors, attributes, computedStyles, dimensions, innerText, …}`;hover 卡只是它的投影(pick 一瞬固化,之后浏览器关掉也在)
+- **取法五步**(tools/deliver_chips.js,全程无 click/hover):清探针自身引用→GC→`takeHeapSnapshot`→全堆按 `kind` 属性扫→`getObjectByHeapObjectId` 桥回活对象直读 `value`(快照串截 1024B,必须桥);截图附件同式(`kind:'image'`,value=JPEG)
+- **配对**:chip 名 ↔ entry `Element:` 行精确对撞(`#id` 段一致/裸 tag 配无 id),同名取 id 最新;发送后旧 entry 正常 GC,无累积
+- 实测四批全对(含 `button#unload-btn` 与 2 张整页/区域截图附件),样例在 `docs/examples/`,方法长文 `docs/heap-bridge.md`
+- 工具持久化:14 个探针脚本收入 `tools/`,输出一律 `os.tmpdir()/dsh-probe/`(开机自清),工作区调试垃圾已全删
+- 它是 0.1.177 "发送时 hover 卡"主管线的**替代候选**:内容更全(无 Show More 截断)、不吃面板展开、顺带通吃截图附件;接入前需评估快照 5s+解析 20s 的时延
+
+## 卡文件写法收口为一个函数(2026-11-02, 扩展 0.1.177)
+
+176 首轮(12:28, banner v0.1.176)统一 hover 成立:3 颗全 hover,填占位两条 `card shot`+`card text INNER TEXT:y` 完美;但第 3 颗(发送瞬间才标注,没赶上预留)走发送补写链 → 文件是**裸 hover 文本**(样式节没剥、无 png、无 SCREENSHOT 节)。177:抽 `annoWriteCardFile`(剥样式+存卡图 png+SCREENSHOT 引用+hover-card 头),填占位链与发送补写链共用;`via: hover-card` 从此唯一形态。
+
+## 全线统一 hover 卡单一来源(2026-11-02, 扩展 0.1.176 / 客户端 0.2.25)
+
+用户引句下令:"全部统一成 hover 卡, 你改这个试下"。176:
+- 标注时刻: **所有** chip(含带 id)只预留路径占位, 零页面读取
+- 发送时刻: `rebuildContextFromPage` 停用, 每颗 chip 一律 CDP 合成 hover 收卡(等渲染稳定, ≤4s/颗), 卡文本+卡内截图 png 覆盖写入预留文件(`via: hover-card`)
+- 卡失败的回落: 带 id → 页面全量读(写同一路径, `page-fallback`); 裸 tag → 占位保持如实
+- 客户端 0.2.25: 等待兜底 8s→**15s**(N 颗 × 4s 会撞旧限)
+
+## 172 漏括号致死因 + 注释持久化(2026-11-02, 扩展 0.1.175)
+
+12:23 轮(用户已重启, banner v0.1.174):3 个 id 元素 `full:+png` 完美;两个裸 tag 文件里赫然是 `<<eval-error: SyntaxError: Unexpected token ')>>`——**离线重建页面表达式复现**(python 拼串 + new Function):172 重写轮询时把 `if (h) {` 的收尾 `}` 弄丢(原行尾 `return; }` 整行被换掉),hover 读取 100% 崩——"抓的不全"的真凶不是时间。修复:补回 `}`;卡等待上限 2.5s→4s(用户允许加长);另修注释丢失(12:23 beacon lines 只带了 5 个 chip 里的 2 个注释):新增 `annoChipTexts`(key→最后非空注释, beacon 喂, 发送合并时补, fresh slate 清)。验证: 表达式离线编译 `EXPR_SYNTAX_OK len=1762`。
+
+## 注册 key 去文本化 + 填坑条件放宽(2026-11-02, 扩展 0.1.173)
+
+12:21 轮(172 首跑, banner `v0.1.172` 起效):mv-gpu 标注即 `full:+png`(9 块 2.4KB)完美;裸 span 仍是 257B 占位——**注释文本参与注册 key**:占位写于文本变更前('span||1'),发送时 key 变('span|idea|1')→填坑循环/注册表对不上号。三修:① `annoChipKeys`=name+出现序(文本彻底出局);② 填坑条件=有 cx.file 且(有 hover 文本 或 pending),不再单看 pending,且 '(reserved' 开头的占位文本不算内容;③ id 元素发送时 full 仍缺→**发送前二次尝试**(`annoIdSel`→full,失败才回落旧写法;原 forEach 改 async for)。
+
+## 卡片渐进渲染等待 + 彻底去掉 KEY COMPUTED STYLES(2026-11-02, 扩展 0.1.172)
+
+用户两令:① **KEY COMPUTED STYLES 不写不读**(page 全量文件删该节;hover 卡文件把该节替换为 '(computed styles omitted)');② 裸 tag 文件(920B)比 page 文件(14KB)抓得**不全**——根因:悬浮卡**渐进渲染**,轮询见标记就抢读,只拿到前 900B。修法:等到**最后节 INNER TEXT 出现 + 文本长度 240ms 稳定**才取,上限 2.5s(到点取当前, 标 partial);shot 提取随最终文本一起走。
+
+## 裸 tag 终审:直读 hover 卡内容, 不再页面反找(2026-11-02, 扩展 0.1.171)
+
+用户看图定案:悬浮卡内除 KEY COMPUTED STYLES(Show More 截断, 不点)外**全部块都可读**, 直读最准。裸 tag 发送填占位改为:卡 textContent 原样入文件(`via: hover-card`), 不再拿 rect 去页面反找节点(168-170 的 hover-path 实验作废);**卡里的 SCREENSHOT 图**顺手 canvas→dataURL 提出写同名 .png(`[trump] card shot:`), txt 顶部引用。带 id 元素仍走 NInfer 页 page 全量重建(170 的 annoPageEval 修好了目标页, 含全量 computed styles + 页面截图)。
+
+## 全量抓取接错页面→改连 NInfer 目标(2026-11-02, 扩展 0.1.170)
+
+169 的 activate 版本 banner + full-diag 立刻定罪(用户重启后日志第一行=v? 也暴露 banner 的 require 相对路径错, 顺手修 './package.json'):`full-diag: {"sel":"#ms-gpu"} -> node-not-found`——但 CDP 亲测 NInfer 页 `#ms-gpu` 存在。根因:**annoElementFullData/截图用了 `dshState.annoDriver`=Copilot workbench 页的连接**,标注元素长在 NInfer 页上(所以 rebuild 一直是另起 ws 按 host 连 NInfer);workbench 里既无 #ms-gpu 也无那些 rect → 双双 node-not-found。修复:新增 `annoPageTargets/annoPageEval/annoPageShot`(与 rebuild 同款:新鲜 ws 连第一个 http 页 target,排除 127.0.0.1:308x dsh 自身),full builder 与 Page.captureScreenshot 全走此路。
+
+## 元素文件升级为全量 7 块 + 截图(2026-11-02, 扩展 0.1.168)
+
+用户令:悬浮卡 7 块(含图片)全部要进文件,图片引用路径。新增 `FULL_CTX_BUILDER` 页面侧一次 eval:定位节点(**唯一名→#id 直查;裸 tag→用 hover 卡的 POSITION & SIZE rect 等值(±1.5px)+tag 定位**,即"补一刀"方案)后取 URL/outerHTML/attributes/innerText/rect+viewport+**getComputedStyle 全量 resolved**/匹配规则(author 原文≤150)/CSS 变量/HTML PATH。截图=CDP `Page.captureScreenshot{clip=元素rect±8px}` 写**同名 .png**,txt 里 `## SCREENSHOT 文件:` 引用。挂点:① 标注旁观(page 路径,标注即全量);② 发送填占位(hover-path 覆盖**同一预留路径**,消息里路径不失效)。失败逐级回落旧格式(悬停原文/重建文本),永不丢行。
+
+## 设置项:发送读取时显示悬浮卡(2026-11-02, 扩展 0.1.167 / 客户端 0.2.24)
+
+用户令:隐藏悬浮卡改为 dsh 设置卡开关,**默认显示**。新增 `showHoverCard`(默认 true):
+- index.js:schema+toJSON 各加一项(存 shadow/settings.json, 走 reviewScope.set)
+- client.js:设置卡新勾选行"发送读取时显示 Copilot 悬浮卡"(draft/shown/dirty/save 全链照抄 annotationToDsh 模式)
+- extension.js:`annoHoverCardVisible()` 每事件读 settings.json;**只有开关=关才装隐藏观察器**(默认路径=166 之前行为, 悬浮卡照常弹);卸载仍无条件跑(幂等无害)
+
+## 发送读取时隐藏 hover 悬浮卡(2026-11-02, 扩展 0.1.166, 用户批准破例)
+
+用户问"能否 hover 但不显示那个框"→ 可行:我们读的是悬浮卡的 DOM 文本,画面可遮。`copilotChipFullContexts` 读取窗口内:装一个 MutationObserver,把 `.context-view/.monaco-hover/[role=tooltip]` 逐个打 `data-dshr-hidden=1` + **inline `visibility:hidden`**(保渲染, 我们的探测只看 display/offsetParent, 不受影响);finally 必断观察器+逐节点还原 inline 样式。Copilot 的样式表/规则零改动(用户点头的仅是这一次 inline 遮显)。
+
+## 进度条改用 dsh 原生色(2026-11-02, 客户端 0.2.23)
+
+用户:别用自定的蓝色,用 dsh 原生颜色。CDP 探了主题变量(共 30 个,**没有任何 accent 色变量**,主题前景=rgb(253,253,253)):改 `currentColor`(=输入卡自身前景色, 主题切换自动跟随)+ 原生 token:`--dsw-focus-ring-width`(粗细)、`--dsw-radius-md`(圆角)、`--ds-transition-duration/--ds-ease-in-out`(节奏)。环=原生 focus-ring 观感,进度填充=currentColor 16% 透明底。
+
+## 发送进度条:输入框禁用 + 环绕进度(2026-11-02, 扩展 0.1.165 / 客户端 0.2.22)
+
+用户:发送扣住期间界面"过于割裂"→ Enter/点发送后:① dsh 输入框禁用态(contenteditable=false+textarea/button disabled,透明度降),② 输入卡四周环绕进度条,进度满才发送。协议:扩展在 annoSendSync 里程碑发 `dshAnnoProg{req,stage}`(1=开始hover/2=抓取完/3=文件填完),host 白名单加 dshAnnoProg;客户端 stage→8/40/70/90%,`dshAnnoPrepared` 到 → 100% → 环消失恢复输入框 → **此刻提交**。顺手:等待期间再按 Enter/点发送被吞(`annoProgReq!==null` 直接 return true,修 11:08 双 req 双发)。
+
+## 断链二:webview host 白名单缺 dshAnnoPrepared(2026-11-02, 扩展 0.1.164)
+
+11:08 会话:anno mark → PrepareReq → 读全通(reserved filled×4, ③ block ready 6 rows)→ 但 dsh 没拼。定罪:扩展→webview host→iframe 的转发白名单(L771)**只有 dshAnnoDock,没有 dshAnnoPrepared** → 回块死在 host,客户端只能 8s 超时提交;且清理已把注册表推空 → batch="" → 裸发 ping(len=4,日志两条 `anno send: prompt=true len=4`=两个 req 的超时)。次因:annoPostPrepared 用 `dshState.log.appendLine`(log 实为函数)抛 TypeError 被 catch 吞 → posted 日志从未出现。修复:白名单加 dshAnnoPrepared/dshAnnoFocus;log 改 `dshState.log(...)`。
+
+## 元凶:annoPrepSeq/annoPrepPending 未声明(2026-11-02, 客户端 0.2.21)
+
+11:06 会话:决策日志首次立功——`anno mark: hint=1 toggle=1 chips=5 fwd=0` 打出后**戛然而止**。定罪:`annoPrepSeq`/`annoPrepPending` 在 0.2.15 拆旧 prepared 区时被连根删除,0.2.17/19 只补了**用法**没补**声明** → markAnnoSend 走到 `++annoPrepSeq` 抛 ReferenceError → 异常发生在 preventDefault 之前 → 监听器未捕获 → **Enter 原生裸发**,消息不带清单。node --check 查不出未声明变量。修复:模块作用域补 `let annoPrepSeq = 0; const annoPrepPending = new Map();`。
+
+## 决策日志 + PrepareReq 补分支(2026-11-02, 扩展 0.1.163 / 客户端 0.2.20)
+
+11:03 会话定罪:`annoDock recv 3` 后发送,扩展日志**零拦截痕迹**(无 consumed/anno send/③)。两处漏刀:① 扩展桥接层**没有 dshAnnoPrepareReq 分支**(162 只加了白名单,消息进来被丢弃);② 客户端 markAnnoSend 各闸(hint/toggle/chips/fwd)无日志,return false 原因不可见。修复:PrepareReq∪Consumed → annoDeleteAll(req);markAnnoSend 入口每次报一行 `[paste] anno mark: hint=… toggle=… chips=… fwd=…`。
+
+## 发送协议定稿:每次都先读 Copilot,读完再发(2026-11-02, 扩展 0.1.162 / 客户端 0.2.19)
+
+用户终审:"你就不能每次都先读 copilot 再发送吗?" —— **无条件读优先**,快路径(赌旧清单全有路径)废除。同时定位了 10:59 那轮的断链根因:`dshAnnoPrepareReq` **既不在 webview host 的类型白名单**(dsh-browser L781),**也没有 annoSendSync 钩子**(149 回退把 151 加的 PrepareReq 分支删了,consumed→`annoDeleteAll()` 又不带 req)→ 等待路径的回复**从来到不了客户端**,只剩 8s 超时兜底。
+
+- **dsh-browser**:白名单加 `dshAnnoPrepareReq`;consumed 分支把 `msg.req` 递进 `annoDeleteAll(req)`
+- **extension**:`annoDeleteAll = (req) => annoSendSync(req)`;`annoSendBusy` 防双驱动(busy 时后来的 req 直接忽略,由在跑的读统一回答);`annoLastBlock` 缓存
+- **client 0.2.19**:`markAnnoSend` 单一路径 = 清单空→原生;非空→**只发 PrepareReq{req}**(不再发 Consumed,避免双触发)扣住发送;`dshAnnoPrepared{req,block}` 到达瞬间提交 draft+block;8s 超时用本地清单兜底
+
+## ③ 顺序定稿:hover 完成 → 才发送(2026-11-02, 扩展 0.1.160 / 客户端 0.2.17)
+
+159 的"占位先落盘、发送后补正文"被用户驳回:"都发送了还 hover 你妈呢——hover 完成再发送!"。定稿顺序:
+
+- **标注时刻**:带 id 唯一元素→旁观 page 重建,秒完,面板不动;裸 tag→只**预留文件路径**(占位正文),不 hover(标注立刻回 dsh)。
+- **发送时刻(客户端 0.2.17 两路)**:
+  - 清单**行行有真实路径**(全唯一元素)→ **直发**(同 tick 拼+prompt,零等待)
+  - 有"待补"→ **扣下这次发送**(`dshAnnoPrepareReq{req}`),扩展 flash→hover→**填完预留文件**→**立刻回块**(`dshAnnoPrepared`,在 ✕ 清理**之前**)→客户端此刻才 `prompt(draft+"\n\n"+block)`。8s 超时兜底直发;扩展任何早退/异常路径**必回**(`annoPostPrepared` + finally 兜底),发送永不挂死。
+- 块文案不变(编号+注释+路径);`annoSendSync(req)` 恢复 req 通道,清理仍在回块之后进行。
+
+## 启动清理补漏:等"迟到回显"的 chip 再裁决(2026-11-02, 扩展 0.1.157)
+
+156 实测(10:31:53 会话)仍有残留:启动清理在**首信标**时看到 `chips=0` 就收工——但**未发送标注的模型回显晚于面板首次渲染**(0.1.115 已知竞态),~10s 后 3 个旧 span 才浮出,被 155 的旁观抓取当新标注登记 → 拼进消息且 2 个"待补"(hover 来不及)。修复:启动清理若首信标 0 chips,`waitForChipBeacon(2500)` **有界等待迟到回显**,来的 chip 一并 ✕ 删;删空后 baseline/注册表/dock 全归零。
+
+## 每次启动/reload 强制清空 Copilot(2026-11-02, 扩展 0.1.156)
+
+用户指出清单"待补/残留"的入口:上次标注未发送直接退出 → 重启后 chip/输入行残存。旧行为:启动清理被 `annotationToDsh` 开关闸住(off=完全不动)。新裁决:**每次 VS Code 打开/reload 无条件强制清空**。
+
+- activation 启动块去掉 feature 闸(flash→渲染→清输入 必跑)
+- `annoMirrorOnState`:一次性启动清理(✕删全部 chip + newChat + verify + baseline)挪到 **toggle-off 早退之前**——off 也清;清完才走"feature silent"分支
+- 清理时同步 `annoCaptureFiles.clear()` + 推空 dock 清单(残留不进客户端拼接列表)
+- 旁观抓取加 `!annoStartupCleanup` 竞态守卫(清理未完不抓, 防旧 chip 混入清单)
+
+## ③ 终版:料在标注时备好,Enter 全程同步(2026-11-02, 扩展 0.1.155 / 客户端 0.2.15)
+
+用户两条铁律:**标注时刻原生不动** + **发送必须同一条消息拼上**。此前失败根因=发送路径上有异步(扩展往返/按钮 disabled/占位没做)。0.1.0 不卡的秘密=它的 batch 在按下 Enter 的同 tick 本地可读(pending Map)。照此重造:
+
+- **扩展 155(被动旁观)**:beacon 上报新 chip(非 baseline)→ `annoQuietCapture`:page 重建读页面 DOM(歧义名才 hover,零点击)+ `annoWriteFile` 写盘 + `annoChipKeys`(name|text|第几次出现,解决同名歧义 key)登记 → `sendAnnoDock` 推 `{name,text,file}` 清单给客户端(=它的 pending)。**不点不删不动面板**;chip 删除仍是发送后 149 清理(✕ 完清注册表)。
+- **客户端 0.2.15(逐行对应 0.1.0)**:`markAnnoSend(event)`:consume 照发;清单空 → return false 完全原生;清单非空 → 同步 `annoComposeBatch`(文案同前)+ 读草稿剥零宽 + `text=draft+"\n\n"+batch` → **然后才** preventDefault/stopPropagation(L781-782 次序)→ `__dshrAnnoPrompt(text)`(=L851 `session.prompt(parts,'queue')`,生成中/空闲通用)→ 成功清草稿;prompt 缺失才回落 setDraft+按钮(L181-189)。`annoForwarding` 1s 防重入。
+- dock 数据链:`setAnnoDockChips` 保留 `file` 字段并入去重比较;顺带清掉 0.2.14 遗留的残缺行(`functionhrAnnoPrepared`)。
+
+## ③ 全线回退:扩展回 149,客户端拆掉拦截(2026-11-02, 扩展 0.1.149 / 客户端 0.2.14)
+
+0.2.11-13 的拦截拼接实战不过关:Enter 被吃、要敲多次、仍没拼上(10:18 会话日志里连 prepare/consumed 事件都没有——新客户端没被加载,版本又钉错历史遗留)。用户令:**回退 149**。
+
+- **扩展 0.1.149(行为+版本号都回到 149)**:删 `annoSendSync(req)`/prepared post/③ compose 块/dock push(152);`dsh-browser` 恢复只认 `dshAnnoConsumed`。抓取/全文/写文件/清理/回焦 = 149 原样。
+- **客户端 0.2.14**:`markAnnoSend` 回**不拦截**语义——发送永远原生立即出去(fire-and-forget consume),Enter 绝不被吃。保留:dock UI 不渲染(0.2.9 令)、`dshAnnoFocus` 回焦、stop 按钮守卫。③ 搁置,拦截协议代码留档(不再触发)。
+- EXA 检索归档(hermes-agent #39630 等):contentEditable 拦截 Enter 的通病=**React state 落后 DOM 一个 render** + IME composition 竞态——当年 dsh-annotate 用 `session.prompt` 公开门面正是绕开按钮/状态竞态;将来重做 ③ 时按此教训设计(不要 preventDefault 用户的 Enter,改用 dsh 队列 API 追消息)。
+
+## ③ 收敛为 dsh-annotate 同款 prompt 发送;install.sh 字典序 bug 修(2026-11-02, 客户端 0.2.9→0.2.13)
+
+用户裁决:**dock 框不抄,只抄拼接**。演进(全部有日志/探针证据):
+- 0.2.9:composer 上方 chip 镜像 UI 移除(`return null`,数据保留)
+- 0.2.10:发现 setDraft 异步 → 同帧点按钮 disabled → **消息被吞**;改轮询按钮
+- 0.2.11:拦截判据从客户端 dock 改为**问扩展**(无标注 `block=''` 毫秒放行;`annoPrepPending.size>0` 吞连按;扩展 finally 兜底必回)
+- 0.2.12:探针实锤生成中主按钮 = `aria "Stop generating"` → 点它=杀 agent
+- **0.2.13(现行)**:照抄 dsh-annotate@0.1.0 的真发送——`ctx.sessions.sessionOf(scope).prompt([{type:"text",text:composed}], "queue")`(公开会话门面,生成中/空闲通用,零按钮零 Enter),发出后 `setDraft("")`;按钮轮询仅留作 fallback。拼接式与 0.1.0 一致:`clean_draft + "\n\n" + block`。
+- **install.sh 大 bug**:"newest wins (glob is sorted)" 是**字典序**——`0.2.13.tgz` 排在 `0.2.9.tgz` 前,导致 0.2.10-13 每次都被降级安装成 0.2.9(记录也被钉死)。改为按 `package.json` 版本号精确定位 tarball;重装后记录=node_modules=**0.2.13** 实锤。
+
+## ③ 落地:拦截发送,末尾拼"文件路径清单"(2026-11-02, 扩展 0.1.151 / 客户端 0.2.8)
+
+**调研**(dsh-annotate@0.1.0 源码 `client/client.js`):拼接式 `text = draft + "\n\n" + batch`,`setDraft` 后**程序化点击发送按钮**提交(保留附件/清理);原文案 `以下是我对你上面回答的标注:` + 编号引用/标注行。
+
+**用户拍板**:文案=推荐版(只拼路径不拼全文,agent 自己读文件);机制=**拦截拼接**。
+
+- **客户端 0.2.8**:`markAnnoSend` 升级为拦截式——dock 有标注 chip 时 `preventDefault+stopPropagation` 扣下发送,post `dshAnnoPrepareReq{req}`;收 `dshAnnoPrepared{req,block}` → `__dshrAnnoGetDraft/ SetDraftFull`(新增导出)拼 `draft + \n\n + block` → `annoForwarding` 防重入 → 点发送。**6s 超时**自动放行原草稿(不阻塞用户)。无标注=零延迟老流程。Enter/按钮两入口都接。
+- **扩展 0.1.151**:`annoSendSync(req)` 写文件后组块 `以下是我对浏览器元素的标注(全文见各文件):` + `N. @元素 注释: x` + `全文文件: <abs path>`;完成时 `postMessage({type:'dshAnnoPrepared', req, block})`;`dsh-browser` 分发 `dshAnnoPrepareReq`(兼容旧 `dshAnnoConsumed`)。日志 `[trump] ③ block:` / `③ prepared posted`。
+
+## 150 弹窗关闭回焦:失败,回退 149(2026-11-02)
+
+0.1.150 曾加 observer v3(检测弹窗编辑框 有→0 → `anno-ui-close` → 切 dsh+回焦)。用户实测:焦点仍抢不到 dsh——原生标注弹窗就是为**连续标注**设计的(焦点留在浏览器是特性不是 bug)。按用户令回退:observer 回 v2、anno-cdp 去 `onAnnoUiClosed`、extension 去钩子,版本号还原 **0.1.149** 重装。标注后焦点行为=原生(留浏览器);发送后回焦(148/149 链路)保留。
+
+## 无标注不闪 + 焦点归还 dsh(2026-11-02, 扩展 0.1.148 / 客户端 0.2.7)
+
+用户两案:①标注后与发送后焦点必须回 dsh 输入框;②只有"dsh 发送且有 Copilot 标注"才该闪——实测**空发送/暂停点击也在闪 copilot**(日志多次 `captured 0` + flash)。
+
+- **扩展 148**:`annoSendSync` 入口新增静默闸——`annoCurrentChips` 为空(annotation 创建时 beacon 必经过、widget-gone 不清计数,空=确无待处理)→ 打日志 `stay quiet (no flash)`,**不 flash 不清理直接返回**;`annoReturnIfIdle` 每次回 dsh 后向 webview `postMessage({type:'dshAnnoFocus'})`(立即 + 350ms 补一发)。
+- **客户端 0.2.7**:`onBridgeMessage` 处理 `dshAnnoFocus` → `window.__dshrFocusComposer()`(已有导出);发送按钮 click 判定加 **stop/pause 标签守卫**(生成中主按钮是停止,不算发送)。
+
+## hide chat 实验终结:无幂等 hide 命令,用户令停(2026-11-02)
+
+用户希望标注/发送返回 dsh 前自动 "hide chat"。CDP 实测(全部不动代码):标题栏 Chat 按钮= `workbench.action.chat.toggle`(合成点击无效);面板 Chat 标签的 view 无 `.focus` 之外的动态命令(`.hide` 不存在,源码无 `+".hide"` 注册);命令面板只有 **View: Toggle Panel Visibility**——能隐藏(chatVisible true→false, panelH 293→0 实证)但**切换语义**,再按会开回来;误选行还弹过两次 About。结论:这台 VS Code 没有幂等 hide。曾提议"状态感知 toggle",用户裁决"不行, 算了, 别实验了"——扩展侧维持 0.1.147 行为,不碰任何面板命令。
+
+## hover 超时自动重试一次(2026-11-02, 扩展 0.1.146/0.1.147)
+
+09:35 轮(还原 139 后首测):3 个裸 span,文件 1/2 = `<<timeout-1.5s>>` 占位(悬停被面板切标签拖慢),文件 3 = Generating 徽章全文正常。修复:检测到 timeout 即**重悬停+重等待一轮**(hoverIn(0)+300ms+hoverIn(-1)+同款 promise),日志 `[trump] hover retry @x -> ok|still timeout`;仍失败则文件如实保留 timeout 文案。146 改代码 147 部署(145=回退 aux 的版本号还原)。
+
+## aux 干预全部删除,行为回到 139(2026-11-02, 扩展 0.1.145)
+
+144 的"空则关闭"实测仍黑(判定疑被壳内杂元素骗过,且用户令"copilot 的任何 css/任何东西都不动")。AskUserQuestion 拍板"彻底不管(回退到 139)":删除 `annoHideAux` / `annoShowAuxDelayed` / `annoCloseAuxIfEmpty` 三个 helper 及全部调用点(四条冻结路径),语法过、装 0.1.145。aux 黑列被认定为 `chat.open` 原生命令强制拉开空壳所致(VS Code 行为,非扩展 CSS),用户接受该视觉现状。抓取/清理/交付链路不受影响。
+
+## 真凶:空 auxiliary 黑列——chat.open 强制拉开(2026-11-02, 扩展 0.1.144)
+
+143 回退 CSS 后用户仍见右栏黑(截图 09:30:56:红框=619px 空黑列)。定罪:Copilot 已搬到底部面板 Chat 标签后,auxiliary bar 是**空壳**,但 flash 用的 `workbench.action.chat.open` 会**强制打开 auxiliary**——空壳现形即黑。与我们的(已停用)cloak CSS 无关。修复:`annoCloseAuxIfEmpty()` 在四条冻结路径收尾时检测 auxiliary——**仅当空**(无 chat 输入/视图)才 `workbench.action.closeAuxiliaryBar`;右侧 Copilot 布局(occupied)不误关。
+
+## 屏外 CSS 全部停用(2026-11-02, 扩展 0.1.140→0.1.143)
+
+- **0.1.140**: 新增 `annoHideAux`(冻结期把 auxiliarybar 挪屏外)/`annoShowAuxDelayed`(延迟 350ms + freeze 防误撤),接进 annoSendSync/startup/startup-cleanup/late-chips 四条冻结路径
+- **0.1.140 失效**: 用户仍见面板——CSS `#workbench.parts.auxiliarybar` 把带点的 id 当 class 解析,选择器没命中;141 改 `[id="…"]` 属性形式,探针实锤 x 1297→-99995→1297
+- **0.1.141 副作用**: 发送时整片黑——`position:fixed` 把 aux 从布局抽走,邻区 resize → webview 黑闪
+- **0.1.142**: 改 `transform:translateX(1400px)`(探针证明其他 parts rect 一像素不动),用户仍报"左边整个黑了"
+- **0.1.143(现行)**: 用户令"先把黑的 css 回退"——`annoHideAux` 停用(保留调用点的清理,残留样式自愈)。新方向:把 Copilot 放底部面板 Chat 标签 + 隐藏标签读 DOM(免 open 免跳转),待用户摆好布局取证。
+
+## 屏外 CSS 选择器修正(2026-11-02, 扩展 0.1.140→0.1.141)
+
+0.1.140 用户实测"依旧能看到":CSS 里 `#workbench.parts.auxiliarybar` 被解析成 `id=workbench` + `.parts.auxiliarybar` 两个 class——而该元素 **id 字面含点**(`id="workbench.parts.auxiliarybar"`),`#` 语法无法命中。改属性选择器 `[id="workbench.parts.auxiliarybar"]`。**探针实锤**:注入前 x=1297 w=619 → 注入后 x=-99995 w=900 → 移除后 x=1297,收放干净无残留。
+
+## Copilot 面板屏外闪(0.1.140, 2026-11-02)
+
+用户诉求:发送时 Copilot 面板闪现占屏——能否放"隐蔽位置"或对 CSS 做手脚。实现:`annoHideAux()` 在所有冻结路径(annoSendSync / startup flash / startup cleanup / late-chips guard)注入 workbench 级样式 `#workbench.parts.auxiliarybar{position:fixed;left:-99999px;width:900px;height:100%}`(选择器实测存在,619×1044 static):面板**整块挪出视口**但内部布局照常(chip 排布/hover/读取/✕ 全部如旧),**用户全程只见 dsh,零闪现**。撤除延迟 350ms 且 freeze 防护(`annoShowAuxDelayed`:若下一轮已重新 cloaked 则跳过),防连发时样式被上一轮误撤。
+
+## 同名 chip 张冠李戴:merge 按序号不按名字(2026-11-02, 扩展 0.1.139)
+
+09:16 轮:用户标了**三个不同徽章**(Idle/Unloaded/Reading 类),交付文件三个全是 "Unloaded"。悬停本身没错——错在 0.1.131 的 merge:`ctxs.find(x => x.name === c.name)` 按名字配对,三个 chip 都叫 `span` → 全部配上第一个捕获。修复:①merge **按 index** 对齐(ctxs 与 chips 同为 DOM 序,构造性保证);②`copilotChipFullContexts(onlyIdx)` 只悬停歧义 chip,page 已重建的直接跳过占位 null——每轮省 3 次无谓悬停。
+
+## 悬停时序回滚到宿主侧(2026-11-02, 扩展 0.1.136→0.1.138)
+
+- **0.1.136**: 微移挪进页内 Promise(220ms setTimeout)+80ms 轮询+1.2s 封顶 → 09:14 轮裸 span `timeout-1.2s`
+- **0.1.137**: 补 micro-move 漏发的 mouseover → 09:15 轮 3 个裸 span 仍全 `timeout-1.2s`
+- **0.1.138(现行)**: 定罪——发送冻结期 workbench 渲染器繁忙,**页内 setTimeout 被拖晚**,悬停 arm 窗口错过;而 135 的微移由**扩展宿主** sleep(400ms)+eval 派发,不受渲染器负载影响 → 回滚到宿主侧时序(400 sleep + hoverIn(-1) + 1500ms 封顶),仅保留两个无害收益:轮询 100→80ms、最后一个 chip 免撤悬停。教训:与 monaco 交互的节拍器必须放宿主侧。
+
+## 136 微移漏 mouseover 修复(2026-11-02, 扩展 0.1.137)
+
+0.1.136 实测(09:14 轮):裸 span `timeout-1.2s`——220ms 处的页内微移只发了 pointerover+mousemove,**漏了 mouseover**(08:24 验证过的开悬停三件套),delayed-hover 没被喂到。137 补齐三件套,其余提速不变。
+
+## 悬停单往返化(A 方案,2026-11-02, 扩展 0.1.136)
+
+用户拍板:先 A(微优化),接受不了再上 B(堆内直取模型数据)。实现:每个歧义 chip 从「400ms 死等 + 第二次 hoverIn eval + 100ms 轮询 + 120ms 撤悬停」压缩为 **hoverIn 一次往返 + 页内 Promise 全包**(220ms 处自发微移续期、80ms 轮询、1.2s 封顶;末个 chip 免撤悬停)——省 ~150-250ms/chip,地板仍是 monaco ~300ms 延迟。
+
+## 撤 cloak,悬停提速(2026-11-02, 扩展 0.1.133→0.1.135)
+
+- **0.1.133/134(失败实验)**: 给 `.context-view` 加 `visibility:hidden`/`opacity:0` 想隐身 hover——实测 hover 管理器被可见性闸门**拒绝打开**,两个裸 span 全部 `timeout-4s`。用户判词:"只是隐藏了过程,并没有秒回;还不如不隐藏"。
+- **0.1.135(现行)**: 撤 cloak(hover 如实可见),改为**真提速**:monaco delayed-hover ~300ms 开,单次 400ms 等待 + 一次 micro-move,轮询 200→100ms,超时 4s→1.5s——每歧义 chip ~0.5s(原 ~1s+)。带 id/class 元素仍 page 秒回(hover 只服务歧义回退)。
+
+## 隐身悬停:歧义元素回退也不再可见(2026-11-02, 扩展 0.1.133)
+
+**背景**: pin 消歧实测无望——预发送态页面只有空 `data-vscode-pick-host`(0 子节点),workbench 侧也无 pin(pin 仅在 Copilot 发送后挂出,我们不从 Copilot 发送)。裸 tag 回退 hover 仍肉眼可见("还是看到 hover 过程")。
+
+**实现**: hover 只依赖面板**打开**,不依赖**可见**。`copilotChipFullContexts` 抓取期间注入 `#dsh-anno-hide-hover{.context-view{visibility:hidden!important}}`(保留布局:offsetParent/textContent 照读,用户肉眼零弹窗),finally 里移除。带 id/class 唯一元素仍走 page 秒回(本就不 hover);歧义元素 hover 拿摘要——全程无感。
+
+## 文件头 via 如实标注来源(2026-11-02, 扩展 0.1.132)
+
+0.1.131 实测(08:53 轮):2 个标注 0 hover,page 重建全文 135 行交付 ✓。唯一瑕疵:文件头 `# via:` 写死 "synthetic-hover capture",与真实来源不符 → 改为 `(' + cx.source + ')'`(page/hover 如实打印)。已知边界:裸同名 tag(两个 `span`)无法页面唯一定位,仍回退 hover(可见、慢一拍),后续可用页面 pin 序号消歧。
+
+## 全文改页面侧重建:URL+OuterHTML+完整CSS,无 id 才回退 hover(2026-11-02, 扩展 0.1.131)
+
+**问题**: 悬停面板是摘要——缺 URL、Outer HTML 正文、完整 CSS(Inherited/Resolved/变量被 "Show More" 截断),用户实测"感觉少东西"。且逐个 hover 肉眼可见,不够无感。
+
+**实现**(用户拍板 ①重建 ②尽可能无感): `rebuildContextFromPage()` — 发送时对每个 chip 名(`tag#id`/`tag.class`/裸 tag,须**全页唯一**才用)开一条一次性 CDP 连到集成浏览器页 target,单发表达式取回 `{url, path, outer, own[], inherited[], resolved{}, vars{}, dims}`(实测 span#mv-vram:own 3 / inherited 32 / vars 62 / outerHTML 完整),拼成与 Untitled 文档同格式的全文。**零 hover、零点击、毫秒级**;仅当无法唯一定位(如两个裸 `span`)才回退合成悬停。merged 后统一写文件,日志 `[trump] ctx @x [page|hover]` 标注来源。修复过程:表达式曾漏一个 `}`(for-s 未闭合)导致 SyntaxError,已在真页面 eval 验证通过后才部署。
+
+## 发送即交付:annoSendSync 自动写"一个标注一个文件"(2026-11-02, 扩展 0.1.130)
+
+**需求**: "为什么还要你自己写? 发送时→写入文件" —— 交付不该等 agent 事后手抄。
+**实现**: `annoSendSync` 在 ctx 抓完后按 chip 顺序逐个写 `/tmp/dsh-trump/<UTC-stamp>-<i>-<element>.txt`(头: element/comment/time/via,正文: 悬停全文原文),路径逐条打日志 `[trump] file: <abs path>`,grep 即得。发送→文件→清理,全自动,零人工。
+
+## Show More 定罪 + 旧行复活双清(2026-11-02, 扩展 0.1.126/0.1.127)
+
+**0.1.126 — 全文通道终稿**: 用户手动验证:**点悬停面板里的 "Show More..." 也会打开 Untitled-1 编辑器**(与点 chip 同罪)→ 一律不点,只收悬停原文。同时修两个 bug:① `driver.cdp.send` 返回的是 CRI 的**内层 result**(`{result:{type,value}}`),旧代码按 ws 全消息取 `r.result.result` → 永远 `<<no-value>>`(08:04/08:20 之谜);② 同名 chip(两个 'div')按 aria 相等定位会串 → 改**按序号**定位。实测(08:28 轮):3 个 chip 悬停全文全抓到(见 `/tmp/trump-ctx-0828.txt`)。
+
+**0.1.127 — 旧行复活**: 08:28 轮 verify 显示 `@span#mv-temp 1 | @div 3 | @span#mv-disk 1` 三条**孤儿旧行**在"cleared:keyboard"后仍在——CDP 键盘事件对 Monaco 聊天输入不可靠(用户确认"这个问题一直在")。修复:`clearCopilotInput` 改**双保险**——页内 `execCommand(selectAll→delete)` 主清(打印 `before->after` 行数)+ CDP 键盘兜底。
+
+**0.1.128 — 模型层终极清**: 08:37 轮 `exec 3->3`——execCommand 与键盘两条 DOM 路都没杀掉僵尸行。加第三条路:官方命令 `workbench.action.chat.open {query:' ', isPartialQuery:true}` → `chatWidget.setInput(' ')`(chatActions.ts 源码证实)在 **InputModel 层替换内容**,僵尸行从模型根上消失(重开也无法复活),再补一发 Backspace 清空格。日志:`input clear=cleared:exec 3->3 +setInput check:lines:3`。
+
+## 抓全文定稿:纯合成事件悬停,零物理鼠标、零点击(2026-11-02, 扩展 0.1.124/0.1.125)
+
+**禁区澄清(用户截图为证)**:点击 chip 会打开 "Attached Element Context from Integrated Browser" 的 **Untitled-1 未保存编辑器**——绝对禁止(它弹出/关闭都会触发保存)。之前用 `Input.dispatchMouseEvent` 移动的是**物理鼠标**,也会把那个原生弹窗顶到指针下。
+
+**定稿方法(08:24 实测通过)**:JS `dispatchEvent(pointerover/mouseover/mousemove)` 打在 chip 上(ElementChatAttachmentWidget 的 delayed-hover 监听 DOM 事件)→ `.context-view` 悬停面板打开 → 读 textContent(span#mv-temp 全文 697 字符:SCREENSHOT/ELEMENT/KEY COMPUTED STYLES/HTML PATH/ATTRIBUTES/POSITION & SIZE/INNER TEXT)→ tooltip 内点 "Show More..." 展开完整 CSS(点 tooltip 内部,不点 chip)。物理鼠标全程不动,Untitled 永不出现。
+- 0.1.124:Input 步进版(已被 125 取代);08:04 轮日志 `<<no-value from evaluate>>`。
+- 0.1.125:`copilotChipFullContexts` 改合成事件版并部署。取证旁证:chip 节点自有属性/Symbol 为空(数据在闭包/`[[Scopes]]`,getEventListeners 的 handler 无 objectId,故不挖闭包,直接用悬停实现读渲染后的 `.context-view`)。
+
+## ①抓全文:hover 取 chip 完整 Attached Element Context(含 Show More 展开)(2026-11-02, 扩展 0.1.123)
+
+**背景**: 标注元素的全文(SCREENSHOT/ELEMENT/KEY COMPUTED STYLES/HTML PATH/ATTRIBUTES/POSITION & SIZE/INNER TEXT)只存在于 chip 的**悬停 tooltip**。**用户硬规则:绝不点击 chip**(点开是一个未保存文件);Show More 在 tooltip 内部,可点。已用 CDP 真鼠标验证抓通(span#mv-temp,697 字符)。
+
+**实现**: 新增 `copilotChipFullContexts()`:对每个 `aria-label="Attached element, X (Delete)"` 的 chip——CDP `Input.dispatchMouseEvent mouseMoved` 分步进人(只有 moved,无 pressed)→ 页面内一次性有界等待(≤3s)`.context-view` 弹窗 → 命中 "Show More..." 就点(**tooltip 内部**)再读 → 移出关闭 → 下一个。挂入 ①(在 ✕ 删除前,chip DOM 还活着),日志 `[trump] ctx @X >>> …`。**③仍只打印**,未拼接进 dsh 草稿(调试契约:只做 ①②,③打 output)。
+
+- `package.json`: 0.1.122 → 0.1.123;经 install.sh 部署。
+
+## 清输入行:两处时机 + 清后验证 + 严格受开关控制(2026-11-02, 扩展 0.1.122 / 客户端 0.2.6)
+
+**需求**(用户): 只在 **① dsh 发送** 和 **② reload VS Code** 两个时机清空 Copilot 输入框;**仅当设置卡「浏览器元素批注发给 dsh」开启时**,关闭则完全不碰。
+
+**实现**:
+- `extension.js` 0.1.122: 新增 `clearCopilotInputVerified(log, tag)` = `clearCopilotInput()`(CDP focus→Cmd+A→Backspace)+ 一次有界验证(读 `.view-line`,非空再清一次,只重试一次)。两处调用点全部换用:①`annoSendSync`(顶部 `annoFeatureOn()` gate,off 直接 return);②startup IIFE(reload 时,`annoFeatureOn()` off → `feature silent` 直接 return)。日志:`input clear=... verify=EMPTY`。
+- `client.js` 0.2.6: 开关文案更新(去掉过时的"停顿 2.5 秒",写明"打开面板立刻送回 dsh""关闭后不抓取、不清理、不闪回、**不清输入行**")。
+- 均经 `install.sh` 部署(dsh-review-0.2.6.tgz 记录进 profile package.json,服务器重启不再回退)。
+
+## 修"后续只能标注1个":发送时清空 Copilot 输入行(2026-11-01, 扩展 0.1.121)
+
+**症状**: 首次连标多个都行;之后每轮只能标 1 个(标第 2 个无声无息失败)。用户手动 `Cmd+A`+`Delete` 清空 Copilot 输入框后**连标恢复** → 坐实。
+
+**根因(搜索为证)**: Copilot 标注机制是"chip + 输入框里一行 `@元素名 注释`";**同名 @行已存在时新标注被去重吞掉**。而 VS Code `newChat` 有官方 bug——draft 会带进新会话(上游 commit 6babfd1 于 2026-02 才修复,本机 1.144 未含),旧 @行堆每轮复活。日志里 `lines=[prefill,kv-bar,decode,count...]` 12 行反复还魂即此。官方命令清不了:`chat.open` 的 setInput('') 因空串 falsy 被跳过,`clearInputHistory` 只清历史。
+
+**修复**: 发送路径 `annoSendSync` 在 ✕ 删 chip 之后、回 dsh 之前,调 **`clearCopilotInput()`**(CDP:focus textarea → Cmd+A → Backspace,即用户手动验证过的动作),把行堆清零。freeze 窗口内 ~50ms,不破坏 0s 闪回。日志:`[trump] clear: input=cleared:keyboard`。
+
+- `package.json`: 0.1.120 → 0.1.121;经 install.sh 部署,目录+catalog 一致。
+
+## 发送闪回也 0s:hot path 直读 beacon 载荷,newChat/迟到守卫放后台(2026-11-01, 扩展 0.1.120)
+
+**需求**: 用户"发送的时候, 也要0.000000001s内从copilot闪回dsh"。
+
+**改动**(`annoSendSync`):
+- 热路径**去掉 120ms 固定等待和多余 eval**:flash 重开时,渲染 beacon 的载荷就是状态(`annoMirrorOnState` 在 DOM 变化瞬间已填好 `annoCurrentChips`),直接用它。
+- ✕ 删完 → **立即 `annoReturnIfIdle()` 回 dsh**;`newChat` 与迟到-chip 守卫挪到**后台**——newChat 若把 Copilot 顶回来,open-beacon"打开即回"会瞬间再送回;守卫只在真有迟到 chip 时自带 freeze 短暂重开。
+- Copilot 可见时长 ≈ 渲染 + 点✕(此前还叠 120ms+1s+1s)。
+
+- `package.json`: 0.1.119 → 0.1.120;经 install.sh 部署,目录+catalog 一致。
+
+## 打开 Copilot 即回(0.1.119)+ 改走官方 install.sh(0.1.118)(2026-11-01, 扩展 0.1.118/0.1.119)
+
+**0.1.118 — 部署根因**: 之前全是手动 cp,从没跑过仓库的 **install.sh**,导致 ① `extensions.json` catalog 与实际目录脱节;② install.sh 第 4 步(reset shadow store / 清空 pending)从未执行——用户截图里 "Review Changes 13/15" 的**文件数**一直没归零,被当作"install 没生效"的证据。另外 dsh 服务器启动会按 package.json 记录的 `file:<tgz>` **重装覆盖** `node_modules/dsh-review`,手动拷进去的 client 会被打回(0.2.5 曾被复原 0.2.4)。从 0.1.118 起**一律 `bash install.sh` 部署**(npm pack → `dsh plugin add tgz --force` + 扩展 copy + catalog 同步 + shadow 重置)。
+
+**0.1.119 — 打开即回**: 用户拍板"打开即回(0s)"。`onOpened` 不再 2.5s 防抖,直接 `annoReturnToDsh=true; annoReturnIfIdle()`;例外:annoSendSync 读取(freeze)或 ✕ 删除进行中时保持面板开着,否则读不到 chip。
+
+- `package.json`: 0.1.117 → 0.1.118 → 0.1.119;两次均经 install.sh 部署,目录+catalog 一致。
+
+## 打开 Copilot 即闪回 + 发现服务器缓存旧 client(2026-11-01, 扩展 0.1.117)
+
+**症状**: 用户"还是可以自由打开 copilot"(打开面板不闪回);"显示13 说明 install 没起作用"。
+
+**事实核查**:
+- 0.1.116 确实在跑(日志出现新 `read 0 chips — waiting` 与 DOM dump)。**DOM dump 铁证**:发送时 Copilot DOM 里根本没有 element chip(仅 "Suggested browser context" 1 个)——标注当时不在面板里。
+- "install 没起作用"对**客户端**成立:dsh 服务器把插件 combo bundle(`plugins/??...dsh-review/client.js&rev=...`)缓存在内存,VS Code 重启不刷新 → 设置的文案/逻辑还是 0.2.4。**需 `dshReview.restartDsh` 重启 dsh 服务器**才拉到 0.2.5。
+
+**修复**: "打开 Copilot 就该闪回"——observer 在 container **无→有** 转换时发 `{ev:'widget-opened'}`(detach 时清 attachedCont 保证可再触发);anno-cdp 转 `onOpened`;extension 收到即 `scheduleReturnToDsh(2500)`(off 时忽略)。即:打开面板 2.5s 无操作自动回 dsh;标注每次真变化重置计时。
+
+- `package.json`: 0.1.116 → 0.1.117;部署完成,旧 0.1.116 已删。
+
+## 修"打开 Copilot 不闪回":重复 beacon 把防抖无限推迟(2026-11-01, 扩展 0.1.116)
+
+**症状**: 0.1.115 里用户打开 Copilot(开关已开),视图不回 dsh。日志尾部 18 条一模一样的 `beacon chips=[] lines=[...]`。
+
+**根因**: Monaco 重绘/容器重挂反复触发 scheduleBeacon,状态完全相同也照发;每条 beacon 都把 2.5s 闪回防抖清零 → **重复 beacon 风暴把闪回无限推迟**。
+
+**修复**(两层去重,均事件驱动):
+- `lib/anno-observer.js`: `doBeacon` 加状态键去重(chips+lines 全同则不发);widget-gone 时清空键,保证下次渲染必发(渲染探测不受影响)。
+- `extension.js`: `annoMirrorOnState` 再加一层 belt——只有**真变化**的 beacon 才打日志并 `scheduleReturnToDsh`;重复 beacon 只刷 annoCurrentChips。
+
+- `package.json`: 0.1.115 → 0.1.116;部署 `dsn.dsh-review-vscode-0.1.116/`,旧 0.1.115 已删。
+
+## 修"标注了却读0":监听器补 document 级兜底 + 空窗期读0改等 beacon + 开关(2026-11-01, 扩展 0.1.115 / dsh 客户端 0.2.5)
+
+**症状**: 用户标注 3 个(count/prefill/host-fill),dock 显示 3 个,但发送时 `[trump] captured 0 chip(s)`。用户诊断:"你监听的是 copilot,但你读的时候读的是 dsh"。
+
+**根因(两层)**:
+1. **读取空窗**: Copilot widget 是易碎 DOM——视图切回 dsh 时被销毁;发送时 flash 重开,**container 先渲染(空的),chip 从模型异步晚一拍才插入**。annoSendSync 在 120ms 窗口里读 → 0。
+2. **监听器漏事件**: chipObserver 只绑在"第一次出现"的 container 节点上;VS Code 重渲染子树后 chip 插入发生在**新 container 实例**,旧 observer 看不见 → chip 到达时没有任何 beacon。
+
+**修复**:
+- `lib/anno-observer.js`(_version 2): document 级兜底——任何 DOM 变化时:live container ≠ 已绑 container → 重绑;live chip 数 > 上次 beacon 数 → 立即 beacon。事件驱动,无轮询。
+- `extension.js`: annoSendSync 读到 0 chips → 有界一次性等"带 chip 的 beacon"(≤1.2s),到了就用 beacon 的 chips;清完后再等 ≤1s 防"清理后才冒出来的迟到 chip",一次有界复查 fresh DOM read → ✕补删。仍读 0 → **dump Copilot DOM 到日志**(用户要求)。
+- **开关**(用户要求): dsh 设置卡 代码审查 →「浏览器元素批注发给 dsh」(`annotationToDsh`)。**扩展侧** 0.1.115 新增 `annoFeatureOn()`:在事件时读 `~/.dsh/review/shadow/settings.json`(无轮询),off = 完全静默(不发送同步/不清理/不闪回/无启动清理);**客户端 0.2.5**: `markAnnoSend()` 先查 `vscodeIframeHint()`(Chrome 里的 dsh 永不触发)+ `getReviewSettings().annotationToDsh`,dock chips off 时不渲染;开关文案改为描述现行设计。
+
+- `package.json`: 0.1.114 → 0.1.115(扩展), 0.2.4 → 0.2.5(dsh 客户端);部署完成,旧 0.1.114 已删。
+
+## 闪回 dsh 改防抖:标注不打断,标完自动回(2026-11-01, 扩展 0.1.114)
+
+**症状**: 0.1.113 删掉了每次-beacon 的闪回,导致标注后停在 Copilot 不闪回 dsh。用户澄清要**闪回**(之前"先不回闪回"是打错),但同时"标注不上去"(闪回和标注竞态丢标注)。
+
+**根因**: 每次 beacon 立即 `annoReturnIfIdle()` 隐藏 Copilot widget,标注中途被隐藏→竞态丢标注。0.1.113 全删→不闪回。两个需求矛盾。
+
+**修复**: 改**防抖**——`scheduleReturnToDsh(2500)`:每次 beacon 重置计时器,2.5s 没有新标注才闪回 dsh。连续标注不打断(标注中 widget 保持可见),标完 2.5s 后自动回 dsh。发送(annoSendSync)/删除(realDeleteChip)/启动清理的闪回仍**立即**(用户接受的"闪一下")。
+
+- `extension.js`: 新增 `scheduleReturnToDsh(delayMs)`(防抖计时器 `annoReturnDebounce`);`annoMirrorOnState()` 末尾改调 `scheduleReturnToDsh(2500)`。
+- `package.json`: 0.1.113 → 0.1.114;部署 `~/.vscode/extensions/dsn.dsh-review-vscode-0.1.114/`,旧 0.1.113 已删。
+
+## 修"标注不上去":删每次 beacon 的闪回 dsh(2026-11-01, 扩展 0.1.113)
+
+**症状**: "有时候标注不上去"——用户连续标注多个元素时,有时标注丢失。
+
+**根因**: `annoMirrorOnState()` 在**每次 beacon** 都 `annoReturnToDsh=true; annoReturnIfIdle()`,闪回 dsh(隐藏 Copilot widget)。用户标注中途,widget 被隐藏 → 标注竞态丢失。日志证据:一轮内 `return-to-dsh` 出现 17+ 次,每次 beacon 都闪。这个闪回是给**已废弃的 dock**用的(`sendAnnoDock` 定义了但从未被调用,dock 早就不更新了),现在纯有害。
+
+**修复**: 删掉 `annoMirrorOnState()` 末尾的每次-beacon 闪回。chip 状态追踪(`annoCurrentChips`)保留(发送抓取仍需要)。闪回 dsh 现在只在**发送后**(`annoSendSync` finally)、**删除后**(`realDeleteChip` finally)、**启动清理后**发生——即用户接受的"闪一下"。标注过程中 widget 保持可见,可连续标注。
+
+- `extension.js`: `annoMirrorOnState()` 删除 `annoReturnToDsh=true; annoReturnIfIdle()`。
+- `package.json`: 0.1.112 → 0.1.113;部署 `~/.vscode/extensions/dsn.dsh-review-vscode-0.1.113/`,旧 0.1.112 已删。
+
+## 发送清空改 ✕ 点删 + 修闪回 dsh(2026-11-01, 扩展 0.1.112)
+
+修用户 e2e 两个 bug:
+
+1. **闪回 dsh 失败**: `annoReturnIfIdle()` 用 `workbench.view.dsh` 切回 dsh,但**这个命令在本 VS Code 版本未注册**(日志反复 `command 'workbench.view.dsh' not found`),导致闪 Copilot 后回不来。改为 `dshState.dshView.show(true)`(reveal=true 激活 dsh 容器+显示视图)作主机制;`workbench.view.dsh` 降为 best-effort 且静默(不再刷屏)。
+
+2. **newChat 清不掉元素标注 chip**: `clearCopilotSession()`(newChat)只重置会话 InputModel,但**元素标注是页面级**(不在会话里),newChat 后 chip 反复重渲染,清不干净,且状态混乱导致用户"标不上去"。改为**逐个 ✕ 点删**(`realDeleteChip` 真正从 Copilot 持久状态删标注+pin),newChat 降为兜底(清残余输入文本+起干净会话)。发送清空(②)与启动清理都改为此路径。
+
+- `extension.js`: `annoReturnIfIdle()`(show(true) 主机制)、`annoSendSync()` ②清空(✕ 点删主 + newChat 兜底)、`annoMirrorOnState()` 启动清理(✕ 点删主 + newChat 兜底)。
+- `package.json`: 0.1.111 → 0.1.112;部署目录 `~/.vscode/extensions/dsn.dsh-review-vscode-0.1.112/`,旧 0.1.111 目录已删。
+
+## 手动清空 dsh 输入框不再误闪 Copilot(2026-11-01, dsh-review 0.2.4)
+
+**症状**: 手动清空 dsh 输入框(Cmd+A 删除)也会闪 Copilot(发送消费被误触发)。
+
+**根因**: 客户端旧触发器是"dsh draft 从非空→变空",这个条件在**发送**和**手动清空**时都成立,所以两者都触发 `dshAnnoConsumed`。
+
+**修复**: 把触发器改成"真发送"——Enter(非 Shift、非输入法)在 composer 内,或 composer 发送按钮(`[data-composer-card] button[class*="primary"]`)点击。手动清空不碰 Enter 也不点按钮,不再触发。选择器与 dsh-annotate 的 `composerPrimary()`/`onComposerEnter()` 完全一致(经 EXA 验证的官方发送钩子路径)。
+
+- `client.js`: 新增 `markAnnoSend()` + `installAnnoSendDetection()`(document 捕获阶段监听 Enter/发送按钮,200ms 去抖);删除旧的"draft 非空→空" `prevDraftRef` 效应。
+- `package.json`: 0.2.3 → 0.2.4。
+
+## dock chip 真删 + 侧栏刷新自动同步(2026-11-01, 扩展 0.1.111)
+
+修用户 e2e 三问题,根因同一个:Copilot 聊天组件是**瞬态**的——用户在 dsh 侧栏时 `.chat-attachments-container` 不在 DOM 里,CDP `deleteChip` 返回 `no-container`,dock ✕ 与发送消费全失效。
+
+- `lib/anno-cdp.js`: `AnnoDriver.eval(expr)` — 在 workbench 页求值并返回值。
+- `extension.js`:
+  - `flashCopilot()` — 依次尝试 `workbench.action.chat.open` / `workbench.view.sessions.chat` / `workbench.action.chat.openNewSessionSidebar.copilotcli`,把 Copilot 面板"闪"出来(用户接受的"闪一下")。
+  - `copilotWidgetRendered()` — CDP 查容器是否在 DOM。
+  - `annoResync()` — 侧栏 (re)load 时:容器在→直接 `getState()` 拉状态;不在→闪 Copilot,observer 重新 arm 时自动 beacon。两种路径都先清 `annoMirrored`/`annoInitialRecorded`,让 chip 全量重插(dock + 输入框内联),刷新后发送/消费链路完整。
+  - `realDeleteChip(name, attempt, flashed)` — 首次 `no-container` 时先 `flashCopilot()` 再重试(有界 5×500ms,不轮询)。dock ✕ 与发送消费共用此路径。
+  - 接线: `dshState.logChannel` / `annoResync` / `annoHasChips`。
+  - **闪完自动跳回 dsh**: `annoReturnToDsh` 标志——闪 Copilot 时置位;state beacon 在 `annoMirrorOnState` 末尾消费它,调 `dshView.show(false)`(稳定 API)切回 dsh 视图。旧代码用的 `dshReview.dshWebview.focus` 命令从未注册,是静默 no-op,所以闪完不回来。
+- `lib/dsh-browser.js`: `dshBridgeHello` 末尾——若 `annoHasChips()`(刷新而非干净启动)则 `annoResync()`。这就是"cmd+r 默认闪一下 copilot"。
+
+### 0.1.111 修订:删除竞态 + Copilot→dsh 同步(同日)
+
+用户 e2e 反馈两问题,日志定位根因:
+
+1. **删除竞态(延迟大、时灵时不灵)**:旧逻辑在"组件出现"beacon 上就 `dshView.show()` 跳回 dsh,把刚渲染的 Copilot 组件**销毁**,导致后续 CDP 点击全部 `no-container`。修复:`annoDeletesInFlight` 计数门控返回——删除进行中(计数>0)不跳回;CDP 点击成功后先 `annoPullState()`(拉取新状态,同步 dock+内联)再跳回。闪烁后加 `waitForWidgetRendered(2500)` 有界等待组件真正渲染(事件触发、非轮询),再点删。
+2. **Copilot 侧删 chip 后 dsh 残留**:新增 `annoFocusResync()`——用户在 dsh 侧栏活动(`dshViewActive`,上游 3s 节流)时重发当前 dock 状态(客户端同态 no-op)+ 组件在渲染时 `annoPullState()` 重同步。`lib/dsh-browser.js` 的 `dshViewActive` handler 调用它。
+
+## 元素批注功能 — 整删,重新做(2026-11-01, dsh-review 0.2.1 / 扩展 0.1.108)
+
+同日新增: dsh 插件面板「代码审查」卡加「浏览器元素批注发给 dsh」开关(`annotationToDsh`, 默认开)——开=批注走 dsh(新流程), 关=保持 VS Code 原生 Copilot 逻辑。设置走现有 settings 持久化, 扩展端可读 `~/.dsh/review/shadow/settings.json`。
+
+用户决定:浏览器元素批注功能整体删除、重新实现。目标流程(用户复述确认):
+原生 ⌥⌘C 标注 → 确认即自动在 dsh 输入框**光标处**出现 chip(一个标注一个 chip,不点发送)
+→ 图钉**留在页面** → chip⇄图钉**双向删除同步**(删 chip 删图钉、删图钉删 chip)。
+旧实现(0.1.49 起)是"抄送后立刻删图钉"的单向形态,与目标不符,故整删。
+
+**删除的内容**:
+- 整文件: `lib/browser-comment.js`、`lib/element-context-watcher.js`、`lib/element-bridge.js`、`lib/cdp-element-source.js`、`lib/native-comment-server.js`、`tools/patch_comment_hook.py`(tools/ 目录随之移除)
+- `extension.js`: startElementContextWatcher / startNativeComment / startCdpProbe / startBrowserComment 全部接线
+- `lib/dsh-browser.js`: bridge 引用、openGuard、focusComposerPending/pendingChipRemovals、`dshReview.removeDshChip` / `dshReview.focusDshComposer` 命令、dshDropReference / dshRemoveReferenceAck / dshRefsTracked 消息处理
+- `package.json`: elementContext.* + browserComment.* 共 15 个设置、11 个命令及 8 个 commandPalette 项、`ws` 依赖
+- `install.sh`: merge_cdp_port(remote-debugging-port=9223 写入 argv.json 的部分)
+
+**保留不动**: 行内审查(流程1 全部)、dsh 侧栏 + auth proxy、代码/文件/终端→dsh、后台任务终端、dsh-review 插件宿主侧(index.js/shadow.js/pending.js/jobs.js)、`dsh-review/client.js` 里 inert 的 chip 删除绑定代码(trackInsertedRefs/sweepDroppedRefs,无扩展端 handler 后不触发,新实现会重新接上)、argv.json 的 editorInsets 部分。
+备份分支: `backup/pre-annotation-redo-20261101`(删除前 main = ad8afbf 的完整快照)。
+
+**安装侧残留清理(同日)**: `~/.vscode/extensions/dsn.dsh-review-vscode-0.1.107/`(删除 5 个旧批注 lib + 同步 extension.js / dsh-browser.js / package.json)、`~/.vscode/argv.json` 与 `~/Library/Application Support/Code/argv.json` 的 `"remote-debugging-port": "9223"`(已留 `.bak-pre-annotation-redo`)、`/tmp/dsh-comments/` 旧批注 md。需 Cmd+Q 重启 VS Code 后旧链路才完全失效;运行中会话里 dsh 输入框的旧批注 chip 与页面图钉需手动点删。
+
 ## 维护指南:以后遇到"某种文件点了打不开 / 点不动"怎么处理(0.1.60 定稿,先查这页再动手)
 
 排查顺序(日志先行,别猜):

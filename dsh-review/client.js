@@ -64,6 +64,234 @@ window.__ModuleLoader__.load({
     const refRegistry = new Map();
     let refSeq = 0;
 
+    // Annotation dock (0.2.3): chip row ABOVE the composer input, mirroring the
+    // Copilot attachment strip (dsh-annotate mechanism: native slot
+    // conversation.input.dock). The extension is the single source of truth
+    // (Copilot observer beacon -> dshAnnoDock full state); the dock is a pure
+    // mirror. Deletion is delegated back (dshAnnoDelete) so the extension can
+    // perform the REAL CDP click on the Copilot chip — only that removes the
+    // native pin. Send/manual-clear of the draft = consume all (dshAnnoConsumed).
+    let annoDockChips = [];
+    const annoDockSubscribers = new Set();
+    function setAnnoDockChips(list) {
+      const next = Array.isArray(list) ? list.filter(Boolean).map(function (c) {
+        return { name: String(c.name || ""), text: String(c.text || ""), key: String(c.key || ""), file: c.file ? String(c.file) : "" };
+      }) : [];
+      const same = next.length === annoDockChips.length && next.every(function (c, i) {
+        return c.key === annoDockChips[i].key && c.text === annoDockChips[i].text && c.file === annoDockChips[i].file;
+      });
+      if (same) return;
+      annoDockChips = next;
+      annoDockSubscribers.forEach(function (fn) { try { fn(); } catch (err) { /* noop */ } });
+    }
+    function subscribeAnnoDock(fn) {
+      annoDockSubscribers.add(fn);
+      return function () { annoDockSubscribers.delete(fn); };
+    }
+
+    // Send detection (0.2.4): fire dshAnnoConsumed ONLY on a REAL send —
+    // Enter (non-Shift, non-composing) inside the composer, or the composer's
+    // primary (send) button click. A manual clear (Cmd+A + delete) presses
+    // neither, so it no longer triggers the Copilot flash. This replaces the
+    // old ambiguous "draft non-empty -> empty" heuristic that fired on BOTH
+    // send and manual clear. Selectors mirror dsh-annotate's proven
+    // composerPrimary()/onComposerEnter() exactly.
+    let lastAnnoSendMark = 0;
+    // (0.2.15) ③ SYNCHRONOUS intercept-and-append — dsh-annotate@0.1.0 shape
+    // copied exactly: the MATERIAL (element/comment/file) was delivered at
+    // ANNOTATION time via dshAnnoDock (annoDockChips = their pending Map),
+    // so at Enter time everything is local & SYNC: compose (L775-780),
+    // only THEN preventDefault (L781-782), submit via the session face
+    // prompt(parts,'queue') (L851) which works idle AND generating; the
+    // setDraft+button path (L181-189) is the documented fallback.
+    let annoForwarding = false;
+    let annoPrepSeq = 0;
+    const annoPrepPending = new Map();
+    // (0.2.22) SEND PROGRESS UI: while a send is held for the Copilot read,
+    // LOCK the composer (disabled input) and ring it with a progress bar;
+    // bar full (dshAnnoPrepared) = the message goes out. Stages from the
+    // extension: 1 hover starting, 2 captures done, 3 fills done, prepared=100.
+    let annoProgReq = null;
+    let annoProgEls = null;
+    function annoProgStyle() {
+      if (document.getElementById("dshr-anno-prog-css")) return;
+      const st = document.createElement("style");
+      st.id = "dshr-anno-prog-css";
+      st.textContent = ".dshr-anno-lock{position:relative;} .dshr-anno-ring{position:absolute;inset:calc(0px - var(--dsw-focus-ring-width, 2px));border-radius:var(--dsw-radius-md, 12px);border:var(--dsw-focus-ring-width, 2px) solid currentColor;pointer-events:none;z-index:40;} .dshr-anno-bar{position:absolute;left:0;top:0;bottom:0;width:0%;border-radius:var(--dsw-radius-md, 12px);background:currentColor;opacity:.16;transition:width var(--ds-transition-duration, .2s) var(--ds-ease-in-out, ease);pointer-events:none;z-index:39;}";
+      (document.head || document.documentElement).appendChild(st);
+    }
+    function annoProgStart(req) {
+      const card = document.querySelector("[data-composer-card]");
+      if (!card) return;
+      annoProgStyle();
+      annoProgReq = req;
+      card.classList.add("dshr-anno-lock");
+      const ring = document.createElement("div"); ring.className = "dshr-anno-ring";
+      const bar = document.createElement("div"); bar.className = "dshr-anno-bar";
+      card.appendChild(ring); card.appendChild(bar);
+      const ed = card.querySelector('[contenteditable="true"]');
+      let edRestore = null;
+      if (ed) { edRestore = { el: ed }; ed.setAttribute("contenteditable", "false"); ed.style.opacity = "0.55"; ed.style.pointerEvents = "none"; }
+      const ta = card.querySelector("textarea");
+      if (ta && !ed) { edRestore = { el: ta, was: ta.disabled }; ta.disabled = true; }
+      const btn = card.querySelector('button[class*="primary"]');
+      let btnRestore = null;
+      if (btn && !btn.disabled) { btnRestore = { el: btn }; btn.disabled = true; }
+      annoProgEls = { card: card, ring: ring, bar: bar, ed: edRestore, btn: btnRestore };
+      requestAnimationFrame(function () { bar.style.width = "8%"; });
+    }
+    function annoProgStage(stage) {
+      if (!annoProgEls) return;
+      const pct = stage === 1 ? 40 : stage === 2 ? 70 : stage >= 3 ? 90 : 8;
+      try { annoProgEls.bar.style.width = pct + "%"; } catch (err) { /* noop */ }
+    }
+    function annoProgFinish(then) {
+      const els = annoProgEls;
+      annoProgEls = null; annoProgReq = null;
+      if (!els) { if (then) then(); return; }
+      try { els.bar.style.transition = "width .15s ease"; els.bar.style.width = "100%"; } catch (err) { /* noop */ }
+      setTimeout(function () {
+        try {
+          if (els.ed) { els.ed.el.setAttribute("contenteditable", "true"); els.ed.el.style.opacity = ""; els.ed.el.style.pointerEvents = ""; }
+          if (els.btn) els.btn.el.disabled = false;
+          els.card.classList.remove("dshr-anno-lock");
+          if (els.ring.parentNode) els.ring.parentNode.removeChild(els.ring);
+          if (els.bar.parentNode) els.bar.parentNode.removeChild(els.bar);
+        } catch (err) { /* noop */ }
+        if (then) then();
+      }, 180);
+    }
+    function annoComposeBatch() {
+      if (annoDockChips.length === 0) return "";
+      const lines = ["以下是我对浏览器元素的标注(全文见各文件):", ""];
+      annoDockChips.forEach(function (c, i) {
+        lines.push((i + 1) + ". @" + c.name + "  注释: " + (c.text || "(无)"));
+        lines.push("   全文文件: " + (c.file || "(待补)"));
+      });
+      return lines.join("\n");
+    }
+    function annoReadDraft(event) {
+      let raw = "";
+      try { if (window.__dshrAnnoGetDraft) raw = String(window.__dshrAnnoGetDraft() || ""); } catch (err) { /* noop */ }
+      if (!raw && event && event.target) {
+        try { raw = String(event.target.value || event.target.innerText || event.target.textContent || ""); } catch (err) { /* noop */ }
+      }
+      return raw.replace(/\u200b/g, "");
+    }
+    function markAnnoSend(event) {
+      // true = intercepted (message already submitted synchronously; caller suppresses native)
+      try {
+        window.parent.postMessage({ type: "dshPasteLog", line: "anno mark: hint=" + (vscodeIframeHint() ? 1 : 0) + " toggle=" + (getReviewSettings().annotationToDsh ? 1 : 0) + " chips=" + annoDockChips.length + " fwd=" + (annoForwarding ? 1 : 0) }, "*");
+      } catch (err) { /* noop */ }
+      if (!vscodeIframeHint()) return false;
+      if (!getReviewSettings().annotationToDsh) return false;
+      if (annoForwarding) return false;
+      const now = Date.now();
+      if (now - lastAnnoSendMark < 200) return false;  // debounce: one gesture, one send
+      lastAnnoSendMark = now;
+      if (annoDockChips.length === 0) return false;    // NO annotations: fully native Enter
+      const draft = annoReadDraft(event).trim();
+      // (0.2.19) USER-FINAL ORDER — ALWAYS read Copilot FIRST, send after.
+      // No fast path on stale lists: the extension does the authoritative read
+      // (page rebuild + hover + file writes) and answers dshAnnoPrepared the
+      // moment the read completes; submission happens at THAT instant.
+      // (No dshAnnoConsumed post: it would double-trigger the same read.)
+      // Ask the extension; it flashes, hovers, fills the reserved files, then
+      // answers with the finished block — we submit at that moment. 8s
+      // timeout submits anyway (with whatever rows we have).
+      if (annoProgReq !== null) return true; // already held for a send — swallow extra Enter/click
+      const req = ++annoPrepSeq;
+      annoPrepPending.set(req, { draft: draft, at: Date.now() });
+      annoProgStart(req);
+      try { window.parent.postMessage({ type: "dshAnnoPrepareReq", req: req }, "*"); } catch (err) { /* noop */ }
+      try { if (event && event.preventDefault) event.preventDefault(); if (event && event.stopPropagation) event.stopPropagation(); } catch (err) { /* noop */ }
+      setTimeout(function () {
+        if (!annoPrepPending.has(req)) return;
+        annoPrepPending.delete(req);
+        annoProgFinish(function () { annoSubmitNow(null, annoFinishText(draft, null), draft); });
+      }, 15000); // (0.2.25) unified hover-card reads: N chips x up to 4s — 8s was too tight
+      return true;
+    }
+    function annoFinishText(draft, block) {
+      const batch = block || annoComposeBatch();
+      return batch ? (draft === "" ? batch : draft + "\n\n" + batch) : draft;
+    }
+    function annoSubmitNow(event, text, draft) {
+      try { if (event && event.preventDefault) event.preventDefault(); if (event && event.stopPropagation) event.stopPropagation(); } catch (err) { /* noop */ }
+      annoForwarding = true;
+      try {
+        let sent = false;
+        try { sent = !!(window.__dshrAnnoPrompt && window.__dshrAnnoPrompt(text)); } catch (err) { /* noop */ }
+        if (sent) { try { if (window.__dshrAnnoSetDraftFull) window.__dshrAnnoSetDraftFull(""); } catch (err) { /* noop */ } }
+        else {
+          try { if (window.__dshrAnnoSetDraftFull) window.__dshrAnnoSetDraftFull(text); } catch (err) { /* noop */ }
+          const b = document.querySelector('[data-composer-card] button[class*="primary"]');
+          if (b && !b.disabled) { try { b.click(); } catch (err) { /* noop */ } }
+        }
+        annoDockChips = [];
+        annoDockSubscribers.forEach(function (fn) { try { fn(); } catch (err) { /* noop */ } });
+        try { window.parent.postMessage({ type: "dshPasteLog", line: "anno send: prompt=" + sent + " len=" + text.length }, "*"); } catch (err) { /* noop */ }
+      } finally {
+        setTimeout(function () { annoForwarding = false; }, 1000);
+      }
+      void draft;
+    }
+    try {
+      window.__dshrAnnoPrepared = function (req, block) {
+        const p = annoPrepPending.get(req);
+        if (!p) return;
+        annoPrepPending.delete(req);
+        annoProgFinish(function () { annoSubmitNow(null, annoFinishText(p.draft, String(block || "")), p.draft); });
+      };
+    } catch (err) { /* noop */ }
+    function __unused_markAnnoSend_tail() {
+      annoForwarding = true;
+      try {
+        let sent = false;
+        try { sent = !!(window.__dshrAnnoPrompt && window.__dshrAnnoPrompt(text)); } catch (err) { /* noop */ }
+        if (sent) {
+          try { if (window.__dshrAnnoSetDraftFull) window.__dshrAnnoSetDraftFull(""); } catch (err) { /* noop */ }
+        } else {
+          try { if (window.__dshrAnnoSetDraftFull) window.__dshrAnnoSetDraftFull(text); } catch (err) { /* noop */ }
+          const b = document.querySelector('[data-composer-card] button[class*="primary"]');
+          if (b && !b.disabled) { try { b.click(); } catch (err) { /* noop */ } }
+        }
+        try { window.parent.postMessage({ type: "dshPasteLog", line: "anno send sync: prompt=" + sent + " len=" + text.length }, "*"); } catch (err) { /* noop */ }
+      } finally {
+        setTimeout(function () { annoForwarding = false; }, 1000);
+      }
+      return true;
+    }
+    (function installAnnoSendDetection() {
+      if (typeof document === "undefined" || typeof document.addEventListener !== "function") return;
+      function composerPrimaryButton() {
+        return document.querySelector('[data-composer-card] button[class*="primary"]');
+      }
+      // Enter in the composer (not Shift+Enter newline, not IME composing) = send.
+      document.addEventListener("keydown", function (event) {
+        if (event.key !== "Enter" || event.shiftKey === true || event.isComposing === true) return;
+        const target = event.target;
+        if (!target || typeof target.closest !== "function") return;
+        if (target.closest("[data-dsh-annotate]")) return;
+        const textarea = target.tagName === "TEXTAREA";
+        const inEditor = target.isContentEditable === true || target.closest('[contenteditable="true"]') != null;
+        if (!textarea && !inEditor) return;
+        if (markAnnoSend(event)) { event.preventDefault(); event.stopPropagation(); }
+      }, true);
+      // The send button means the same thing as Enter.
+      // (0.2.7) While the agent is GENERATING the same primary button morphs
+      // into stop/pause — clicking it is not a send. Guard on the label.
+      document.addEventListener("click", function (event) {
+        const button = composerPrimaryButton();
+        if (!button) return;
+        const pressed = event.target && event.target.closest ? event.target.closest("button") : event.target;
+        if (pressed !== button) return;
+        const lbl = String(button.getAttribute("aria-label") || button.title || button.textContent || "").toLowerCase();
+        if (/stop|pause|cancel|停止|暂停|取消/.test(lbl)) return;
+        if (markAnnoSend(event)) { event.preventDefault(); event.stopPropagation(); }
+      }, true);
+    })();
+
     // VSCode workbench scope (reverse watchdog + dock gate + session-list filter).
     // Extension sends realpath + raw fsPath of every folder in THIS window.
     // Match = equal or UNDER a folder (0.1.44; ancestor workspaces excluded:
@@ -72,6 +300,7 @@ window.__ModuleLoader__.load({
     // any current session and keep clearing if the user tries to open one.
     let vscodeScopePaths = [];
     let vscodeScopeRawPaths = [];
+
     let vscodeScopePullingAt = 0;
     /** First `dshSetScope` from the extension has arrived (empty list is valid). */
     let vscodeScopeReceived = false;
@@ -674,13 +903,13 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * @returns {{ enabled: boolean, fileSend: string, snippetSend: string, sidebarSide: string, jobsTerminal: boolean, scopeFilter: boolean, autoWorkspace: boolean, openFilesInVscode: boolean, claudeAdapt: boolean }}
+     * @returns {{ enabled: boolean, fileSend: string, snippetSend: string, sidebarSide: string, jobsTerminal: boolean, scopeFilter: boolean, autoWorkspace: boolean, openFilesInVscode: boolean, claudeAdapt: boolean, annotationToDsh: boolean }}
      * @description Live 设置 → 代码审查 values; defaults if the scope is not ready.
      */
     function getReviewSettings() {
       // Default to pointer: matches the user's persisted yaml choice; fence
       // is only used when the live scope explicitly says fence.
-      const d = { enabled: true, fileSend: "path", snippetSend: "pointer", sidebarSide: "left", jobsTerminal: false, scopeFilter: true, autoWorkspace: true, openFilesInVscode: true, claudeAdapt: true };
+      const d = { enabled: true, fileSend: "path", snippetSend: "pointer", sidebarSide: "left", jobsTerminal: false, scopeFilter: true, autoWorkspace: true, openFilesInVscode: true, claudeAdapt: true, annotationToDsh: true, showHoverCard: true };
       if (!reviewSettingsScope || typeof reviewSettingsScope.getSnapshot !== "function") return d;
       const snap = reviewSettingsScope.getSnapshot();
       const val = snap && snap.value;
@@ -699,6 +928,8 @@ window.__ModuleLoader__.load({
         autoWorkspace: v.autoWorkspace !== false,
         openFilesInVscode: v.openFilesInVscode !== false,
         claudeAdapt: v.claudeAdapt !== false,
+        annotationToDsh: v.annotationToDsh !== false,
+        showHoverCard: v.showHoverCard !== false,
       };
     }
 
@@ -801,6 +1032,22 @@ window.__ModuleLoader__.load({
           textFallback: allQuoted,
         });
       }
+      if (kind === "element") {
+        // Browser element annotation (Comment on Elements → dsh): chip = the
+        // element (label, e.g. "div#count"), text = the comment (modelText /
+        // clipboardText set by the extension as "@<name> <text>"). Preserve them
+        // verbatim — there is NO file path, so the file/folder branch would
+        // clobber modelText to an empty string and the chip would vanish on send.
+        const label = String(src.label || "element");
+        const modelText = typeof src.modelText === "string" ? src.modelText : label;
+        const clipboardText = typeof src.clipboardText === "string" ? src.clipboardText : modelText;
+        return Object.assign({}, src, {
+          label: label,
+          clipboardText: clipboardText,
+          modelText: modelText,
+          textFallback: modelText,
+        });
+      }
       const prefix = kind === "folder" ? "目录: " : "文件: ";
       const modelText = s.fileSend === "prefixed" ? prefix + quoted : quoted;
       return Object.assign({}, src, {
@@ -862,6 +1109,7 @@ window.__ModuleLoader__.load({
       folder: "rgba(240,161,50,0.26)",    // amber
       selection: "rgba(167,139,250,0.34)", // violet
       terminal: "rgba(20,184,166,0.36)",  // teal — not file/folder/snippet
+      element: "rgba(236,72,153,0.30)",   // pink — browser element annotation
     };
     let chipStyleTag = null;
 
@@ -1277,6 +1525,15 @@ window.__ModuleLoader__.load({
         // 0.1.67: the click-interception patch lives in another closure; expose
         // the composer refocus so the insert-guard branch can hand focus back.
         try { window.__dshrFocusComposer = focusComposer; } catch (err) { /* noop */ }
+        // (0.2.8) ③ draft bridge for the anno prepare/append protocol.
+        try {
+          window.__dshrAnnoGetDraft = function () { return String(draftRef.current == null ? "" : draftRef.current); };
+          window.__dshrAnnoSetDraftFull = function (text) {
+            const a = inputActionsRef.current;
+            if (a && typeof a.setDraft === "function") { a.setDraft(String(text == null ? "" : text)); return true; }
+            return false;
+          };
+        } catch (err) { /* noop */ }
 
         function insertComposerText(text) {
           const value = String(text === null || text === undefined ? "" : text);
@@ -1630,7 +1887,8 @@ window.__ModuleLoader__.load({
             // 0.1.84: dsh re-renders the chip and replaces its DOM node, so a disconnected
             // node alone is not a deletion. Re-resolve by name and rebind; only when the name
             // is gone from the page as well is it a real deletion.
-            if (info.el && text.indexOf(name) !== -1) { diag.push(short(name) + " 被替换后重绑");
+            if (info.el && text.indexOf(name) !== -1) {
+              diag.push(short(name) + " 被替换后重绑");
               const nodes = composerScope().querySelectorAll('span,div,a,button');
               for (let i = 0; i < nodes.length; i++) {
                 if (!textHas(nodes[i], info)) continue;
@@ -1717,7 +1975,7 @@ window.__ModuleLoader__.load({
           if (!src || !src.tagName) return;
           let near = null;
           let n = src;
-                      for (let up = 0; n && up < 12; up++) { if (/comment-\d{8}-|\.md/.test(String(n.textContent || ''))) { near = n; break } n = n.parentElement }
+          for (let up = 0; n && up < 12; up++) { if (/comment-\d{8}-|\.md/.test(String(n.textContent || ''))) { near = n; break } n = n.parentElement }
           if (!near) {
             const chips = chipNodes();
             if (!chips.length) return;
@@ -1792,7 +2050,7 @@ window.__ModuleLoader__.load({
           }
           return false;
         }
-        try { window.parent.postMessage({ type: "dshClientBuild", version: "0.1.75" }, "*"); } catch (err) { /* noop */ }
+        try { window.parent.postMessage({ type: "dshClientBuild", version: "0.2.3" }, "*"); } catch (err) { /* noop */ }
         window.__dshrTracked = function () { return Array.from(trackedRefs.keys()); };
         window.__dshrRemoveChip = function (nm) {
           const name = String(nm || '');
@@ -1974,6 +2232,20 @@ window.__ModuleLoader__.load({
         function onBridgeMessage(event) {
           const msg = event.data;
           if (!msg) return;
+          if (msg.type === "dshAnnoProg") {
+            try { if (msg.req === annoProgReq) annoProgStage(Number(msg.stage) || 0); } catch (err) { /* noop */ }
+            return;
+          }
+          if (msg.type === "dshAnnoPrepared") {
+            try { if (window.__dshrAnnoPrepared) window.__dshrAnnoPrepared(msg.req, String(msg.block || "")); } catch (err) { /* noop */ }
+            return;
+          }
+          if (msg.type === "dshAnnoFocus") {
+            // (0.2.7) ext returned the view to dsh after an annotation flash:
+            // put the caret back in the composer (chat.open had stolen focus).
+            try { if (window.__dshrFocusComposer) window.__dshrFocusComposer(); } catch (err) { /* noop */ }
+            return;
+          }
           if (msg.type === "dshBridgeAck") {
             bridgeActive = true;
             setInVSCodeIframe(true);
@@ -2017,7 +2289,56 @@ window.__ModuleLoader__.load({
           } else if (msg.type === "dshRemoveReference" && msg.name) {
             const nm = String(msg.name);
             postState({ report: "收到删方块请求: " + nm });
-            const ok = removeTrackedChipByName(nm);
+            let ok = false;
+            // Element annotation chip (0.2.3): precise removal via the input
+            // state's occurrence — find the source=vscode-ref occurrence whose
+            // label is this element name, click the chip's own delete control
+            // (dsh's native state update, no React fight), then drop the
+            // comment text line that follows the chip.
+            if (msg.element) {
+              const snap = inputStateRef.current || {};
+              const occs = Array.isArray(snap.occurrences) ? snap.occurrences : [];
+              const match = occs.find(function (o) {
+                if (o.source !== REF_SOURCE) return false;
+                if (o.label === nm) return true;
+                if (String(o.clipboardText || "").indexOf(nm) === 0) return true;
+                if (String(o.label || "").indexOf(nm) === 0) return true;
+                return false;
+              });
+              if (match) {
+                const el = document.querySelector('[data-decoration="chip"][data-occurrence="' + String(match.occurrenceId) + '"]');
+                if (el) {
+                  const ctl = el.querySelector('button,[role="button"],[class*="remove"],[class*="close"],[class*="delete"],svg');
+                  if (ctl) {
+                    try { ctl.dispatchEvent(new window.MouseEvent("click", { bubbles: true, cancelable: true, view: window })); ok = true; } catch (err) { ok = false; }
+                  }
+                  if (!ok) { try { el.remove(); ok = true; } catch (err) { ok = false; } }
+                }
+              }
+              if (ok && msg.text) {
+                // Comment line ("text" appended after the chip) is plain draft
+                // text: select the text node carrying it and delete, same
+                // technique as removeTrackedChipByName's fallback.
+                try {
+                  const root = composerRoot();
+                  const needle = String(msg.text);
+                  const walker = document.createTreeWalker(root, window.NodeFilter.SHOW_TEXT, null);
+                  let tn = null;
+                  while ((tn = walker.nextNode())) {
+                    if (String(tn.nodeValue || "").indexOf(needle) === -1) continue;
+                    const range = document.createRange();
+                    range.selectNodeContents(tn);
+                    const sel = window.getSelection();
+                    sel.removeAllRanges();
+                    sel.addRange(range);
+                    try { document.execCommand("delete"); } catch (err) { /* noop */ }
+                    try { sel.removeAllRanges(); } catch (err) { /* noop */ }
+                    break;
+                  }
+                } catch (err) { /* chip is gone; orphan text is cosmetic */ }
+              }
+            }
+            if (!ok) ok = removeTrackedChipByName(nm);
             if (ok) trackedRefs.delete(nm);
             postState({ report: "删方块结果: " + nm + " -> " + (ok ? "已删" : "页面上没找到") });
           } else if (msg.type === "dshInsertRefs" && Array.isArray(msg.refs)) {
@@ -2039,6 +2360,11 @@ window.__ModuleLoader__.load({
               count: result.count,
               reason: result.reason || "",
             });
+          } else if (msg.type === "dshAnnoDock") {
+            // Full-state mirror of the Copilot attachment strip (event-driven:
+            // the extension posts this on every observer beacon, never polls).
+            try { window.parent.postMessage({ type: "dshPasteLog", line: "annoDock recv " + ((msg.chips || []).length) + " row(s)" }, "*"); } catch (err) { /* noop */ }
+            setAnnoDockChips(msg.chips);
           } else if (msg.type === "dshFocusComposer") {
             // Extension pulled VS Code focus back to the sidebar; now the
             // view document is active, so the DOM focus lands on the composer.
@@ -2980,6 +3306,8 @@ window.__ModuleLoader__.load({
           const [draftAutoWorkspace, setDraftAutoWorkspace] = useState(null);
           const [draftOpenFilesVs, setDraftOpenFilesVs] = useState(null);
           const [draftClaudeAdapt, setDraftClaudeAdapt] = useState(null);
+          const [draftAnnotationToDsh, setDraftAnnotationToDsh] = useState(null);
+          const [draftShowHoverCard, setDraftShowHoverCard] = useState(null);
           const [saving, setSaving] = useState(false);
           const [failed, setFailed] = useState(false);
           const live = getReviewSettings();
@@ -2992,6 +3320,8 @@ window.__ModuleLoader__.load({
           const liveAutoWorkspace = live.autoWorkspace;
           const liveOpenFilesVs = live.openFilesInVscode;
           const liveClaudeAdapt = live.claudeAdapt;
+          const liveAnnotationToDsh = live.annotationToDsh;
+          const liveShowHoverCard = live.showHoverCard;
           const shownEnabled = draftEnabled == null ? liveEnabled : draftEnabled;
           const shownFileSend = draftFileSend == null ? liveFileSend : draftFileSend;
           const shownSnippetSend = draftSnippetSend == null ? liveSnippetSend : draftSnippetSend;
@@ -3001,6 +3331,8 @@ window.__ModuleLoader__.load({
           const shownAutoWorkspace = draftAutoWorkspace == null ? liveAutoWorkspace : draftAutoWorkspace;
           const shownOpenFilesVs = draftOpenFilesVs == null ? liveOpenFilesVs : draftOpenFilesVs;
           const shownClaudeAdapt = draftClaudeAdapt == null ? liveClaudeAdapt : draftClaudeAdapt;
+          const shownAnnotationToDsh = draftAnnotationToDsh == null ? liveAnnotationToDsh : draftAnnotationToDsh;
+          const shownShowHoverCard = draftShowHoverCard == null ? liveShowHoverCard : draftShowHoverCard;
           const dirty = shownEnabled !== liveEnabled
             || shownFileSend !== liveFileSend
             || shownSnippetSend !== liveSnippetSend
@@ -3009,7 +3341,9 @@ window.__ModuleLoader__.load({
             || shownScopeFilter !== liveScopeFilter
             || shownAutoWorkspace !== liveAutoWorkspace
             || shownOpenFilesVs !== liveOpenFilesVs
-            || shownClaudeAdapt !== liveClaudeAdapt;
+            || shownClaudeAdapt !== liveClaudeAdapt
+            || shownAnnotationToDsh !== liveAnnotationToDsh
+            || shownShowHoverCard !== liveShowHoverCard;
           const available = snap && snap.status === "ready";
           const writable = !!(snap && snap.writable);
 
@@ -3023,8 +3357,10 @@ window.__ModuleLoader__.load({
             setDraftAutoWorkspace(null);
             setDraftOpenFilesVs(null);
             setDraftClaudeAdapt(null);
+            setDraftAnnotationToDsh(null);
+            setDraftShowHoverCard(null);
             setFailed(false);
-          }, [liveEnabled, liveFileSend, liveSnippetSend, liveSidebarSide, liveJobsTerminal, liveScopeFilter, liveAutoWorkspace, liveOpenFilesVs, liveClaudeAdapt]);
+          }, [liveEnabled, liveFileSend, liveSnippetSend, liveSidebarSide, liveJobsTerminal, liveScopeFilter, liveAutoWorkspace, liveOpenFilesVs, liveClaudeAdapt, liveAnnotationToDsh, liveShowHoverCard]);
 
           if (!available) return null;
 
@@ -3038,6 +3374,8 @@ window.__ModuleLoader__.load({
             setDraftAutoWorkspace(null);
             setDraftOpenFilesVs(null);
             setDraftClaudeAdapt(null);
+            setDraftAnnotationToDsh(null);
+            setDraftShowHoverCard(null);
             setFailed(false);
           }
 
@@ -3074,6 +3412,12 @@ window.__ModuleLoader__.load({
             }
             if (shownClaudeAdapt !== liveClaudeAdapt) {
               chain = chain.then(function () { return reviewScope.set("claudeAdapt", shownClaudeAdapt); });
+            }
+            if (shownAnnotationToDsh !== liveAnnotationToDsh) {
+              chain = chain.then(function () { return reviewScope.set("annotationToDsh", shownAnnotationToDsh); });
+            }
+            if (shownShowHoverCard !== liveShowHoverCard) {
+              chain = chain.then(function () { return reviewScope.set("showHoverCard", shownShowHoverCard); });
             }
             chain.then(
               function () { setSaving(false); discardDraft(); applyRailSideFromSettings(); },
@@ -3245,6 +3589,38 @@ window.__ModuleLoader__.load({
                 h("div", null,
                   h("label", { htmlFor: "dshr-claude-adapt" }, "适配 Claude 界面"),
                   h("p", { className: "dshr-hint" }, "开启后 Review Changes 待审栏使用 Claude 主题配色（暖黑底、陶橙点缀），与 dsh-claude-style / dsh-anthropic-fonts 协调。关闭恢复默认配色。默认开。"),
+                ),
+              ),
+              h("div", { className: "dshr-field" },
+                h("input", {
+                  id: "dshr-annotation-to-dsh",
+                  type: "checkbox",
+                  checked: shownAnnotationToDsh,
+                  disabled: !writable || saving,
+                  onChange: function (e) {
+                    setDraftAnnotationToDsh(!!e.target.checked);
+                    setFailed(false);
+                  },
+                }),
+                h("div", null,
+                  h("label", { htmlFor: "dshr-annotation-to-dsh" }, "浏览器元素批注发给 dsh"),
+                  h("p", { className: "dshr-hint" }, "开启后：在 Copilot（Comment on Elements）里标注元素；在 dsh 发送消息时自动抓取全部标注内容并入消息发给 agent，随后清空 Copilot（chip + 输入行）并立即闪回 dsh；打开 Copilot 面板也会立刻送回 dsh；VS Code 重载时同样清一次。关闭后：此功能如同不存在——不抓取、不清理、不闪回、不清输入行，批注完全走 Copilot 原生流程。仅 VS Code 侧栏生效，浏览器打开的 dsh 不受影响。默认开。"),
+                ),
+              ),
+              h("div", { className: "dshr-field" },
+                h("input", {
+                  id: "dshr-hover-card",
+                  type: "checkbox",
+                  checked: shownShowHoverCard,
+                  disabled: !writable || saving,
+                  onChange: function (e) {
+                    setDraftShowHoverCard(!!e.target.checked);
+                    setFailed(false);
+                  },
+                }),
+                h("div", null,
+                  h("label", { htmlFor: "dshr-hover-card" }, "发送读取时显示 Copilot 悬浮卡"),
+                  h("p", { className: "dshr-hint" }, "发送带标注的消息时，扩展会打开 Copilot 面板并合成 hover 抓取元素全文。开启（默认）：抓取时 Copilot 自己的悬浮卡照常显示。关闭：抓取期间悬浮卡被临时隐藏（只遮显示，数据照抓，读完即恢复）。"),
                 ),
               ),
               h("div", { className: "dshr-footer" },
@@ -4100,6 +4476,26 @@ window.__ModuleLoader__.load({
           return rec && rec.cwd ? String(rec.cwd) : "";
         } catch (err) { return ""; }
       }
+      // (0.2.13) dsh-annotate@0.1.0 VERBATIM: the public session face is the
+      // send — sessions.sessionOf(scope).prompt(parts, "queue") works while
+      // IDLE and while GENERATING, no button, no Enter simulation, no draft
+      // timing games. Exposed globally for the anno prepare protocol (the
+      // markAnnoSend closure sits at module scope, outside apply(ctx)).
+      try {
+        window.__dshrAnnoPrompt = function (text) {
+          try {
+            const sid = currentSessionId();
+            if (!sid) return false;
+            const scope = ctx.sessions.scope(sid);
+            if (scope === undefined) return false;
+            const session = ctx.sessions.sessionOf(scope);
+            if (session === undefined) return false;
+            Promise.resolve(session.prompt([{ type: "text", text: String(text) }], "queue")).catch(function () { /* core surfaces errors */ });
+            return true;
+          } catch (err) { return false; }
+        };
+      } catch (err) { /* noop */ }
+
       function currentSessionId() {
         // 0.1.69: dsh ≥0.1.6 stopped publishing `.current` (the session is the
         // one retained by mainView), so the old one-liner returned "" and plan
@@ -4313,7 +4709,7 @@ window.__ModuleLoader__.load({
               for (let i = 0; i < names.length; i++) {
                 const v = props[names[i]]
                 if (typeof v === "string" && v.charAt(0) === "/" &&
-                    v.slice(v.lastIndexOf("/") + 1) === want) return v
+                  v.slice(v.lastIndexOf("/") + 1) === want) return v
               }
             }
             fiber = fiber.return
@@ -4350,9 +4746,9 @@ window.__ModuleLoader__.load({
           // resolves relative paths against the session cwd /
           // workspace roots. So only reject backslashes and glob junk.
           if (cand.length > 1 && cand.indexOf("\\") < 0 && cand.indexOf("*") < 0 &&
-              cand.indexOf("?") < 0 && cand.indexOf("<") < 0 && cand.indexOf(">") < 0 &&
-              cand.indexOf("|") < 0 && cand.charAt(0) !== "/" &&
-              /\.[A-Za-z][A-Za-z0-9]{0,7}$/.test(cand)) {
+            cand.indexOf("?") < 0 && cand.indexOf("<") < 0 && cand.indexOf(">") < 0 &&
+            cand.indexOf("|") < 0 && cand.charAt(0) !== "/" &&
+            /\.[A-Za-z][A-Za-z0-9]{0,7}$/.test(cand)) {
             // 0.1.70: bare-basename labels (user-message chips) lost their
             // directory — recover the absolute path from the chip's own data.
             if (cand.indexOf("/") < 0) {
@@ -4371,7 +4767,7 @@ window.__ModuleLoader__.load({
           if (m && m[1]) {
             const name = m[1].trim();
             if (name.indexOf("*") < 0 && name.indexOf("?") < 0 && name.indexOf("<") < 0 &&
-                name.indexOf(">") < 0 && name.indexOf("|") < 0) {
+              name.indexOf(">") < 0 && name.indexOf("|") < 0) {
               if (name.indexOf("/") < 0) {
                 const abs = chipAbsPath(btn, name)
                 if (abs) return abs
@@ -4553,9 +4949,9 @@ window.__ModuleLoader__.load({
             });
           }
           if (msg.focusComposer) {
-          try { if (window.__dshrFocusComposer) window.__dshrFocusComposer(); } catch (err) { /* noop */ }
-        }
-        setVscodeScope(msg.paths, msg.rawPaths);
+            try { if (window.__dshrFocusComposer) window.__dshrFocusComposer(); } catch (err) { /* noop */ }
+          }
+          setVscodeScope(msg.paths, msg.rawPaths);
         }
         window.addEventListener("message", onScopeFromHost);
         try { window.parent.postMessage({ type: "dshScopeRequest", build: "0.2.0", watching: Array.from(trackedRefs.keys()).slice(0, 3) }, "*"); } catch (err) { /* noop */ }
@@ -4574,6 +4970,73 @@ window.__ModuleLoader__.load({
           wsFilterTeardown();
         };
       }, "dsh-review: workbench scope watchdog");
+
+    // Annotation dock chips (0.2.3): the row ABOVE the composer input — the
+    // dsh side of "Copilot has two: a chip above the input and an @ref line
+    // inside it". Native slot conversation.input.dock, same mechanism as
+    // dsh-annotate. Pure mirror of the Copilot attachment strip: state arrives
+    // via dshAnnoDock (extension, from the Copilot observer beacon); ✕ posts
+    // dshAnnoDelete and the extension performs the REAL CDP click on the
+    // Copilot chip (only that removes the native pin + renumbers).
+    // Also the consume detector: our vscode-ref chips leave the input (send or
+    // manual clear) and the draft is empty -> dshAnnoConsumed -> the extension
+    // real-clicks every remaining Copilot chip away.
+    function AnnoDockChips(props) {
+      const [, force] = useState(0);
+      useEffect(function () {
+        return subscribeAnnoDock(function () { force(function (n) { return n + 1; }); });
+      }, []);
+      const inputSnapshot = props && props.useInput ? props.useInput(function (s) { return s; }) : null;
+      // (0.2.4) The old "draft non-empty -> empty" consume trigger is removed:
+      // it also fired on a manual clear (Cmd+A + delete), which flashed Copilot
+      // by mistake. Consume now fires ONLY on a real send — see the global
+      // markAnnoSend() send-detection above (Enter in composer / send button).
+      const chips = annoDockChips;
+      // (0.2.5) Toggle off = feature does not exist: no dock chips either.
+      if (!getReviewSettings().annotationToDsh) return null;
+      if (chips.length === 0) return null;
+      // (0.2.9) USER RULING: no chip strip above the dsh composer. The dock
+      // data (annoDockChips) stays — it is the ③ interception gate — but the
+      // UI is not rendered: dsh send -> Copilot capture -> appended paths ->
+      // agent, invisibly.
+      return null;
+      // eslint-disable-next-line no-unreachable
+      return h("div", {
+        style: {
+          display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap",
+          width: "100%", boxSizing: "border-box",
+          maxWidth: "calc(var(--dsh-composer-card-max-width, 800px) - var(--dsh-composer-dock-inset, 0px) * 4)",
+          margin: "0 auto 4px", padding: "0 2px",
+        }
+      }, chips.map(function (c) {
+        return h("span", {
+          key: c.key || (c.name + "|" + c.text),
+          title: c.text ? c.name + " — " + c.text : c.name,
+          style: {
+            display: "inline-flex", alignItems: "center", gap: "6px",
+            maxWidth: "340px", height: "26px", padding: "0 8px",
+            borderRadius: "999px",
+            border: "1px solid color-mix(in srgb, CanvasText 20%, transparent)",
+            background: "color-mix(in srgb, CanvasText 8%, Canvas)",
+            color: "CanvasText", fontSize: "12px", lineHeight: "1",
+          }
+        },
+          h("span", { style: { opacity: 0.6, fontSize: "13px" } }, "\u{1F4F7}"),
+          h("span", { style: { fontWeight: 500, whiteSpace: "nowrap" } }, c.name),
+          c.text ? h("span", { style: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", opacity: 0.75 } }, c.text) : null,
+          h("button", {
+            type: "button",
+            "aria-label": "Delete annotation " + c.name,
+            onClick: function (e) {
+              e.preventDefault();
+              e.stopPropagation();
+              try { window.parent.postMessage({ type: "dshAnnoDelete", name: c.name, key: c.key }, "*"); } catch (err) { /* noop */ }
+            },
+            style: { border: "0", background: "transparent", color: "inherit", opacity: 0.55, cursor: "pointer", fontSize: "11px", padding: "0", lineHeight: "1" }
+          }, "\u2715")
+        );
+      }));
+    }
 
       ctx.inject(["slots", "conversation", "inputTriggers"], function (scope) {
         try {
@@ -4612,7 +5075,17 @@ window.__ModuleLoader__.load({
             id: "dsh-review",
             order: 5,
           }, ReviewChangesDock);
+          // Annotation chip row: its own seat in the same dock slot (order 4 =
+          // above the Review Changes panel, matching Copilot's strip position).
+          // Always mounted (returns null when empty) so the consume detector
+          // stays live even with no annotations waiting.
+          const unregisterAnnoDock = scope.slots.register({
+            name: "conversation.input.dock",
+            id: "dsh-review-anno",
+            order: 4,
+          }, AnnoDockChips);
           return function () {
+            unregisterAnnoDock();
             unregisterDock();
             unregisterRefSource();
             refSourceRegistered = false;

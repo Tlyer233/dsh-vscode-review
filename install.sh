@@ -92,12 +92,8 @@ PY
   echo "updated $file"
 }
 
-# 0.1.26: element comments (Shift+Enter -> dsh) and the element-context feature
-# speak CDP to the integrated browser, which needs a debug port. VS Code 1.142's
-# argv.json schema accepts "remote-debugging-port" (verified in the workbench
-# bundle next to "inspect"/"js-flags"), so writing it here gives CDP on a NORMAL
-# Dock/Finder launch — no launch flag, no alias. Takes effect on the next full
-# restart; the file is backed up the first time we touch it.
+# Write "remote-debugging-port" into argv.json (the element-annotation CDP channel).
+# No-op if already present. Requires Cmd+Q restart to take effect.
 merge_cdp_port() {
   local file="$1"
   local port="${CDP_PORT:-9223}"
@@ -237,14 +233,14 @@ install_dsh_plugin() {
   else
     die "need npm or pnpm to pack dsh-review (adding the folder would link, not copy)"
   fi
-  local tgz=""
-  local f
-  for f in "$cache"/dsh-review-*.tgz; do
-    case "${f##*/}" in
-      dsh-review-[0-9]*.tgz) tgz="$f" ;; # newest wins (glob is sorted)
-    esac
-  done
-  [ -n "$tgz" ] || die "pack produced no tarball in $cache"
+  # (fix) THE OLD "newest wins (glob is sorted)" WAS WRONG: lexically
+  # dsh-review-0.2.13.tgz sorts BEFORE dsh-review-0.2.9.tgz, so every install
+  # silently re-added the stale 0.2.9 tarball (client downgraded on restart).
+  # Pin by the exact version from package.json instead.
+  local plug_ver
+  plug_ver="$(node -p "require('$DSH_PLUGIN/package.json').version")"
+  local tgz="$cache/dsh-review-$plug_ver.tgz"
+  [ -f "$tgz" ] || die "pack produced no $cache/dsh-review-$plug_ver.tgz"
   echo "packed $tgz"
   echo "installing a copy into the web profile (not a source-tree link)"
   # --force: same version must still replace the previous tarball copy.
@@ -469,9 +465,9 @@ echo "=== Done ==="
 echo "1. Completely quit VS Code (Cmd+Q), then reopen from Dock."
 echo "2. Restart dsh web (or use the sidebar Restart button)."
 echo "3. Shadow store was wiped (repo.git + pending/*.json). Unreviewed diffs are gone."
-echo "3b. 元素批注(Shift+Enter→dsh)需要 CDP：已把 \"remote-debugging-port\": \"9223\" 写进 argv.json，"
+echo "3b. 元素批注(→dsh) 走 CDP：已把 \"remote-debugging-port\": \"9223\" 写进 argv.json，"
 echo "    Cmd+Q 重启后，以后照正常方式（Dock/图标）启动即可，无需命令行参数。"
-echo "    验证: curl -s http://127.0.0.1:9223/json/list ；命令面板 dsh: 元素批注状态"
+echo "    验证: curl -s http://127.0.0.1:9223/json/list"
 echo "editorInsets argv.json id: $EXT_ID"
 echo "dsh-review is copied into ~/.dsh/profiles/web (source folder can be deleted)."
 echo "Re-run this script to upgrade both the dsh plugin and the VS Code extension."

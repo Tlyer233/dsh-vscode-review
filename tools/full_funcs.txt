@@ -1,0 +1,111 @@
+/**
+ * (0.1.168) FULL element context — all 7 Copilot hover-card blocks, page-side:
+ * SCREENSHOT (png via CDP clip) / URL / ELEMENT / ATTRIBUTES / INNER TEXT /
+ * POSITION & SIZE / KEY COMPUTED STYLES (full resolved, no Show-More cap) /
+ * MATCHED RULES / VARIABLES / HTML PATH.
+ * Locator: {sel} for unique ids; {tag, rect:{t,l,w,h}} for bare tags located
+ * through the hover card's POSITION & SIZE (rect equality, ±1.5px).
+ */
+const FULL_CTX_BUILDER = (loc) =>
+  '(() => {' +
+  ' var L = ' + JSON.stringify(loc) + ';' +
+  ' var node = null;' +
+  ' if (L.sel) { try { node = document.querySelector(L.sel); } catch (e0) {} }' +
+  ' else if (L.rect) { var cands = Array.prototype.slice.call(document.querySelectorAll(L.tag || "*"));' +
+  ' for (var i2 = 0; i2 < cands.length; i2++) { var el = cands[i2]; var r0 = el.getBoundingClientRect();' +
+  ' if (Math.abs(r0.top - L.rect.t) < 1.5 && Math.abs(r0.left - L.rect.l) < 1.5 && Math.abs(r0.width - L.rect.w) < 1.5 && Math.abs(r0.height - L.rect.h) < 1.5) { node = el; break; } } }' +
+  ' if (!node) return JSON.stringify({ err: "node-not-found" });' +
+  ' var cs = getComputedStyle(node); var styles = []; var vars = [];' +
+  ' for (var k = 0; k < cs.length; k++) { var pr = cs[k]; var pv = cs.getPropertyValue(pr).trim();' +
+  ' if (pr.indexOf("--") === 0) { if (pv) vars.push(pr + ": " + pv); } else styles.push(pr + ": " + pv); }' +
+  ' var attrs = []; for (var a = 0; a < node.attributes.length; a++) attrs.push(node.attributes[a].name + ": " + node.attributes[a].value);' +
+  ' var rules = []; try { var sheets = document.styleSheets;' +
+  ' for (var s2 = 0; s2 < sheets.length && rules.length < 150; s2++) { var rr; try { rr = sheets[s2].cssRules; } catch (e3) { continue; } if (!rr) continue;' +
+  ' for (var c2 = 0; c2 < rr.length; c2++) { var ru = rr[c2]; if (ru.selectorText) { try { if (node.matches(ru.selectorText)) rules.push(ru.selectorText + " { " + ru.style.cssText + " }"); } catch (e4) {} } } } } catch (e5) {}' +
+  ' var pathArr = []; var cur = node;' +
+  ' while (cur && cur.tagName) { var nm = cur.tagName.toLowerCase();' +
+  ' if (cur.id) nm += "#" + cur.id; else if (cur.className && typeof cur.className === "string" && cur.className.trim()) nm += "." + cur.className.trim().split(/\\s+/).join(".");' +
+  ' pathArr.unshift(nm); if (cur.id) break; cur = cur.parentElement; }' +
+  ' var r3 = node.getBoundingClientRect();' +
+  ' return JSON.stringify({ url: location.href,' +
+  ' outer: (node.outerHTML || "").slice(0, 6000),' +
+  ' attrs: attrs.join("\\n"),' +
+  ' inner: (node.innerText || node.textContent || "").trim().slice(0, 3000),' +
+  ' top: Math.round(r3.top), left: Math.round(r3.left), width: Math.round(r3.width), height: Math.round(r3.height),' +
+  ' vw: innerWidth, vh: innerHeight, dpr: devicePixelRatio,' +
+  ' styles: styles.join("\\n"), vars: vars.join("\\n"), rules: rules.join("\\n"),' +
+  ' path: pathArr.join(" > ") });' +
+  '})()'
+
+async function annoElementFullData(loc) {
+  const driver = dshState.annoDriver
+  if (!driver) return null
+  try {
+    const raw = await driver.eval(FULL_CTX_BUILDER(loc))
+    const data = JSON.parse(String(raw))
+    return data && !data.err ? data : null
+  } catch (err) { return null }
+}
+
+function annoFormatFull(data, pngPath) {
+  return '## SCREENSHOT\n' + (pngPath ? '文件: ' + pngPath : '(未取到)') +
+    '\n\n## URL\n' + data.url +
+    '\n\n## ELEMENT (Outer HTML)\n' + data.outer +
+    '\n\n## ATTRIBUTES\n' + (data.attrs || '(无)') +
+    '\n\n## INNER TEXT\n' + (data.inner || '(空)') +
+    '\n\n## POSITION & SIZE\ntop: ' + data.top + 'px | left: ' + data.left + 'px | width: ' + data.width + 'px | height: ' + data.height + 'px\nviewport: ' + data.vw + 'x' + data.vh + ' @ dpr ' + data.dpr +
+    '\n\n## KEY COMPUTED STYLES (resolved 全量)\n' + data.styles +
+    '\n\n## MATCHED CSS RULES\n' + (data.rules || '(无匹配)') +
+    '\n\n## CSS VARIABLES\n' + (data.vars || '(无)') +
+    '\n\n## HTML PATH\n' + data.path
+}
+
+/** Write full-context file (+ sibling png when shot succeeds). keepPath =
+ *  overwrite an ALREADY-published reserved path (message paths stay valid). */
+async function annoWriteFull(i, name, comment, data, via, keepPath) {
+  const log = dshState.logChannel
+  try {
+    let base
+    if (keepPath) base = keepPath.replace(/\.txt$/, '')
+    else {
+      const dir = path.join(os.tmpdir(), 'dsh-trump')
+      fs.mkdirSync(dir, { recursive: true })
+      const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
+      const safe = String(name).replace(/[^a-zA-Z0-9_-]+/g, '_').slice(0, 40)
+      base = path.join(dir, stamp + '-' + (i + 1) + '-' + safe)
+    }
+    let png = ''
+    try {
+      const driver = dshState.annoDriver
+      if (driver && driver.cdp) {
+        const shot = await driver.cdp.send('Page.captureScreenshot', { format: 'png', clip: { x: Math.max(0, data.left - 8), y: Math.max(0, data.top - 8), width: Math.max(1, data.width + 16), height: Math.max(1, data.height + 16), scale: 1 } })
+        const b64 = shot && shot.data ? shot.data : (shot && shot.result && shot.result.data ? shot.result.data : null)
+        if (b64) { fs.writeFileSync(base + '.png', Buffer.from(b64, 'base64')); png = base + '.png' }
+      }
+    } catch (e) { log.appendLine('[trump] shot failed @' + name + ': ' + String(e).slice(0, 80)) }
+    const f = base + '.txt'
+    const head = '# element: ' + name +
+      '\n# comment: ' + (comment || '') +
+      '\n# time: ' + new Date().toString() +
+      '\n# via: dsh-review (' + (via || 'send') + ')\n\n'
+    fs.writeFileSync(f, head + annoFormatFull(data, png))
+    log.appendLine('[trump] full: ' + f + (png ? ' + png' : ' (no png)'))
+    return f
+  } catch (e) { log.appendLine('[trump] full write failed: ' + String(e).slice(0, 90)); return null }
+}
+
+/** hover-card text -> rect locator (POSITION & SIZE block, whitespace-collapsed). */
+function annoHoverLoc(text) {
+  try {
+    const t = String(text)
+    const tag = /ELEMENT\s*<\s*([a-zA-Z][a-zA-Z0-9]*)/.exec(t)
+    const pos = /top:\s*([\d.]+)px\s*left:\s*([\d.]+)px\s*width:\s*([\d.]+)px\s*height:\s*([\d.]+)px/.exec(t)
+    if (!pos) return null
+    return { tag: tag ? tag[1].toLowerCase() : '*', rect: { t: +pos[1], l: +pos[2], w: +pos[3], h: +pos[4] } }
+  } catch (e) { return null }
+}
+function annoIdSel(name) {
+  const m = /#([A-Za-z0-9_:-]+)/.exec(String(name))
+  return m ? '#' + m[1] : null
+}
+

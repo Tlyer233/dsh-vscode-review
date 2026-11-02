@@ -1,1 +1,14 @@
 .DS_Store
+
+# probe & temp artifacts
+chip_file-*
+chip_shot-*
+chips_out-*
+probe_*
+LIVE_map-*
+heap_entry-*
+map*_entry-*
+final_entry-*
+REAL_map-*
+official_chip-*
+*.heapsnapshot

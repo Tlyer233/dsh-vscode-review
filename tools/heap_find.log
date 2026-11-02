@@ -1,0 +1,16 @@
+taking snapshot (page GC-pauses briefly)...
+snapshot: 238.5MB in 5.1s
+HITS: 2
+#1 nodeId 1419143 name: span | value 1024B | img false anc false dims false | head: 0 "Attached Element Context from Integrated Browser\n\nElement: span.st-badge.st-badge--queued\n"
+#2 nodeId 1419161 name: span | value 1024B | img false anc false dims false | head: 0 "Attached Element Context from Integrated Browser\n\nElement: span.st-badge.st-badge--reading"
+RETAINER CHAIN (inner->outer):
+    object "system / Context / scope @1415339" --[context idx329]--> object
+    closure "" --[internal]--> object
+    object "system / Context / scope @1415321" --[context idx339]--> closure
+    closure "" --[internal]--> object
+    object "Object" --[property fn]--> closure
+    object "Array" --[element]--> object
+    object "Window [JSGlobalObject] / vscode-file://vscode-ap --[property __dshrCap]--> object
+    native "system / NativeContext / vscode-file://vscode-app --[internal]--> object
+    synthetic "(Global handles)" --[internal]--> native
+    synthetic "(GC roots)" --[element]--> synthetic

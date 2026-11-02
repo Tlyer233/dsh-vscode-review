@@ -12,7 +12,6 @@ const vscode = require('vscode')
 const fs = require('node:fs')
 const path = require('node:path')
 const os = require('node:os')
-const bridge = require('./element-bridge')
 let electron = null
 try { electron = require('electron') } catch (e) { /* not available in remote extension host */ }
 const { execFile, execFileSync } = require('node:child_process')
@@ -49,7 +48,7 @@ const crypto = require('node:crypto')
  * @param {number} cap
  * @returns {string[]}
  */
-function fsScanForBase (base, cap) {
+function fsScanForBase(base, cap) {
   const roots = [path.join(os.homedir(), '.dsh'), '/tmp']
   const hits = []
   let visited = 0
@@ -163,12 +162,7 @@ async function openFileFromDsh(raw, cwd, opts) {
       await vscode.commands.executeCommand('vscode.open', uri)
       if (keepFocus) setTimeout(() => { void focusDshSidebar() }, 30)
     }
-    // 0.1.28: VS Code re-creates the chat "Attached Element Context" doc right
-    // after we open something from dsh; without this guard the element watcher
-    // reads that event as a user chip pick and pushes a stray `element` chip
-    // back into the dsh composer.
-    bridge.setOpenGuard(2500)
-    state.log('openFile ' + p + (keepFocus ? ' (keepFocus)' : '') + ' + open-guard 2500ms')
+    state.log('openFile ' + p + (keepFocus ? ' (keepFocus)' : ''))
   } catch (e) {
     state.log('openFile failed: ' + String((e && e.message) || e))
     dshFileToast('dsh: 打开失败 ' + raw)
@@ -362,6 +356,23 @@ async function resolvedWebUrl() {
     return remoteResolvedUrl
   } catch (e) {
     return raw
+  }
+}
+
+/**
+ * @returns {Promise<string>} host:port of THIS window's dsh composer (the URL
+ *   the sidebar webview actually loads). The element-annotation CDP driver uses
+ *   it to find the workbench target that owns this window's dsh webview, so the
+ *   observer is injected into the right window (not a sibling SSH window).
+ *   Empty string when the URL cannot be resolved.
+ */
+async function dshComposerHostPort() {
+  try {
+    const url = await resolvedWebUrl()
+    const u = new URL(url)
+    return u.host
+  } catch (e) {
+    return ''
   }
 }
 
@@ -757,7 +768,7 @@ function dshWebviewHtml(url, opts) {
     '    } else if (msg.type === "dshPasteImageRequest") {' +
     '      pasteLog("parent image request hadText=" + !!msg.hadText);' +
     '      forwardParentImages(!!msg.hadText);' +
-    '    } else if (msg.type === "dshInsertText" || msg.type === "dshInsertRefs" || msg.type === "dshPasteText" || msg.type === "dshPasteImages" || msg.type === "dshSetScope" || msg.type === "dshPendingUpdated") {' +
+    '    } else if (msg.type === "dshInsertText" || msg.type === "dshInsertRefs" || msg.type === "dshPasteText" || msg.type === "dshPasteImages" || msg.type === "dshSetScope" || msg.type === "dshPendingUpdated" || msg.type === "dshAnnoDock" || msg.type === "dshRemoveReference" || msg.type === "dshAnnoPrepared" || msg.type === "dshAnnoFocus" || msg.type === "dshAnnoProg") {' +
     '      if (frame && frame.contentWindow) {' +
     '        frame.contentWindow.postMessage(msg, "*");' +
     '        if (msg.type === "dshInsertText" || msg.type === "dshInsertRefs") {' +
@@ -767,7 +778,7 @@ function dshWebviewHtml(url, opts) {
     '    } else if (msg.type === "dshChromeState") {' +
     '      dshChrome = { railSide: msg.railSide === "right" ? "right" : "left", railHidden: !!msg.railHidden, zoom: Number(msg.zoom) || 1 };' +
     '      vscode.postMessage(msg);' +
-    '    } else if (msg.type === "dshViewActive" || msg.type === "dshOpenExternal" || msg.type === "dshOpenFile" || msg.type === "dshOpenPlan" || msg.type === "dshPendingRequest" || msg.type === "dshReviewAll" || msg.type === "dshScopeViolation" || msg.type === "dshScopeMissing" || msg.type === "dshScopeEmpty" || msg.type === "dshWorkspaceCreated" || msg.type === "dshScopeDiag" || msg.type === "dshScopeRequest" || msg.type === "dshCopyText" || msg.type === "dshPasteRequest" || msg.type === "dshInsertResult" || msg.type === "dshShowCommands") {' +
+    '    } else if (msg.type === "dshViewActive" || msg.type === "dshOpenExternal" || msg.type === "dshOpenFile" || msg.type === "dshOpenPlan" || msg.type === "dshPendingRequest" || msg.type === "dshReviewAll" || msg.type === "dshScopeViolation" || msg.type === "dshScopeMissing" || msg.type === "dshScopeEmpty" || msg.type === "dshWorkspaceCreated" || msg.type === "dshScopeDiag" || msg.type === "dshScopeRequest" || msg.type === "dshCopyText" || msg.type === "dshPasteRequest" || msg.type === "dshInsertResult" || msg.type === "dshShowCommands" || msg.type === "dshAnnoDelete" || msg.type === "dshAnnoConsumed" || msg.type === "dshAnnoPrepareReq") {' +
     '      vscode.postMessage(msg);' +
     '    } else if (msg.type === "dshReload") {' +
     '      reloadFrame(!!msg.force);' +
@@ -802,21 +813,6 @@ function noticeScopeEmpty(reason) {
   void vscode.window.showWarningMessage('当前窗口未打开工作区，无法进入 dsh 工作区')
 }
 
-// 0.1.106: VS Code moves focus into the Copilot input when element-commenting ends and the
-// webview-level focus sometimes loses that race, so ask the client to focus its own composer.
-// One-shot flag, delivered on the next scope answer.
-let focusComposerPending = false
-function takeFocusComposer() {
-  const v = focusComposerPending
-  focusComposerPending = false
-  return v
-}
-
-const pendingChipRemovals = []
-function takePendingChips() {
-  return pendingChipRemovals.splice(0)
-}
-
 function postScope(view) {
   if (!view) return
   const scope = scopePaths()
@@ -826,7 +822,7 @@ function postScope(view) {
     + ' paths=' + JSON.stringify(scope.paths)
     + ' raw=' + JSON.stringify(scope.rawPaths),
   )
-  void view.webview.postMessage({ type: 'dshSetScope', paths: scope.paths, rawPaths: scope.rawPaths, removeChips: takePendingChips(), focusComposer: takeFocusComposer() })
+  void view.webview.postMessage({ type: 'dshSetScope', paths: scope.paths, rawPaths: scope.rawPaths })
   // Toast on transition into empty (closing last folder), not on every hello.
   if (empty && state.lastScopeEmpty === false) {
     noticeScopeEmpty('folders-cleared')
@@ -927,7 +923,7 @@ function webviewDropPaths(raws) {
  * @param {string} xml
  * @returns {string[]}
  */
-function parseNsfilenamesPlist (xml) {
+function parseNsfilenamesPlist(xml) {
   const out = []
   const re = /<string>([^<]+)<\/string>/g
   let m
@@ -946,7 +942,7 @@ function parseNsfilenamesPlist (xml) {
  * then NSURL pasteboard helpers, then a single public.file-url.
  * @returns {string[]}
  */
-function readMacClipboardFilesViaJxa () {
+function readMacClipboardFilesViaJxa() {
   const script = [
     'ObjC.import("AppKit");',
     'var pb = $.NSPasteboard.generalPasteboard;',
@@ -983,7 +979,7 @@ function readMacClipboardFilesViaJxa () {
  * selection). wl-paste first (Wayland), xclip otherwise (X11).
  * @returns {string[]}
  */
-function readLinuxClipboardFiles () {
+function readLinuxClipboardFiles() {
   let txt = ''
   const run = (cmd, args) => execFileSync(cmd, args, { encoding: 'utf8', timeout: 2000, maxBuffer: 1 << 20, stdio: ['ignore', 'pipe', 'ignore'] })
   try { txt = run('wl-paste', ['-t', 'text/uri-list']) } catch { /* not Wayland */ }
@@ -997,7 +993,7 @@ function readLinuxClipboardFiles () {
  * Windows: shell clipboard in FileDropList format.
  * @returns {string[]}
  */
-function readWinClipboardFiles () {
+function readWinClipboardFiles() {
   const ps = 'Get-Clipboard -Format FileDropList | ForEach-Object { $_.FullName }'
   let txt = ''
   try { txt = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps], { encoding: 'utf8', timeout: 3000, maxBuffer: 1 << 20, stdio: ['ignore', 'pipe', 'ignore'] }) } catch { /* no powershell */ }
@@ -1009,7 +1005,7 @@ function readWinClipboardFiles () {
  * @param {string} txt
  * @returns {string[]}
  */
-function urisToPaths (txt) {
+function urisToPaths(txt) {
   const out = []
   for (const line of String(txt || '').split(/\r?\n/)) {
     const t = line.trim()
@@ -1028,7 +1024,7 @@ function urisToPaths (txt) {
  * @returns {string[]} existing absolute paths, empty when the clipboard holds
  *   bitmaps (screenshot copy) or nothing file-shaped.
  */
-function clipboardFilePaths () {
+function clipboardFilePaths() {
   // 1) Electron pasteboard buffer (pre-1.142 extension hosts).
   try {
     if (electron && electron.clipboard && typeof electron.clipboard.readBuffer === 'function') {
@@ -1061,7 +1057,7 @@ function clipboardFilePaths () {
  * dirs, and they accumulate forever. Delete ours when they stop being touched
  * (14 days), never the active one. Best-effort: any FS error is swallowed.
  */
-function pruneOldReviewLogs () {
+function pruneOldReviewLogs() {
   try {
     let base
     if (process.platform === 'darwin') base = path.join(process.env.HOME || '', 'Library', 'Application Support', 'Code', 'logs')
@@ -1107,6 +1103,27 @@ async function sendRefsToDsh(refs, fallbackText, appendText) {
     return ok
   } catch (e) {
     state.log('sendRefsToDsh failed: ' + (e && e.message || e))
+    return false
+  }
+}
+
+/**
+ * 0.2.3 annotation dock: post the FULL Copilot chip state to the dsh client's
+ * chip row above the composer input. No focus — a dock refresh must never
+ * flash the sidebar (the beacon fires on every Copilot mutation).
+ * @param {object[]} chips [{name, text, key}]
+ */
+async function sendAnnoDock(chips) {
+  if (!state.dshView) { state.log('[anno] dock push SKIPPED: no dshView'); return false }
+  try {
+    const ok = await state.dshView.webview.postMessage({
+      type: 'dshAnnoDock',
+      chips: Array.isArray(chips) ? chips : [],
+    })
+    state.log('[anno] dock push ' + (Array.isArray(chips) ? chips.length : 0) + ' row(s) delivered=' + ok)
+    return ok
+  } catch (e) {
+    state.log('[anno] dock post failed: ' + (e && e.message || e))
     return false
   }
 }
@@ -1176,43 +1193,9 @@ function setupDshBrowser(context) {
       view.title = 'dsh'
       view.description = ''
 
-      // 0.1.58: the watcher calls this when a native comment disappears from the Copilot
-      // composer (the user deleted the pin), so the chip we inserted goes away too.
-      // 0.1.81: register once and post through state.dshView. The old version captured this
-      // resolve's `view` and re-registered on every re-show; the surviving handler pointed at
-      // a disposed webview, so the request was logged but silently went nowhere.
-      if (!state.removeDshChipRegistered) {
-        state.removeDshChipRegistered = true
-        try {
-          vscode.commands.registerCommand('dshReview.focusDshComposer', () => {
-            focusComposerPending = true
-            if (state.dshView) postScope(state.dshView)
-            return true
-          })
-        } catch { /* registered elsewhere */ }
-        try {
-          vscode.commands.registerCommand('dshReview.removeDshChip', (name) => {
-            const n = String(name || '')
-            if (!n || !state.dshView) return false
-            pendingChipRemovals.push(n)
-            try { state.dshView.webview.postMessage({ type: 'dshRemoveReference', name: n }) } catch { /* the scope answer carries it anyway */ }
-            postScope(state.dshView)
-            state.log('[chip-remove] 请求删 dsh 方块 ' + n + '（同时捎带在工作区应答里）')
-            return true
-          })
-        } catch { /* registered elsewhere */ }
-      }
       view.webview.onDidReceiveMessage((msg) => {
         if (msg.type === 'dshClientBuild') {
           state.log('[client] 正在运行的 dsh 客户端构建 = ' + String(msg.version || '?'))
-          return
-        }
-        if (msg.type === 'dshRefsTracked') {
-          state.log('[chip-watch] 客户端正在盯 ' + String((msg.names || []).join(', ')).slice(0, 120))
-          return
-        }
-        if (msg.type === 'dshRemoveReferenceAck') {
-          state.log('[chip-remove] ' + String(msg.name || '?') + ' -> ' + (msg.ok ? '已删掉' : '页面上没找到这个方块（可能已经删了）'))
           return
         }
         if (!msg) return
@@ -1223,11 +1206,6 @@ function setupDshBrowser(context) {
         if (msg.type === 'dshRefreshRequest') {
           state.log('refresh request')
           reloadDshWebview(true)
-          return
-        }
-        if (msg.type === 'dshDropReference') {
-          const done = bridge.referenceDropped(msg)
-          state.log('[ref-drop] ' + String(msg.name || msg.path || '?').split('/').pop() + ' -> ' + (done ? '已转给元素批注处理（结果看下面 dsh 删方块 那行）' : '插件没接这个事件'))
           return
         }
         if (msg.type === 'dshShowCommands') {
@@ -1273,19 +1251,35 @@ function setupDshBrowser(context) {
           } catch (e) {
             state.log('pending push on hello failed: ' + (e && e.message || e))
           }
+          // 0.2.4: the client just (re)loaded — its dock is empty. If chips are
+          // already known (a sidebar refresh, not a clean start), resync: pull
+          // live state when the chat widget is rendered, else flash copilot so
+          // the observer re-beacons. This is the "cmd+r 闪一下 copilot" fix.
+          if (typeof state.annoResync === 'function' && typeof state.annoHasChips === 'function' && state.annoHasChips()) {
+            void state.annoResync()
+              .then(() => state.log('[anno] resync done'))
+              .catch((e) => state.log('[anno] resync failed: ' + (e && e.message || e)))
+          }
           return
         }
         // Client (re)asked for whitelist — answer even if Dock was not mounted earlier.
         if (msg.type === 'dshScopeRequest') {
           state.log('[dsh-scope] scope request from client' + (msg.build ? ' — dsh 客户端构建 = ' + String(msg.build) + (Array.isArray(msg.watching) && msg.watching.length ? '，正在盯 ' + msg.watching.length + ' 个方块: ' + msg.watching.join(', ').slice(0, 90) : '，正在盯 0 个方块') : ' — dsh 客户端构建 = 旧版（没有绑定代码）') + (msg.report ? ' ｜ ' + String(msg.report) : ''))
-          if (msg.drop) {
-            const done = bridge.referenceDropped({ path: String(msg.dropPath || msg.drop), name: String(msg.drop) })
-            state.log('[ref-drop] ' + String(msg.drop) + ' -> ' + (done ? '已转给元素批注处理（删 Copilot 那行）' : '插件没接这个事件'))
-          }
           postScope(view)
           return
         }
-        if (msg.type === 'dshViewActive') return
+        if (msg.type === 'dshViewActive') {
+          // User is active in the dsh sidebar: re-sync the annotation dock +
+          // inline chips with the Copilot state (a Copilot-side delete must not
+          // leave a stale dsh chip). Throttled upstream (3s), cheap no-op when
+          // the dock is already in sync.
+          if (typeof state.annoFocusResync === 'function') {
+            void state.annoFocusResync()
+              .then(() => state.log('[anno] focus resync done'))
+              .catch((e) => state.log('[anno] focus resync failed: ' + (e && e.message || e)))
+          }
+          return
+        }
         if (msg.type === 'dshPendingRequest') {
           try {
             const { readOwnedPending } = require('./shadow-pending.js')
@@ -1315,6 +1309,36 @@ function setupDshBrowser(context) {
           vscode.commands
             .executeCommand(cmd)
             .catch((e) => state.log('dshReviewAll failed: ' + (e && e.message || e)))
+          return
+        }
+        // 0.2.3 annotation dock ✕: the extension performs the REAL CDP click on
+        // the Copilot chip (only that removes the native pin + renumbers).
+        if (msg.type === 'dshAnnoDelete') {
+          const name = String(msg.name || '')
+          state.log('[anno] dock delete request: ' + name)
+          if (typeof state.annoDeleteChip === 'function') {
+            void state.annoDeleteChip(name)
+              .then((res) => state.log('[anno] dock delete result: ' + name + ' -> ' + res))
+              .catch((e) => state.log('[anno] dock delete failed: ' + (e && e.message || e)))
+          } else {
+            state.log('[anno] dock delete: driver not ready (annotationToDsh off?)')
+          }
+          return
+        }
+        // 0.2.3 consume: the dsh draft went from "carries our chips" to empty
+        // (send or manual clear) -> real-click every remaining Copilot chip.
+        if (msg.type === 'dshAnnoPrepareReq' || msg.type === 'dshAnnoConsumed') {
+          state.log('[anno] ' + msg.type + ' (req=' + msg.req + ') -> read copilot first, then answer')
+          if (typeof state.annoDeleteAll === 'function') {
+            // (0.1.162) the req rides along: annoSendSync(req) answers
+            // dshAnnoPrepared once the READ (page rebuild + hover fills) is
+            // done, and the client submits draft+block at that instant.
+            void state.annoDeleteAll(msg.req)
+              .then((n) => state.log('[anno] consume done: ' + n + ' chip(s) targeted'))
+              .catch((e) => state.log('[anno] consume failed: ' + (e && e.message || e)))
+          } else {
+            state.log('[anno] consume: driver not ready (annotationToDsh off?)')
+          }
           return
         }
         if (msg.type === 'dshScopeDiag') {
@@ -1454,6 +1478,7 @@ module.exports = {
   setFrameBaseUrl,
   setupDshBrowser,
   sendRefsToDsh,
+  sendAnnoDock,
   reloadDshWebview,
   showDshOfflineOverlay,
   showDshRestartingOverlay,
@@ -1461,4 +1486,5 @@ module.exports = {
   openPendingFileInEditor,
   setReviewOpener,
   scopePaths,
+  dshComposerHostPort,
 }
