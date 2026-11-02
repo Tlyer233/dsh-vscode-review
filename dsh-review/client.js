@@ -4568,12 +4568,26 @@ window.__ModuleLoader__.load({
       function annoPromptMode() {
         try {
           let pref = "queue";
+          // (2.0.50) PRIMARY SOURCE = ctx.configForms, the exact host the GUI's
+          // own ComposerSubmissionPolicy adopts (ui-conversation client.js
+          // ~19539: new ComposerSubmissionPolicy(ctx.configForms.get(
+          // "ui-conversation"))). The web profile has NO server-side settings
+          // persistence provider — remote.settings.describe() only ever sees
+          // defaults, which is why a live "Steer" read as queue.
           try {
-            const st = ctx.remote && ctx.remote.settings && typeof ctx.remote.settings.describe === "function"
-              ? ctx.remote.settings.describe("ui-conversation") : null;
-            const v = st && st.value ? (typeof st.value.get === "function" ? st.value.get("busyEnter") : st.value.busyEnter) : null;
+            const form = ctx.configForms && typeof ctx.configForms.get === "function" ? ctx.configForms.get("ui-conversation") : null;
+            const sec = form && typeof form.getSnapshot === "function" ? form.getSnapshot() : null;
+            const v = sec && sec.value ? sec.value.busyEnter : null;
             if (v === "steer" || v === "queue") pref = v;
-          } catch (err) { /* settings plane unavailable on this build */ }
+          } catch (err) { /* configForms missing on old builds */ }
+          if (pref === "queue") {
+            try {
+              const st = ctx.remote && ctx.remote.settings && typeof ctx.remote.settings.describe === "function"
+                ? ctx.remote.settings.describe("ui-conversation") : null;
+              const v2 = st && st.value ? (typeof st.value.get === "function" ? st.value.get("busyEnter") : st.value.busyEnter) : null;
+              if (v2 === "steer" || v2 === "queue") pref = v2;
+            } catch (err) { /* settings plane unavailable */ }
+          }
           let running = false;
           try {
             const sid = currentSessionId();
