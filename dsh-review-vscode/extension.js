@@ -22,6 +22,18 @@ function activate(context) {
   context.subscriptions.push(log)
   setLog((msg) => log.appendLine(String(msg)))
   log.appendLine('activate dsh-review-vscode v' + (function () { try { return require('./package.json').version } catch (e0) { return '?' } })())
+  // (2.0.1) Window-host diagnostics. The annotation bridge (CDP 9223 / Copilot
+  // heap) lives on the LOCAL UI renderer. In an SSH window this extension is
+  // forced to ["ui"] (remote.extensionKind), so remoteName shows the remote
+  // host yet CDP+Copilot still run locally — the log line alone then tells us
+  // whether the annotation path can reach Copilot at all.
+  try {
+    const rn = vscode.env && vscode.env.remoteName
+    const ws0 = (vscode.workspace.workspaceFolders || [])[0]
+    log.appendLine('[env] window=' + (rn ? 'REMOTE(' + rn + ')' : 'LOCAL') +
+      ' | CDP9223+Copilot=local-side ' + (rn ? '(ui-forced)' : '(native)') +
+      (ws0 ? ' | ws=' + ws0.uri.scheme + '://' + (ws0.uri.authority || 'local') + ws0.uri.path : ' | no-ws'))
+  } catch (e) { log.appendLine('[env] remoteName check failed: ' + String(e).slice(0, 90)) }
   // Interface-bound proxy serving the sidebar through a direct URL that
   // `dshReview.setDshUrl` pinned (webviewUrl host is a real network IP).
   let directProxy = null
@@ -1557,7 +1569,11 @@ async function evalOnChip(byHost, chip, evalOn, log) {
   } catch (e) { return null }
 }
 
+function annoIsRemoteWindow() {
+  try { return !!vscode.env.remoteName } catch (e) { return false }
+}
 async function annoSendSync(req) {
+  dshState.log.appendLine('[env] send window=' + (annoIsRemoteWindow() ? 'REMOTE(' + vscode.env.remoteName + ')' : 'LOCAL'))
   // (0.1.183) req numbers RESET on every client page load (annoPrepSeq starts
   // at 0 again) while this Set lived for the whole extension process: after a
   // refresh, req=1 was "already posted" forever -> blank sends hung the full
