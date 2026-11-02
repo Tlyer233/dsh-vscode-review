@@ -270,7 +270,7 @@ window.__ModuleLoader__.load({
       let para = null;
       try { if (window.__dshaPeek) para = window.__dshaPeek(); } catch (err) { /* noop */ }
       const draftFull = para ? (draft === "" ? para.text : draft + "\n\n" + para.text) : draft;
-      annoPrepPending.set(req, { draft: draftFull, sid: (para && para.sid) || null, at: Date.now() });
+      annoPrepPending.set(req, { draft: draftFull, sid: para ? String(para.sid) : null, at: Date.now() });
       annoProgStart(req);
       try { window.parent.postMessage({ type: "dshAnnoPrepareReq", req: req }, "*"); } catch (err) { /* noop */ }
       try { if (event && event.preventDefault) event.preventDefault(); if (event && event.stopPropagation) event.stopPropagation(); } catch (err) { /* noop */ }
@@ -279,7 +279,7 @@ window.__ModuleLoader__.load({
         const pt = annoPrepPending.get(req);
         annoPrepPending.delete(req);
         annoProgFinish(function () { annoSubmitNow(null, annoFinishText(draft, null), draft); });
-        try { if (pt && pt.sid && window.__dshaClear) window.__dshaClear(pt.sid); } catch (err) { /* noop */ }
+        try { if (pt && pt.sid !== null && window.__dshaClear) window.__dshaClear(pt.sid); } catch (err) { /* noop */ }
       }, 75000); // (0.2.26) heap-bridge main path costs ~15-40s (snapshot+parse); hover fallback stays quick. 15s was tuned for hover-only.
       return true;
     }
@@ -313,7 +313,7 @@ window.__ModuleLoader__.load({
         if (!p) return;
         annoPrepPending.delete(req);
         annoProgFinish(function () { annoSubmitNow(null, annoFinishText(p.draft, String(block || "")), p.draft); });
-        try { if (p.sid && window.__dshaClear) window.__dshaClear(p.sid); } catch (err) { /* noop */ }
+        try { if (p.sid !== null && window.__dshaClear) window.__dshaClear(p.sid); } catch (err) { /* noop */ }
       };
     } catch (err) { /* noop */ }
     function __unused_markAnnoSend_tail() {

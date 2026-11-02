@@ -1,5 +1,10 @@
 # Changelog
 
+## 段落批注 pill 发完不消失:空串 sid 被 falsy 判据跳过 clear(2026-11-02, 客户端 0.2.44)
+
+截图实证:消息已带 Quote/Comment 发出(全链日志绿:prepared 142chars→send 404),但 composer 上方 pill 仍挂着——"对齐"指的是**发送后 pill 没清**。根因:`markAnnoSend` 存 sid 用 `(para && para.sid) || null` 把**空串 sid 挤成 null**,prepared/timeout 两处 clear 又写 `if (p.sid && ...)`——dsha 的 sid 解析在批注创建/发送时都可能落到 `""`(onScreen() 找不到在屏行),于是 clear 被当"没有"跳过,pending 原封不动。三刀:存 sid 改 `para ? String(para.sid) : null`;两处判据改 `!== null`(空串也清)。pill 计数"11"= 用户批注文本笔误,非缺陷。
+
+## 进度条粗暴档:开局瞬跳 30%(2026-11-02, 客户端 0.2.43)
 ## 进度条粗暴档:开局瞬跳 30%(2026-11-02, 客户端 0.2.43)
 
 用户段落批注 Quote「开局直接跳 30%」Comment「你改下试试」(顺带证明:段落批注↔发送流对齐在工作,Copilot 空窗走 quiet 路也带上了段落块)。实现 `p = 30 + 64×(1-(1-t/45s)²)`:卡片出现瞬间 30%,2s 35.6 / 5s 43.4 / 10s 55.3 / 15s 65.6 / 30s 86.9 / 45s 94 封顶,prepared 推最后 ~6%。自证行更新为 `client 0.2.43, start30 quad T=45s`——日志没这行=页面没重开,别再拿旧 bundle 观感对账。
