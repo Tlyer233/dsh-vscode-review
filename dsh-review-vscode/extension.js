@@ -11,6 +11,7 @@ const {
   dshComposerHostPort,
 } = require('./lib/dsh-browser.js')
 const { AnnoDriver } = require('./lib/anno-cdp.js')
+const annoHeap = require('./lib/anno-heap.js')
 const { restartDsh, restartDshProxy, restartDshBili, restartDshAtUrl, stopDsh, dshPort } = require('./lib/dsh-process.js')
 const { startAuthProxy } = require('./lib/dsh-auth-proxy.js')
 const { connectDshJobs } = require('./lib/dsh-jobs.js')
@@ -1032,6 +1033,104 @@ function annoChipKeys(chips) {
 }
 
 /** Write one annotation file; returns the absolute path (or null). */
+/**
+ * (0.1.178) Heap-Bridge send path (user ruling: read the MAP, never the
+ * hover projection). lib/anno-heap.js finds the live attachment entries in
+ * the workbench heap; here we pair them with the DOM chips (exact name incl.
+ * #id segment; bare tag matches only id-less elements; newest entry id wins)
+ * and write the file with the entry's FULL official value + screenshot bytes.
+ * Screenshot ATTACHMENTS (kind:'image', "Browser Screenshot"/"Area") are a
+ * freebie of the same scan and land as extra files listed in the block.
+ */
+function annoHeapOn() {
+  try {
+    const raw = JSON.parse(fs.readFileSync(path.join(os.homedir(), '.dsh', 'review', 'shadow', 'settings.json'), 'utf8'))
+    return raw.annoHeapBridge !== false
+  } catch (e) { return true }
+}
+let annoHeapShots = [] // attachment screenshot files collected this send
+function annoHeapElLine(E) {
+  const l = String(E.value || '').split('\n').find((x) => x.indexOf('Element:') === 0) || ''
+  return l.slice(9).trim()
+}
+function annoHeapPick(name, entries, used) {
+  const nm = String(name || '').trim()
+  const hash = nm.indexOf('#')
+  const tag = hash === -1 ? nm : nm.slice(0, hash)
+  const idPart = hash === -1 ? null : nm.slice(hash + 1).split(/[.\s]/)[0]
+  let best = null
+  for (const E of entries) {
+    if (!E || used.has(E.id)) continue
+    const el = annoHeapElLine(E)
+    if (el.split(/[#.\s]/)[0] !== tag) continue
+    const elHash = el.indexOf('#')
+    if (idPart) { if (elHash === -1 || el.slice(elHash + 1).split(/[.\s]/)[0] !== idPart) continue }
+    else if (elHash !== -1) continue
+    if (!best || String(E.id) > String(best.id)) best = E
+  }
+  return best
+}
+function annoWriteHeapFile(i, name, comment, E, keepPath) {
+  const log = dshState.logChannel
+  try {
+    const dir = path.join(os.tmpdir(), 'dsh-trump')
+    fs.mkdirSync(dir, { recursive: true })
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
+    const safe = String(name).replace(/[^a-zA-Z0-9_-]+/g, '_').slice(0, 40)
+    const f = keepPath || path.join(dir, stamp + '-' + (i + 1) + '-' + safe + '.txt')
+    let imgRef = ''
+    if (E.img) {
+      const ext = String(E.mime || '').indexOf('png') !== -1 ? '.png' : '.jpg'
+      const ip = f.replace(/\.txt$/, '') + ext
+      fs.writeFileSync(ip, Buffer.from(E.img, 'base64'))
+      imgRef = '## SCREENSHOT (pick-time, ' + (E.imgLen || 0) + 'B)\n文件: ' + ip + '\n\n'
+    }
+    const head = '# element: ' + (E.fullName || E.name || name) +
+      '\n# comment: ' + (comment || '') +
+      '\n# time: ' + new Date().toString() +
+      '\n# entry id: ' + (E.id || '') +
+      '\n# via: dsh-review (heap-bridge, no hover)\n\n' + imgRef
+    fs.writeFileSync(f, head + E.value + '\n')
+    log.appendLine('[trump] heap file: ' + f + ' (' + String(E.value).length + 'B value' + (E.img ? ', img ' + E.imgLen + 'B' : '') + ')')
+    return f
+  } catch (e) { log.appendLine('[trump] heap file write failed: ' + String(e).slice(0, 100)); return null }
+}
+async function annoHeapCaptureNow() {
+  const log = dshState.logChannel
+  let prefer = ''
+  try { prefer = (vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders[0] && vscode.workspace.workspaceFolders[0].name) || '' } catch (e) { /* noop */ }
+  return annoHeap.capture({ preferTitle: prefer, log })
+}
+function annoHeapPairFill(chips, keysSend, data) {
+  const log = dshState.logChannel
+  const used = new Set()
+  annoHeapShots = []
+  const out = chips.map((c, i) => {
+    const E = annoHeapPick(c.name, data.entries, used)
+    if (!E) return { name: c.name, text: null, source: 'heap-miss', file: annoCaptureFiles.get(keysSend[i]) || null, shot: null }
+    used.add(E.id)
+    const keep = annoCaptureFiles.get(keysSend[i]) || null
+    const f = annoWriteHeapFile(i, c.name, (chips[i] && chips[i].text) || '', E, keep)
+    if (f) { annoCaptureFiles.set(keysSend[i], f); annoPendingFullKeys.delete(keysSend[i]) }
+    return { name: c.name, text: E.value, source: 'heap', file: f, shot: null }
+  })
+  const dir = path.join(os.tmpdir(), 'dsh-trump')
+  try { fs.mkdirSync(dir, { recursive: true }) } catch (e) { /* noop */ }
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
+  for (const I of data.images || []) {
+    try {
+      const safe = String(I.name || 'image').replace(/[^a-zA-Z0-9_ -]+/g, '_').slice(0, 40)
+      const ext = String(I.mime || '').indexOf('png') !== -1 ? '.png' : '.jpg'
+      const p = path.join(dir, stamp + '-shot-' + safe.replace(/\s+/g, '_') + ext)
+      fs.writeFileSync(p, Buffer.from(I.b, 'base64'))
+      annoHeapShots.push(p)
+      log.appendLine('[trump] heap shot: ' + p + ' (' + I.len + 'B)')
+    } catch (e) { log.appendLine('[trump] heap shot failed: ' + String(e).slice(0, 90)) }
+  }
+  log.appendLine('[trump] heap paired: ' + out.filter((x) => x.source === 'heap').length + '/' + chips.length + ' chip(s), ' + annoHeapShots.length + ' attachment shot(s)')
+  return out
+}
+
 function annoWriteFile(i, name, comment, text, via) {
   const log = dshState.logChannel
   try {
@@ -1472,11 +1571,26 @@ async function annoSendSync(req) {
     // (0.1.131) FIRST try silent page-side rebuild (URL + Outer HTML + full
     // CSS; no hover at all). Only chips it cannot resolve unambiguously fall
     // back to the synthetic hover (tooltip summary).
+    const keysSend = annoChipKeys(chips)
+    // (0.1.178) PRIMARY PATH = Heap-Bridge: read the attachment entries from
+    // the workbench heap (map, not projection). Hover chain kept as fallback.
+    let ctxs2 = null
+    if (annoHeapOn()) {
+      annoPostProg(req, 1) // heap snapshot starting
+      try {
+        const heapData = await annoHeapCaptureNow()
+        ctxs2 = annoHeapPairFill(chips, keysSend, heapData)
+        annoPostProg(req, 2)
+      } catch (e) {
+        log.appendLine('[anno][heap] bridge unavailable (' + String(e).slice(0, 130) + ') — hover-card fallback')
+        ctxs2 = null
+      }
+    }
+    if (!ctxs2) {
     let rebuilt = []
     // (0.1.176) unified hover-card source: NO page rebuild; every chip goes
     // through copilotChipFullContexts (CDP synthetic hover, no clicks).
     rebuilt = chips.map((c) => ({ name: c.name, rebuilt: null }))
-    const keysSend = annoChipKeys(chips)
     const needIdx = chips.map((c, i) => ((rebuilt[i] && rebuilt[i].rebuilt) || (annoCaptureFiles.has(keysSend[i]) && !annoPendingFullKeys.has(keysSend[i]))) ? -1 : i).filter((i) => i >= 0)
     let ctxs = []
     annoPostProg(req, 1) // hover/capture starting
@@ -1493,7 +1607,7 @@ async function annoSendSync(req) {
       if (!c.text && held) c.text = held // late beacon forgot the comment
       return { name: c.name, text: t, source: src, file: filePre, shot: (ctxs[i] && ctxs[i].shot) || null }
     })
-    const ctxs2 = merged
+    ctxs2 = merged
     // (0.1.159) fill reserved placeholder files with the real hover/page text
     // NOW — while the panel is still open (freeze window).
     for (let fi = 0; fi < ctxs2.length; fi++) {
@@ -1523,6 +1637,7 @@ async function annoSendSync(req) {
         log.appendLine('[trump] reserved filled: ' + (wroteCard || cx.file))
       } catch (e) { log.appendLine('[trump] reserved fill failed: ' + String(e).slice(0, 90)) }
     }
+    } // (0.1.178) end hover-fallback branch (heap branch already filled files)
     log.appendLine('[trump] ctx: ' + ctxs2.length + ' full context(s) (' + ctxs2.filter((x) => x.source === 'page').length + ' page-rebuilt, ' + ctxs2.filter((x) => x.source === 'hover').length + ' hover)')
     for (const cx of ctxs2) {
       log.appendLine('[trump] ctx @' + cx.name + ' [' + cx.source + '] >>> ' + (cx.text === null ? '(no capture)' : cx.text.replace(/\n+/g, ' ⏎ ')))
@@ -1537,7 +1652,7 @@ async function annoSendSync(req) {
       const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
       for (let si = 0; si < ctxs2.length; si++) {
         const cx = ctxs2[si]
-        if (cx.file) continue // (0.1.155) annotation-time file reused as-is
+        if (cx.file) continue // (0.1.155) annotation-time file reused as-is (heap path fills cx.file too)
         // (0.1.173) id chips whose annotation-time FULL write failed get a
         // second chance at send time (still before the message goes).
         let fullF = null
@@ -1564,6 +1679,11 @@ async function annoSendSync(req) {
         lines.push((n + 1) + '. @' + cx.name + '  注释: ' + ((chips[i] && chips[i].text) || '(无)'))
         lines.push('   全文文件: ' + (cx.file || (annoWriteFile(i, cx.name, (chips[i] && chips[i].text) || '', cx.text, 'send') || '(写盘失败)')))
       })
+      if (annoHeapShots && annoHeapShots.length) {
+        lines.push('')
+        lines.push('浏览器截图附件(随本次标注捕获):')
+        for (const sp of annoHeapShots) lines.push('   截图文件: ' + sp)
+      }
       annoPreparedBlock = capIdx.length ? lines.join('\n') : ''
       annoLastBlock = annoPreparedBlock
       log.appendLine('[trump] ③ block ready pre-cleanup (' + capIdx.length + ' rows)')

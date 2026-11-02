@@ -1,5 +1,16 @@
 # Changelog
 
+## Heap-Bridge 进插件:发送主管线换血(2026-11-02, 扩展 0.1.178 / 客户端 0.2.26)
+
+用户裁定两枚:①Heap-Bridge=发送默认主路(hover 卡降兜底,一行不删);②heap 路 value **原样全写含全 CSS**(不再剥 KEY COMPUTED STYLES 节,那是 hover 截断时代的遗物)。
+
+- 新增 `dsh-review-vscode/lib/anno-heap.js`:GC→`takeHeapSnapshot`(os.tmpdir,即用即删)→全堆扫 `kind:'element'/'image'`→`getObjectByHeapObjectId` **同 session** 桥回活对象→直读 `value` 全串+`imageData`(VSBuffer 按 byteOffset/byteLength 重建 view,池子坑已埋防)
+- `annoSendSync`:`annoHeapOn()`(settings `annoHeapBridge`,默认开)→ 主路 `annoHeapCaptureNow()`+`annoHeapPairFill`(chip 名 vs `Element:` 行精确对撞:`#id` 段必须一致、裸 tag 只配无 id 元素、同名取最新 entry id);任何一步失败 catch→回落 177 hover 链;进度环 stage 语义不变
+- **白拿**:输入框里的整页/区域截图附件(`kind:'image'`)同扫直落 `dsh-trump/*-shot-*.jpg`,并在 ③ block 尾部列 `截图文件:` 行
+- 文件头新 `# entry id:` / `# via: dsh-review (heap-bridge, no hover)`;截图引用 `## SCREENSHOT (pick-time…)`
+- 客户端 0.2.26:发送等待超时 15s→**75s**(快照+解析 15-40s);设置卡新增"发送时堆直读标注(免 hover)"开关(index.js schema/normalization 同步)
+- 风险登记:扩展宿主 JSON.parse 240MB(V8 默认堆内实测可过,失败即回落);快照瞬间工作台短卡 ~5s
+
 ## ★ 大版本:Heap-Bridge——零 hover 零 click 直取 Copilot 附件全量(2026-11-02,方法论 v1.0)
 
 **本轮没动插件一行代码,但找到了整条管线的"母本"。** 结论链(源码+堆双重实证):

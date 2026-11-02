@@ -41,6 +41,7 @@ function reviewConfigSchema(value) {
     // hover card. Off: the card is visually hidden (visibility:hidden) for
     // the read window only, DOM still readable.
     showHoverCard: v.showHoverCard !== false,
+    annoHeapBridge: v.annoHeapBridge !== false,
   }
 }
 reviewConfigSchema.toJSON = function toJSON() {
@@ -58,6 +59,7 @@ reviewConfigSchema.toJSON = function toJSON() {
       claudeAdapt: { type: 'boolean', default: true },
       annotationToDsh: { type: 'boolean', default: true },
       showHoverCard: { type: 'boolean', default: true },
+      annoHeapBridge: { type: 'boolean', default: true },
     },
   }
 }
