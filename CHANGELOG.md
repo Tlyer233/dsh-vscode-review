@@ -1,3 +1,8 @@
+## 2.0.50:busyEnter 改读 ctx.configForms + 3080 双进程 systemd 托管(2026-11-02)
+
+- **busyEnter 误读真身**(exa 挖到上游 `deepseek-harness` 源码实锤):web profile 服务器端**没有 settings 持久 provider**,`remote.settings.describe()` 永远只见默认值 queue;GUI 的 ComposerSubmissionPolicy 实际 adopt 的是**页内 `ctx.configForms.get("ui-conversation")`**。annoPromptMode 改同源读 configForms(describe 降为二级兜底)。`session.prompt(content,'queue'|'steer')` 语义与类型声明(`readonly running: boolean`)均获上游证实。
+- **3080 运维闭环**:`dsh-web.service` + `dsh-auth-proxy.service` systemd user units(`enable --now` + `Linger=yes`,开机自启免登录;unit 与 run 脚本副本存 `tools/systemd/`)。此前 ssh 侧栏 3082 口靠已删 0.1.107 老扩展 spawn 的孤儿进程,重启机器即失联;现已托管,`systemctl --user restart dsh-web` = 换 rev 一步到位。
+
 # Changelog
 
 ## 2.0.3:修 2.0.2 回归——dshState.log 是函数不是 channel(本机也卡的元凶)(2026-11-02)

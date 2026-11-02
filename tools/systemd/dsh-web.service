@@ -1,0 +1,10 @@
+[Unit]
+Description=dsh web server (web profile)
+After=network-online.target
+[Service]
+Environment=PATH=/home/xi/.nvm/versions/node/v26.11.1/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/bin/sh -c "/home/xi/.nvm/versions/node/v26.11.1/bin/dsh --profile web --no-open >> /home/xi/.dsh/logs/dsh-web.out 2>&1"
+Restart=on-failure
+RestartSec=2
+[Install]
+WantedBy=default.target

@@ -1,0 +1,10 @@
+[Unit]
+Description=dsh-review auth proxy (tailscale:3082 -> dsh web:3080)
+After=network-online.target dsh-web.service
+Wants=dsh-web.service
+[Service]
+ExecStart=/bin/sh -c "/home/xi/.nvm/versions/node/v26.11.1/bin/node /home/xi/.dsh-review-tools/dsh-auth-proxy-run.js >> /home/xi/.dsh/logs/auth-proxy.out 2>&1"
+Restart=always
+RestartSec=2
+[Install]
+WantedBy=default.target
