@@ -3888,7 +3888,16 @@ window.__ModuleLoader__.load({
               var t = String(n.nodeValue).trim();
               if (t === "Token usage" || t === "Session statistics") { pop = n.parentElement; break; }
             }
-            while (pop && pop !== document.body && !(pop.textContent || "").match(/Token usage/)) pop = pop.parentElement;
+            // (2.1.7) React's DOM order for the two section headings is NOT
+            // stable (walker hit "Token usage" first this render, "Session
+            // statistics" last time — grid visual order != DOM order). The old
+            // climb-until-"Token usage"-inside rule then STOPPED at the heading
+            // itself (parent already contains its own text: 11 chars, zero
+            // numbers) and restatized an empty shell. Climb until the subtree
+            // actually holds a "<number> tok" value instead — that is the real
+            // Token-usage grid, where both the K/M rewrites and the Total row
+            // belong.
+            while (pop && pop !== document.body && !/[\d,]{3,}\s*tok/.test(pop.textContent || "")) pop = pop.parentElement;
             if (!pop || pop === document.body) { return; }
             annoRestatize(pop);
             if (pop.__dshrStatObs) return;

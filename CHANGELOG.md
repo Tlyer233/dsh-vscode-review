@@ -13,6 +13,13 @@
 - 旧 Enter 拦截仅在**无 sendSession 的老 dsh** 上兜底(`window.__dshrSendWrapped` 在场即让位)。slash 直通/pill 追加/75s 超时自发语义原样搬进 gate。日志 `[send] sendSession gate installed (client 2.1.1)` 为启用铁证。
 - Windows `install.ps1` 移植到 2.1.0 规格:真实版本号(旧脚本硬编码 0.1.0!)、`%APPDATA%\Code\argv.json`(Windows 真位置,旧脚本只写 ~/.vscode)、CDP 9223、node_modules 拷贝(堆桥依赖 ws,旧脚本漏拷=装了即废)、remote.extensionKind=ui、tgz 版本钉死。install.sh 同步补 remote.extensionKind。三件套统一 v2.1.0 发 GitHub Release(assets: 插件 tgz + 扩展 vsix)。
 
+## 2.1.5-2.1.7:Total 行三连修(克隆原生单元格 + 定位器改爬"真含数字"子树)(2026-11-02)
+
+- 2.1.5:Total 行不再手搓 div——**克隆 Output 那个原生 metric 单元格**再改两段文字,位置/颜色/字号 100% 继承(用户实拍:"往左一点,颜色和上面一样")。
+- 2.1.6:标签 `Total (in + out)` → `Total`(用户:"都知道啥意思")。
+- 2.1.7:**定位器根治**——React 两个 section 标题的 DOM 顺序不稳定(这次 walker 先撞 `Token usage`),旧规则"向上爬到包含 Token usage 的层"会停在自己身上(11 字符空壳)→ 格式化与 Total 双双失效(22:2x 现场)。改为**向上爬到真正含 `<数> tok` 的子树**(即 Token-usage 网格),顺序免疫。ego 终验:raw=0,`Total 86.2K tok` 就位。
+- 顺带定案:批注"没带上"= 用户当时在**浏览器页/内置浏览器**发送(无桥页面,gate 直通,设计如此);同日 22:16 侧栏发送带块铁证在档(gate: block request → prepared 156 chars)。要让浏览器发送也带批注 = HTTP 桥新需求,待用户拍板。
+
 ## 2.1.3/2.1.4:Total 行美观化 + 修 React 拆分文本节点导致的格式化失灵(2026-11-02)
 
 - 2.1.3:Total 行从"塞进右列格子"改为 **grid 全宽独立行**(`grid-column:1/-1`),标签继承原生字号,值右对齐一行放下——修用户实拍的"(in + out)换行挤压不协调"。
