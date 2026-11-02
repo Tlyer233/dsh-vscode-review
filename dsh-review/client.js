@@ -3866,7 +3866,7 @@ window.__ModuleLoader__.load({
                 else if (tct.indexOf("tok") === -1 && !labEl) { labEl = cel; }
               }
               if (labEl && valEl) {
-                labEl.textContent = "Total";
+                labEl.textContent = /[用会]/.test(String(pop.textContent || "")) ? "合计" : "Total";
                 valEl.textContent = annoFmtTok(total) + " tok";
                 grid.appendChild(clone);
               }
@@ -3877,7 +3877,7 @@ window.__ModuleLoader__.load({
     }
     function annoWatchContextPopover(e) {
       try {
-        var trg = e && e.target && e.target.closest ? e.target.closest('[aria-label*="of context used"]') : null;
+        var trg = e && e.target && e.target.closest ? e.target.closest('[aria-label*="of context used"], [aria-label*="上下文已用"]') : null;
         if (!trg) return;
         setTimeout(function () {
           try {
@@ -3886,7 +3886,7 @@ window.__ModuleLoader__.load({
             var n, pop = null;
             while ((n = w.nextNode())) {
               var t = String(n.nodeValue).trim();
-              if (t === "Token usage" || t === "Session statistics") { pop = n.parentElement; break; }
+              if (/token\s*(usage|用量)|session\s*statistics|会话统计/i.test(t)) { pop = n.parentElement; break; }
             }
             // (2.1.7) React's DOM order for the two section headings is NOT
             // stable (walker hit "Token usage" first this render, "Session
