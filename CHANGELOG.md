@@ -1,5 +1,10 @@
 # Changelog
 
+## pill 行每敲一键右飘一格:padding-delta 累积病,改绝对几何(2026-11-02, 客户端 0.2.48)
+
+遥测铁证(padL 791→799→807…每 commit +8;padR 涨到 18,641,400px,rowR 18,641,352px):0.2.46 的 `padding += 实测差值` 有两个必然后果——①padding 不移动盒子左边,delta 恒为 8,每次重渲染(每敲一键)再加一遍,无限累积=右飘一格;②flex 语境 padding 撑大 min-width,row 变宽→dr 变大→padding 再大,正反馈爆炸。v2 改**绝对几何**:行盒 width/marginLeft 直接钉成卡片盒的实测值(幂等,与 padding 无关),清掉两侧 padding 残留。教训:**每帧运行的布局补偿只能用绝对量,差值制在 DOM 里必累积**。
+
+## 段落批注 pill 侧栏不对齐:渲染时实测自校准(2026-11-02, 客户端 0.2.46)
 ## 段落批注 pill 侧栏不对齐:渲染时实测自校准(2026-11-02, 客户端 0.2.46)
 
 浏览器版对齐、VS Code 侧栏 pill 与草稿卡错位(用户提示与其调过的边距有关:侧栏 CSS 把 root padding/card-max-width/dock-inset 都改了,且核心类名哈希会漂移,选择器补偿脆)。放弃猜值,改** paint 时自校准**:chips 行 ref 回调里 rAF 测 `[data-composer-card]` 与本行 rect,把左右差值加进行内 padding(|Δ|<0.5px 不动,防抖标志位)。零上下文,边距怎么调都跟着对齐。

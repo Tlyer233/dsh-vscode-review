@@ -5848,14 +5848,22 @@ var module = { exports: {} };
 					try {
 						var card = document.querySelector('[data-composer-card]');
 						if (card) {
-							var cr = card.getBoundingClientRect(), rr = el.getBoundingClientRect();
-							var cs = window.getComputedStyle(el);
-							var dl = cr.left - rr.left, dr = rr.right - cr.right;
-							try { window.parent.postMessage({ type: "dshPasteLog", line: "[paste] dsha align dl=" + Math.round(dl) + " dr=" + Math.round(dr) + " rowL=" + Math.round(rr.left) + " rowR=" + Math.round(rr.right) + " cardL=" + Math.round(cr.left) + " cardR=" + Math.round(cr.right) + " padL=" + cs.paddingLeft + " padR=" + cs.paddingRight }, "*"); } catch (err2) { /* noop */ }
-						if (Math.abs(dl) > 0.5 || Math.abs(dr) > 0.5) {
-								el.style.paddingLeft = Math.max(0, parseFloat(cs.paddingLeft || '0') + dl) + 'px';
-								el.style.paddingRight = Math.max(0, parseFloat(cs.paddingRight || '0') + dr) + 'px';
-							}
+							var cr = card.getBoundingClientRect();
+							if (cr.width < 40 || cr.height < 10) return; // card not laid out yet
+							// (0.2.48) ABSOLUTE geometry, idempotent. v1 added the
+							// measured delta to padding every commit — but padding never
+							// moves the box's left edge, so dl stayed 8 and padL grew +8
+							// per keystroke ("输入一个右移一下", padL 0->367). And padding
+							// inflates flex min-width, so padR fed back (once hit 18.6M px).
+							// Pin the row box to the card box directly; zero out padding.
+							el.style.boxSizing = 'border-box';
+							el.style.width = cr.width + 'px';
+							el.style.maxWidth = 'none';
+							el.style.paddingLeft = '0px';
+							el.style.paddingRight = '0px';
+							var rr0 = el.getBoundingClientRect();
+							el.style.marginLeft = (cr.left - rr0.left + parseFloat(getComputedStyle(el).marginLeft || '0')) + 'px';
+							try { window.parent.postMessage({ type: "dshPasteLog", line: "[paste] dsha align(v2) cardL=" + Math.round(cr.left) + " cardW=" + Math.round(cr.width) + " setML=" + Math.round(cr.left - rr0.left) }, "*"); } catch (err2) { /* noop */ }
 						}
 					} catch (err) { /* layout not ready */ }
 					el.__dshrAligning = false;
