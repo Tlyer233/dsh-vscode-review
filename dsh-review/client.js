@@ -125,21 +125,22 @@ window.__ModuleLoader__.load({
         return true;
       } catch (err) { return false }
     };
-    // (0.2.28) time-driven bar: each segment crawls LINEARLY to its target
-    // (fast first climb, slow even creep during the heap snapshot) — the old
-    // 8/40/70/90 jumps read as two sudden sprints ("体验割裂").
+    // (0.2.38) ONE upward-opening quadratic (user: "开口向上的二次曲线"):
+    // p(t) = (t/T)^2 * ceil — starts slow, accelerates into the finish.
+    // T = expected worst-case capture time; prepared answer jumps to 100.
     function annoAnimTo(target, ratePerSec) {
+      void target; void ratePerSec;
       const els = annoProgEls;
       if (!els) return;
       if (annoAnimT) { clearInterval(annoAnimT); annoAnimT = null; }
-      let cur = parseFloat(els.bar.style.width) || 0;
-      if (cur >= target) return;
-      const step = ratePerSec * 0.1;
+      const t0 = Date.now();
+      const T = 90000, ceil = 96;
       annoAnimT = setInterval(function () {
         try {
-          cur = Math.min(target, cur + step);
-          els.bar.style.width = cur + "%";
-          if (cur >= target && annoAnimT) { clearInterval(annoAnimT); annoAnimT = null; }
+          const cur = parseFloat(els.bar.style.width) || 0;
+          const f = Math.min(1, (Date.now() - t0) / T);
+          const p = Math.max(cur, f * f * ceil); // monotonic
+          els.bar.style.width = p + "%";
         } catch (err) { if (annoAnimT) { clearInterval(annoAnimT); annoAnimT = null; } }
       }, 100);
     }
@@ -176,9 +177,7 @@ window.__ModuleLoader__.load({
       if (!annoProgEls) return;
       // (0.2.28) even creep per phase: snapshot+scan is the long haul (15-40s),
       // crawl 38 -> 88 at ~1.5%/s instead of sitting at 40 then sprinting.
-      if (stage === 1) annoAnimTo(88, 1.5);
-      else if (stage === 2) annoAnimTo(93, 6);
-      else if (stage >= 3) annoAnimTo(97, 15);
+      // (0.2.38) stages no longer retarget — the quadratic runs the whole way
     }
     function annoProgFinish(then) {
       const els = annoProgEls;

@@ -1,5 +1,10 @@
 # Changelog
 
+## 进度条改开口向上二次曲线(2026-11-02, 客户端 0.2.38)
+
+用户令"把进度条速度改为开口向上的二次曲线":分段线性 annoAnimTo(先快后匀速)整换为**单条时间二次** `p(t)=(t/T)²×96`(T=90s 预期封顶):5s 0.3% → 30s 10.7% → 60s 42.7% → 90s 96%,开始缓、加速冲顶、单调不回退;prepared 到达即跳 100%。stage 1/2/3 不再改目标(曲线全程)。
+
+## 用户裁决:砍掉③④⑤,只留①浏览器标注+②图片,设置也删(2026-11-02, 扩展 0.1.187 / 客户端 0.2.37)
 ## 用户裁决:砍掉③④⑤,只留①浏览器标注+②图片,设置也删(2026-11-02, 扩展 0.1.187 / 客户端 0.2.37)
 
 "还是不行, 这样吧不要文件那些了, 只有浏览器标注和图片 / 把设置删了"。misc(文件/代码段/终端)全链拆除:anno-heap 不再扫/桥/返回 misc(删 DUMP_MISC 等),extension 删 annoHeapMiscOn/annoHeapMisc/pairFill 写块/chips==0-misc-only 支/block 附加上下文节,client 删 annoCarryMisc 复选框全链(defaults/normalize/draft/live/shown/dirty/deps/reset/save/JSX),index.js 删 schema 两行。**只保留 element(标注)+image(截图)两类**,清全场规则(所有 chip 无论类型发送后一律 ✕ 清)不变。
