@@ -37,10 +37,6 @@ function reviewConfigSchema(value) {
     // Route browser element annotations to dsh (on) or keep VS Code's native
     // Copilot flow (off). The extension reads this to decide interception.
     annotationToDsh: v.annotationToDsh !== false,
-    // On (default): the synthetic hover during send-read may show Copilot's
-    // hover card. Off: the card is visually hidden (visibility:hidden) for
-    // the read window only, DOM still readable.
-    hideHoverCard: v.hideHoverCard === true,
     annoHeapBridge: v.annoHeapBridge !== false,
     // (0.2.33) carry ③files ④snippets ⑤terminal attachments too (default OFF:
     // dsh has its own implementations; the clear-everything rule applies either way)
@@ -61,7 +57,6 @@ reviewConfigSchema.toJSON = function toJSON() {
       openFilesInVscode: { type: 'boolean', default: true },
       claudeAdapt: { type: 'boolean', default: true },
       annotationToDsh: { type: 'boolean', default: true },
-      hideHoverCard: { type: 'boolean', default: false },
       annoHeapBridge: { type: 'boolean', default: true },
       annoCarryMisc: { type: 'boolean', default: false },
     },

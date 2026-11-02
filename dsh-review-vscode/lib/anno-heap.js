@@ -157,7 +157,13 @@ async function capture(opts) {
     log.appendLine('[anno][heap] scan: ' + elementIds.length + ' element, ' + imageIds.length + ' image entries — bridging live')
     const entries = [], images = []
     const bridge = async (sid, fn, out) => {
-      const g = await send('HeapProfiler.getObjectByHeapObjectId', { heapSnapshotObjectId: sid, objectId: sid })
+      // (0.1.185) one dead snapshot node ("Object is not available" — GC'd
+      // between snapshot and bridge) must NOT sink the whole batch.
+      let g = null
+      try {
+        g = await send('HeapProfiler.getObjectByHeapObjectId', { heapSnapshotObjectId: sid, objectId: sid })
+      } catch (e) { return }
+      if (!g || g.error) return
       const oid = g.result && g.result.result ? g.result.result.objectId : (g.result && g.result.objectId)
       if (!oid) return
       try {

@@ -1,5 +1,15 @@
 # Changelog
 
+## hover 回退正式退役:堆败=跳过,不回头(2026-11-02, 扩展 0.1.185 / 客户端 0.2.34)
+
+用户二次令:**"别兜底了不要兜底"**。14:57 轮实证堆路偶发 `getObjectByHeapObjectId: Object is not available`(快照与桥之间 GC 掉的死节点),当时按老逻辑回退 hover → 7 条全走 hover 占位(全文待补 + `(Delete)` 脏名)。四刀(代码在 `7fe85b5`,版本/记账补齐在此):
+
+1. **annoSendSync 回退分支(52 行)整拆**:堆败 → `ctxs2` 直接用标注期预留文件,无预留=该行无全文;hover 链(copilotChipFullContexts 等)成死函数不再可达;`hideHoverCard` 设置行 + schema 键一并拆掉(截图里那行消失)
+2. **anno-heap 桥加固**:单条 `getObjectByHeapObjectId` 失败(catch + g.error)只丢该条,不掀全批;`heap held no attachment entries` 只在真全军覆没时才响
+3. **observer 名字修复**:anno-observer.js 是模板字符串(`observerSource()` 返回),单反斜杠被模板吃掉 → `(Delete)$` 永不匹配 → chip 名带 `(Delete)` + 前导空格。改双反斜杠 + `.trim()`,node 直调生成码实证 `Z_TEST… (Delete)` → `Z_TEST…` ✓
+4. **annoResyncIfOn 补 kind 闸**:文件/终端不再被预占坑(14:57 日志 `[quiet] reserved` 混进 file/terminal 之源)
+
+## annoCarryMisc 保存即弹回:宿主未注册键被归一化丢弃(2026-11-02, 客户端 0.2.33)
 ## annoCarryMisc 保存即弹回:宿主未注册键被归一化丢弃(2026-11-02, 客户端 0.2.33)
 
 0.2.31 那批脚本在版本循环处崩掉,`index.js` 的两处注册(schema + normalize)实际没写进去;宿主 `set()` 走 `reviewConfigSchema` 归一化,**未注册键当场丢弃** → 用户勾选"发送时也携带…"保存后 settings.json 里根本没有该键 → UI 回弹 false。补 index.js 两刀后,ego 在生产实例上端到端回归:点勾→保存→勾选保持 true,磁盘 `annoCarryMisc=true` ✓。教训(与 0.2.32 同族):**多文件批次改动必须逐文件核验落盘,崩在半路=半套状态**;此后 install.sh 后附带 grep 证据已在做,补一条:python 批次里 assert 失败要打印已写/未写清单。

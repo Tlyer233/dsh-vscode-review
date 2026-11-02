@@ -86,7 +86,7 @@ function observerSource() {
         if (aria.indexOf('(Delete)') === -1) continue;
         kind = 'other'; rest = aria;
       }
-      var name = rest.replace(/ \(Delete\)$/, '');
+      var name = rest.replace(/ \\(Delete\\)$/, '').trim();
       var x = c.querySelector('a.monaco-button.codicon-close-compact, a.codicon-close-compact');
       out.push({ name: name, aria: aria, kind: kind, hasX: !!x });
     }

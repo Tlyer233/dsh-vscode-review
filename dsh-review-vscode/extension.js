@@ -1456,7 +1456,9 @@ function annoResyncIfOn(chips, lines, log) {
   if (sig === annoResyncDone) return
   annoResyncDone = sig
   for (let i = 0; i < chips.length; i++) {
-    const k = keys[i]
+    // (0.1.185) reservations are ELEMENT chips only (attachments come from
+    // the heap at send; they never need a placeholder file).
+    if (chips[i].kind && chips[i].kind !== 'element') continue
     if (!annoCaptureFiles.has(k)) {
       log.appendLine('[anno] resync: feature re-enabled — reserving chip #' + (i + 1) + ' @' + chips[i].name)
       void annoQuietCapture(chips[i], i, k)
@@ -1727,62 +1729,23 @@ async function annoSendSync(req) {
         ctxs2 = annoHeapPairFill(chips, keysSend, heapData)
         annoPostProg(req, 2)
       } catch (e) {
-        log.appendLine('[anno][heap] bridge unavailable (' + String(e).slice(0, 130) + ') — hover-card fallback')
+        log.appendLine('[anno][heap] bridge failed (' + String(e).slice(0, 130) + ') — NO FALLBACK (user ruling): sending without fresh content')
         ctxs2 = null
       }
     }
     if (!ctxs2) {
-    let rebuilt = []
-    // (0.1.176) unified hover-card source: NO page rebuild; every chip goes
-    // through copilotChipFullContexts (CDP synthetic hover, no clicks).
-    rebuilt = chips.map((c) => ({ name: c.name, rebuilt: null }))
-    const needIdx = chips.map((c, i) => ((rebuilt[i] && rebuilt[i].rebuilt) || (annoCaptureFiles.has(keysSend[i]) && !annoPendingFullKeys.has(keysSend[i]))) ? -1 : i).filter((i) => i >= 0)
-    let ctxs = []
-    annoPostProg(req, 1) // hover/capture starting
-    if (needIdx.length) { ctxs = await copilotChipFullContexts(needIdx); annoPostProg(req, 2) /* captures done */ }
-    else { log.appendLine('[trump] ctx: 0 hover needed (all rebuilt page-side)'); annoPostProg(req, 2) }
-    // (0.1.139) merge BY INDEX — the 0.1.131 name-equality find() gave every
-    // same-named chip the FIRST capture (09:16 round: 3 different badges all
-    // written as "Unloaded"). ctxs is DOM-order-aligned with chips by construction.
-    const merged = chips.map((c, i) => {
-      const filePre = annoCaptureFiles.get(keysSend[i]) || null
-      const t = (rebuilt[i] && rebuilt[i].rebuilt) || (ctxs[i] && ctxs[i].text) || (filePre ? '(reserved: see file)' : null)
-      const src = (rebuilt[i] && rebuilt[i].rebuilt) ? 'page' : (ctxs[i] && ctxs[i].text ? 'hover' : (filePre ? 'quiet' : 'none'))
-      const held = annoChipTexts.get(keysSend[i])
-      if (!c.text && held) c.text = held // late beacon forgot the comment
-      return { name: c.name, text: t, source: src, file: filePre, shot: (ctxs[i] && ctxs[i].shot) || null }
-    })
-    ctxs2 = merged
-    // (0.1.159) fill reserved placeholder files with the real hover/page text
-    // NOW — while the panel is still open (freeze window).
-    for (let fi = 0; fi < ctxs2.length; fi++) {
-      const cx = ctxs2[fi]
-      const k = keysSend[fi]
-      // (0.1.173) any reserved/placeholder file paired with a fresh hover
-      // capture gets overwritten — do NOT gate on the pending flag alone.
-      if (!cx.file) continue
-      if (cx.source !== 'hover' && !annoPendingFullKeys.has(k)) continue
-      let t = cx.text
-      const bad = !t || String(t).indexOf('<<') === 0 || String(t).indexOf('(captured') !== -1 || String(t).indexOf('(reserved') !== -1
-      if (bad) {
-        // card failed for this chip — id chips fall back to the page read,
-        // anything else keeps the placeholder and says so honestly.
-        const sel2 = annoIdSel(cx.name)
-        let wroteFb = null
-        if (sel2) {
-          const d2 = await annoElementFullData({ sel: sel2 })
-          if (d2) wroteFb = await annoWriteFull(fi, cx.name, (chips[fi] && chips[fi].text) || '', d2, 'page-fallback', cx.file)
-        }
-        if (wroteFb) { annoPendingFullKeys.delete(k); log.appendLine('[trump] fallback filled: ' + wroteFb) }
-        continue
-      }
-      try {
-        const wroteCard = await annoWriteCardFile(fi, cx.name, (chips[fi] && chips[fi].text) || '', t, cx.shot, cx.file)
-        annoPendingFullKeys.delete(k)
-        log.appendLine('[trump] reserved filled: ' + (wroteCard || cx.file))
-      } catch (e) { log.appendLine('[trump] reserved fill failed: ' + String(e).slice(0, 90)) }
+      // (0.1.185) The hover-card fallback chain is RETIRED (user: "不走hover
+      // 那条路了, 没有回退"). What we have is what ships: annotation-time
+      // reserved files (if any) ride along; no re-reads, no synthetic hover.
+      ctxs2 = chips.map((c, i) => ({
+        name: c.name,
+        text: c.text || null,
+        source: annoHeapOn() ? 'heap-failed' : 'heap-off',
+        file: annoCaptureFiles.get(keysSend[i]) || null,
+        shot: null,
+        kind: c.kind
+      }))
     }
-    } // (0.1.178) end hover-fallback branch (heap branch already filled files)
     log.appendLine('[trump] ctx: ' + ctxs2.length + ' full context(s) (' + ctxs2.filter((x) => x.source === 'page').length + ' page-rebuilt, ' + ctxs2.filter((x) => x.source === 'hover').length + ' hover)')
     for (const cx of ctxs2) {
       log.appendLine('[trump] ctx @' + cx.name + ' [' + cx.source + '] >>> ' + (cx.text === null ? '(no capture)' : cx.text.replace(/\n+/g, ' ⏎ ')))
