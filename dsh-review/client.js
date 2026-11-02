@@ -135,6 +135,7 @@ window.__ModuleLoader__.load({
       if (annoAnimT) { clearInterval(annoAnimT); annoAnimT = null; }
       const t0 = Date.now();
       const T = 60000, ceil = 96; // (0.2.40) shorter launch window: steeper start
+      try { window.parent.postMessage({ type: "dshPasteLog", line: "[paste] prog animator start (client 0.2.41, quad T=60s)" }, "*"); } catch (err) { /* noop */ }
       annoAnimT = setInterval(function () {
         try {
           const cur = parseFloat(els.bar.style.width) || 0;
