@@ -113,6 +113,25 @@ window.__ModuleLoader__.load({
     // extension: 1 hover starting, 2 captures done, 3 fills done, prepared=100.
     let annoProgReq = null;
     let annoProgEls = null;
+    let annoAnimT = null;
+    // (0.2.28) time-driven bar: each segment crawls LINEARLY to its target
+    // (fast first climb, slow even creep during the heap snapshot) — the old
+    // 8/40/70/90 jumps read as two sudden sprints ("体验割裂").
+    function annoAnimTo(target, ratePerSec) {
+      const els = annoProgEls;
+      if (!els) return;
+      if (annoAnimT) { clearInterval(annoAnimT); annoAnimT = null; }
+      let cur = parseFloat(els.bar.style.width) || 0;
+      if (cur >= target) return;
+      const step = ratePerSec * 0.1;
+      annoAnimT = setInterval(function () {
+        try {
+          cur = Math.min(target, cur + step);
+          els.bar.style.width = cur + "%";
+          if (cur >= target && annoAnimT) { clearInterval(annoAnimT); annoAnimT = null; }
+        } catch (err) { if (annoAnimT) { clearInterval(annoAnimT); annoAnimT = null; } }
+      }, 100);
+    }
     function annoProgStyle() {
       if (document.getElementById("dshr-anno-prog-css")) return;
       const st = document.createElement("style");
@@ -138,16 +157,22 @@ window.__ModuleLoader__.load({
       let btnRestore = null;
       if (btn && !btn.disabled) { btnRestore = { el: btn }; btn.disabled = true; }
       annoProgEls = { card: card, ring: ring, bar: bar, ed: edRestore, btn: btnRestore };
-      requestAnimationFrame(function () { bar.style.width = "8%"; });
+      bar.style.transition = "none";
+      bar.style.width = "0%";
+      annoAnimTo(38, 22); // (0.2.28) 0 -> 38% in ~1.7s: the "we got it" fast segment
     }
     function annoProgStage(stage) {
       if (!annoProgEls) return;
-      const pct = stage === 1 ? 40 : stage === 2 ? 70 : stage >= 3 ? 90 : 8;
-      try { annoProgEls.bar.style.width = pct + "%"; } catch (err) { /* noop */ }
+      // (0.2.28) even creep per phase: snapshot+scan is the long haul (15-40s),
+      // crawl 38 -> 88 at ~1.5%/s instead of sitting at 40 then sprinting.
+      if (stage === 1) annoAnimTo(88, 1.5);
+      else if (stage === 2) annoAnimTo(93, 6);
+      else if (stage >= 3) annoAnimTo(97, 15);
     }
     function annoProgFinish(then) {
       const els = annoProgEls;
       annoProgEls = null; annoProgReq = null;
+      if (annoAnimT) { clearInterval(annoAnimT); annoAnimT = null; }
       if (!els) { if (then) then(); return; }
       try { els.bar.style.transition = "width .15s ease"; els.bar.style.width = "100%"; } catch (err) { /* noop */ }
       setTimeout(function () {
@@ -914,7 +939,7 @@ window.__ModuleLoader__.load({
     function getReviewSettings() {
       // Default to pointer: matches the user's persisted yaml choice; fence
       // is only used when the live scope explicitly says fence.
-      const d = { enabled: true, fileSend: "path", snippetSend: "pointer", sidebarSide: "left", jobsTerminal: false, scopeFilter: true, autoWorkspace: true, openFilesInVscode: true, claudeAdapt: true, annotationToDsh: true, showHoverCard: true, annoHeapBridge: true };
+      const d = { enabled: true, fileSend: "path", snippetSend: "pointer", sidebarSide: "left", jobsTerminal: false, scopeFilter: true, autoWorkspace: true, openFilesInVscode: true, claudeAdapt: true, annotationToDsh: true, hideHoverCard: false, annoHeapBridge: true };
       if (!reviewSettingsScope || typeof reviewSettingsScope.getSnapshot !== "function") return d;
       const snap = reviewSettingsScope.getSnapshot();
       const val = snap && snap.value;
@@ -934,7 +959,7 @@ window.__ModuleLoader__.load({
         openFilesInVscode: v.openFilesInVscode !== false,
         claudeAdapt: v.claudeAdapt !== false,
         annotationToDsh: v.annotationToDsh !== false,
-        showHoverCard: v.showHoverCard !== false,
+        hideHoverCard: v.hideHoverCard === true,
         annoHeapBridge: v.annoHeapBridge !== false,
       };
     }
@@ -3313,7 +3338,7 @@ window.__ModuleLoader__.load({
           const [draftOpenFilesVs, setDraftOpenFilesVs] = useState(null);
           const [draftClaudeAdapt, setDraftClaudeAdapt] = useState(null);
           const [draftAnnotationToDsh, setDraftAnnotationToDsh] = useState(null);
-          const [draftShowHoverCard, setDraftShowHoverCard] = useState(null);
+          const [draftHideHoverCard, setDraftHideHoverCard] = useState(null);
           const [draftAnnoHeapBridge, setDraftAnnoHeapBridge] = useState(null);
           const [saving, setSaving] = useState(false);
           const [failed, setFailed] = useState(false);
@@ -3328,7 +3353,7 @@ window.__ModuleLoader__.load({
           const liveOpenFilesVs = live.openFilesInVscode;
           const liveClaudeAdapt = live.claudeAdapt;
           const liveAnnotationToDsh = live.annotationToDsh;
-          const liveShowHoverCard = live.showHoverCard;
+          const liveHideHoverCard = live.hideHoverCard;
           const liveAnnoHeapBridge = live.annoHeapBridge;
           const shownEnabled = draftEnabled == null ? liveEnabled : draftEnabled;
           const shownFileSend = draftFileSend == null ? liveFileSend : draftFileSend;
@@ -3340,7 +3365,7 @@ window.__ModuleLoader__.load({
           const shownOpenFilesVs = draftOpenFilesVs == null ? liveOpenFilesVs : draftOpenFilesVs;
           const shownClaudeAdapt = draftClaudeAdapt == null ? liveClaudeAdapt : draftClaudeAdapt;
           const shownAnnotationToDsh = draftAnnotationToDsh == null ? liveAnnotationToDsh : draftAnnotationToDsh;
-          const shownShowHoverCard = draftShowHoverCard == null ? liveShowHoverCard : draftShowHoverCard;
+          const shownHideHoverCard = draftHideHoverCard == null ? liveHideHoverCard : draftHideHoverCard;
           const shownAnnoHeapBridge = draftAnnoHeapBridge == null ? liveAnnoHeapBridge : draftAnnoHeapBridge;
           const dirty = shownEnabled !== liveEnabled
             || shownFileSend !== liveFileSend
@@ -3352,7 +3377,7 @@ window.__ModuleLoader__.load({
             || shownOpenFilesVs !== liveOpenFilesVs
             || shownClaudeAdapt !== liveClaudeAdapt
             || shownAnnotationToDsh !== liveAnnotationToDsh
-            || shownShowHoverCard !== liveShowHoverCard
+            || shownHideHoverCard !== liveHideHoverCard
             || shownAnnoHeapBridge !== liveAnnoHeapBridge;
           const available = snap && snap.status === "ready";
           const writable = !!(snap && snap.writable);
@@ -3369,9 +3394,9 @@ window.__ModuleLoader__.load({
             setDraftClaudeAdapt(null);
             setDraftAnnotationToDsh(null);
             setDraftAnnoHeapBridge(null);
-            setDraftShowHoverCard(null);
+            setDraftHideHoverCard(null);
             setFailed(false);
-          }, [liveEnabled, liveFileSend, liveSnippetSend, liveSidebarSide, liveJobsTerminal, liveScopeFilter, liveAutoWorkspace, liveOpenFilesVs, liveClaudeAdapt, liveAnnotationToDsh, liveShowHoverCard, liveAnnoHeapBridge]);
+          }, [liveEnabled, liveFileSend, liveSnippetSend, liveSidebarSide, liveJobsTerminal, liveScopeFilter, liveAutoWorkspace, liveOpenFilesVs, liveClaudeAdapt, liveAnnotationToDsh, liveHideHoverCard, liveAnnoHeapBridge]);
 
           if (!available) return null;
 
@@ -3387,7 +3412,7 @@ window.__ModuleLoader__.load({
             setDraftClaudeAdapt(null);
             setDraftAnnotationToDsh(null);
             setDraftAnnoHeapBridge(null);
-            setDraftShowHoverCard(null);
+            setDraftHideHoverCard(null);
             setFailed(false);
           }
 
@@ -3428,8 +3453,8 @@ window.__ModuleLoader__.load({
             if (shownAnnotationToDsh !== liveAnnotationToDsh) {
               chain = chain.then(function () { return reviewScope.set("annotationToDsh", shownAnnotationToDsh); });
             }
-            if (shownShowHoverCard !== liveShowHoverCard) {
-              chain = chain.then(function () { return reviewScope.set("showHoverCard", shownShowHoverCard); });
+            if (shownHideHoverCard !== liveHideHoverCard) {
+              chain = chain.then(function () { return reviewScope.set("hideHoverCard", shownHideHoverCard); });
             }
             if (shownAnnoHeapBridge !== liveAnnoHeapBridge) {
               chain = chain.then(function () { return reviewScope.set("annoHeapBridge", shownAnnoHeapBridge); });
@@ -3634,8 +3659,8 @@ window.__ModuleLoader__.load({
                   },
                 }),
                 h("div", null,
-                  h("label", { htmlFor: "dshr-hover-card" }, "发送读取时显示 Copilot 悬浮卡"),
-                  h("p", { className: "dshr-hint" }, "发送带标注的消息时，扩展会打开 Copilot 面板并合成 hover 抓取元素全文。开启（默认）：抓取时 Copilot 自己的悬浮卡照常显示。关闭：抓取期间悬浮卡被临时隐藏（只遮显示，数据照抓，读完即恢复）。"),
+                  h("label", { htmlFor: "dshr-hover-card" }, "回退 hover 读取时隐藏 Copilot 悬浮卡"),
+                  h("p", { className: "dshr-hint" }, "默认关闭：完全不修改 VS Code 自己的 hover 逻辑（堆路主路根本不产生 hover；仅当堆路失败回退到悬浮卡抓取时此项才有意义）。开启：回退抓取期间悬浮卡被临时隐藏（只遮显示，数据照抓，读完即恢复）。"),
                 ),
               ),
               h("div", { className: "dshr-field" },

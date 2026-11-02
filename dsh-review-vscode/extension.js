@@ -454,9 +454,14 @@ let lastBeaconStateKey = ''
 // (0.1.167) dsh settings card: showHoverCard (default ON = native behavior:
 // hover card visible during send-read). OFF = hide it for the read window.
 function annoHoverCardVisible() {
+  // (0.1.181) POLARITY FLIPPED per user ruling "默认不修改 vscode hover 逻辑":
+  // the new key hideHoverCard defaults to FALSE = never touch VS Code's own
+  // hover rendering. Only when explicitly ON (and only on the hover-fallback
+  // path — the heap main path never hovers) does the temporary
+  // visibility:hidden trick arm.
   try {
     const raw = JSON.parse(fs.readFileSync(path.join(os.homedir(), '.dsh', 'review', 'shadow', 'settings.json'), 'utf8'))
-    return raw.showHoverCard !== false
+    return raw.hideHoverCard !== true
   } catch (e) {
     return true
   }

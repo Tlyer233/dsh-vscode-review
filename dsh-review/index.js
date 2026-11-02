@@ -40,7 +40,7 @@ function reviewConfigSchema(value) {
     // On (default): the synthetic hover during send-read may show Copilot's
     // hover card. Off: the card is visually hidden (visibility:hidden) for
     // the read window only, DOM still readable.
-    showHoverCard: v.showHoverCard !== false,
+    hideHoverCard: v.hideHoverCard === true,
     annoHeapBridge: v.annoHeapBridge !== false,
   }
 }
@@ -58,7 +58,7 @@ reviewConfigSchema.toJSON = function toJSON() {
       openFilesInVscode: { type: 'boolean', default: true },
       claudeAdapt: { type: 'boolean', default: true },
       annotationToDsh: { type: 'boolean', default: true },
-      showHoverCard: { type: 'boolean', default: true },
+      hideHoverCard: { type: 'boolean', default: false },
       annoHeapBridge: { type: 'boolean', default: true },
     },
   }
