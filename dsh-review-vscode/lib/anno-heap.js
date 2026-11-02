@@ -93,9 +93,16 @@ async function capture(opts) {
   let mid = 1
   const snapPath = path.join(os.tmpdir(), 'dsh-anno-heap-' + Date.now() + '.heapsnapshot')
   let fd = null
-  const send = (method, params) => new Promise((resolve, reject) => {
+  // (0.1.186) EVERY CDP call now has a deadline: the 15:12 round showed a
+  // bridge response that NEVER arrived (getObjectByHeapObjectId on a GC-racing
+  // node) — no error, no response — promise hung, annoSendSync stuck, prepared
+  // never posted, client degraded to self-composed "(待补)" blocks.
+  const send = (method, params, timeoutMs) => new Promise((resolve, reject) => {
     const myId = mid++
+    let tk = null
+    const settle = (fn) => (v) => { clearTimeout(tk); fn(v) }
     handlers[myId] = (m) => { if (m.error) reject(new Error(method + ': ' + m.error.message)); else resolve(m) }
+    tk = setTimeout(() => { delete handlers[myId]; reject(new Error(method + ' TIMED OUT ' + (timeoutMs || 25000) + 'ms')) }, timeoutMs || 25000)
     ws.send(JSON.stringify({ id: myId, method, params: params || {} }))
     setTimeout(() => { if (handlers[myId]) { delete handlers[myId]; reject(new Error(method + ' timeout')) } }, 40000)
   })
@@ -116,7 +123,7 @@ async function capture(opts) {
     await send('HeapProfiler.collectGarbage')
     await send('HeapProfiler.collectGarbage')
     log.appendLine('[anno][heap] snapshotting workbench heap...')
-    await send('HeapProfiler.takeHeapSnapshot', { reportProgress: false })
+    await send('HeapProfiler.takeHeapSnapshot', { reportProgress: false }, 120000)
     if (fd !== null) { fs.closeSync(fd); fd = null }
     const size = fs.existsSync(snapPath) ? fs.statSync(snapPath).size : 0
     if (!size) throw new Error('empty snapshot')

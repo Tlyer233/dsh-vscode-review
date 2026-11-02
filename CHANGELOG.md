@@ -1,5 +1,13 @@
 # Changelog
 
+## 桥"无响应"挂死全链 + dock 自拼块混列附件(2026-11-02, 扩展 0.1.186 / 客户端 0.2.36)
+
+15:12 测试轮日志时序定罪(行号即顺序):`PrepareReq(256) → captured 8 → scan 3e+2i bridging(268) → 发送739(269)`,**中间没有 heap paired / prepared posted / bridge failed**——`getObjectByHeapObjectId` 的响应永不到达(无 error 无 response,GC 竞速),promise 悬空 → annoSendSync 卡死 → prepared 永不回 → 第二次 Enter 走 busy 直发,内容是客户端 dock 自拼块:`@Terminal Selection 全文文件:(待补)`×4 混列、无截图/misc 节。两修:
+
+1. **anno-heap 每个 CDP 调用带截止**(send 加 timeoutMs,默认 25s,快照 120s):超时 reject → 单条桥失败只丢该条;整体失败 → 堆败路(预留文件+无回退)照常收尾,annoSendBusy 必解锁
+2. **kind 进 dock**:扩展 annoPushDockList 带 `kind`;客户端 setAnnoDockChips 存 kind;`annoComposeBatch` **只列 element**(busy 直发/超时自拼两条路都干净)——附件本来就归扩展块的截图节/misc 节管
+
+## 组件配置又空了:删行 replace 拼出 livelive(2026-11-02, 客户端 0.2.35)
 ## 组件配置又空了:删行 replace 拼出 livelive(2026-11-02, 客户端 0.2.35)
 
 0.2.34 删 hideHoverCard 时,deps 数组替换 `'liveHideHoverCard, '`→`'live'` 与后随 token 粘连成 `liveliveAnnoHeapBridge` → settings slot 渲染 ReferenceError → "暂无可配组件"。ego 抓错定罪,单 token 改正,回归:代码审查区+携带/堆两开关都在、旧行没了、console 零报错。教训升级:**replace 的 old/new 必须以完整 token 对齐边界(数组里删一项就删 `x, ` 整段含分隔符),装完必须 grep 拼写粘连模式**。

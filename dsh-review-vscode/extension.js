@@ -1433,7 +1433,7 @@ function annoPushDockList() {
   const log = dshState.logChannel
   try {
     const keys = annoChipKeys(annoCurrentChips)
-    const dock = annoCurrentChips.map((c, i) => ({ key: keys[i], name: c.name, text: c.text || '', file: annoCaptureFiles.get(keys[i]) || null }))
+    const dock = annoCurrentChips.map((c, i) => ({ key: keys[i], kind: c.kind || 'element', name: c.name, text: c.text || '', file: annoCaptureFiles.get(keys[i]) || null }))
     const j = JSON.stringify(dock)
     if (j !== annoDockJsonLast) { annoDockJsonLast = j; void sendAnnoDock(dock) }
   } catch (e) { log.appendLine('[anno] dock push failed: ' + String(e).slice(0, 100)) }
