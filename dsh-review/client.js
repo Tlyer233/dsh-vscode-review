@@ -5851,7 +5851,8 @@ var module = { exports: {} };
 							var cr = card.getBoundingClientRect(), rr = el.getBoundingClientRect();
 							var cs = window.getComputedStyle(el);
 							var dl = cr.left - rr.left, dr = rr.right - cr.right;
-							if (Math.abs(dl) > 0.5 || Math.abs(dr) > 0.5) {
+							try { window.parent.postMessage({ type: "dshPasteLog", line: "[paste] dsha align dl=" + Math.round(dl) + " dr=" + Math.round(dr) + " rowL=" + Math.round(rr.left) + " rowR=" + Math.round(rr.right) + " cardL=" + Math.round(cr.left) + " cardR=" + Math.round(cr.right) + " padL=" + cs.paddingLeft + " padR=" + cs.paddingRight }, "*"); } catch (err2) { /* noop */ }
+						if (Math.abs(dl) > 0.5 || Math.abs(dr) > 0.5) {
 								el.style.paddingLeft = Math.max(0, parseFloat(cs.paddingLeft || '0') + dl) + 'px';
 								el.style.paddingRight = Math.max(0, parseFloat(cs.paddingRight || '0') + dr) + 'px';
 							}
