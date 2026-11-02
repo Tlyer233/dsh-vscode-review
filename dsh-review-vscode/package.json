@@ -2,7 +2,7 @@
   "name": "dsh-review-vscode",
   "displayName": "dsh review — inline diff + dsh sidebar",
   "description": "Inline review (shadow/pending) + dsh webview sidebar",
-  "version": "2.1.1",
+  "version": "2.1.2",
   "publisher": "dsn",
   "engines": {
     "vscode": "^1.85.0"
@@ -100,7 +100,8 @@
       {
         "command": "dshReview.reloadSidebar",
         "category": "dsh",
-        "title": "重载 dsh 侧栏"
+        "title": "重载 dsh 侧栏",
+        "icon": "$(refresh)"
       },
       {
         "command": "dshReview.restartDshBili",
@@ -401,6 +402,11 @@
           "command": "dshReview.restartDshBili",
           "when": "view == dshReview.dshWebview",
           "group": "navigation@4"
+        },
+        {
+          "command": "dshReview.reloadSidebar",
+          "when": "view == dshReview.dshWebview",
+          "group": "navigation@1"
         }
       ],
       "explorer/context": [

@@ -4444,8 +4444,15 @@ window.__ModuleLoader__.load({
         if (!vscodeScopeReceived) return;
 
         // No VS Code workspace folder: stay on dsh home; re-clear if user opens any.
+        // (2.1.12 exception, user spec) the ssh "attached to host, no folder"
+        // window must still land on the most recently active session after a
+        // refresh — blank + inside the first 10s falls through to the normal
+        // landing flow below; blank AFTER 10s keeps Policy-1 (a deliberate
+        // "home" click is respected).
         if (!scopeIsActive()) {
-          if (!current) return;
+          if (!current) {
+            if (Date.now() - annoIframeBootAt > 10000) return;
+          } else {
           if (connectInFlight) return;
           const nowEmpty = Date.now();
           // Short throttle — keep pullback snappy when user re-opens a workspace.
@@ -4454,6 +4461,7 @@ window.__ModuleLoader__.load({
           postScopeMessage("dshScopeEmpty", {});
           goHome();
           return;
+          }
         }
 
         // 0.1.45 plan B: no dsh workspace matches this window's folders
