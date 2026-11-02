@@ -3426,7 +3426,7 @@ window.__ModuleLoader__.load({
             setDraftAnnoCarryMisc(null);
             setDraftAnnoHeapBridge(null);
             setFailed(false);
-          }, [liveEnabled, liveFileSend, liveSnippetSend, liveSidebarSide, liveJobsTerminal, liveScopeFilter, liveAutoWorkspace, liveOpenFilesVs, liveClaudeAdapt, liveAnnotationToDsh, liveliveAnnoHeapBridge, liveAnnoCarryMisc]);
+          }, [liveEnabled, liveFileSend, liveSnippetSend, liveSidebarSide, liveJobsTerminal, liveScopeFilter, liveAutoWorkspace, liveOpenFilesVs, liveClaudeAdapt, liveAnnotationToDsh, liveAnnoHeapBridge, liveAnnoCarryMisc]);
 
           if (!available) return null;
 

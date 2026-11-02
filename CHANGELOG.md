@@ -1,5 +1,10 @@
 # Changelog
 
+## 组件配置又空了:删行 replace 拼出 livelive(2026-11-02, 客户端 0.2.35)
+
+0.2.34 删 hideHoverCard 时,deps 数组替换 `'liveHideHoverCard, '`→`'live'` 与后随 token 粘连成 `liveliveAnnoHeapBridge` → settings slot 渲染 ReferenceError → "暂无可配组件"。ego 抓错定罪,单 token 改正,回归:代码审查区+携带/堆两开关都在、旧行没了、console 零报错。教训升级:**replace 的 old/new 必须以完整 token 对齐边界(数组里删一项就删 `x, ` 整段含分隔符),装完必须 grep 拼写粘连模式**。
+
+## hover 回退正式退役:堆败=跳过,不回头(2026-11-02, 扩展 0.1.185 / 客户端 0.2.34)
 ## hover 回退正式退役:堆败=跳过,不回头(2026-11-02, 扩展 0.1.185 / 客户端 0.2.34)
 
 用户二次令:**"别兜底了不要兜底"**。14:57 轮实证堆路偶发 `getObjectByHeapObjectId: Object is not available`(快照与桥之间 GC 掉的死节点),当时按老逻辑回退 hover → 7 条全走 hover 占位(全文待补 + `(Delete)` 脏名)。四刀(代码在 `7fe85b5`,版本/记账补齐在此):
