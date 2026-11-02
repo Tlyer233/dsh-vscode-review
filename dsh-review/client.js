@@ -5835,7 +5835,31 @@ var module = { exports: {} };
 				changed();
 			};
 
-			return React.createElement("div", { className: "dsha_chips" },
+			return React.createElement("div", { className: "dsha_chips", ref: function (el) {
+				// (0.2.46) SELF-ALIGN: the pill row must sit exactly above the
+				// composer card. Browser and VS Code sidebar give the dock slot
+				// and the card different insets (and we restyle margins in the
+				// sidebar), and the core's class hashes drift — so MEASURE at
+				// paint time: pad the row by the live delta between its box and
+				// the card's box. Context-free, survives any margin retuning.
+				if (!el || el.__dshrAligning) return;
+				el.__dshrAligning = true;
+				requestAnimationFrame(function () {
+					try {
+						var card = document.querySelector('[data-composer-card]');
+						if (card) {
+							var cr = card.getBoundingClientRect(), rr = el.getBoundingClientRect();
+							var cs = window.getComputedStyle(el);
+							var dl = cr.left - rr.left, dr = rr.right - cr.right;
+							if (Math.abs(dl) > 0.5 || Math.abs(dr) > 0.5) {
+								el.style.paddingLeft = Math.max(0, parseFloat(cs.paddingLeft || '0') + dl) + 'px';
+								el.style.paddingRight = Math.max(0, parseFloat(cs.paddingRight || '0') + dr) + 'px';
+							}
+						}
+					} catch (err) { /* layout not ready */ }
+					el.__dshrAligning = false;
+				});
+			} },
 				...items.map((item, position) => React.createElement("span", {
 					className: "dsha_chip",
 					key: `${String(position)}-${item.quote.slice(0, 12)}`,
