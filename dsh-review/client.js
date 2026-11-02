@@ -3823,27 +3823,35 @@ window.__ModuleLoader__.load({
         if (pop.__dshrStatBusy) return;
         pop.__dshrStatBusy = true;
         try {
-          var w = document.createTreeWalker(pop, NodeFilter.SHOW_TEXT);
+          // (2.1.4) React may split the value into SEPARATE text nodes
+          // ("23,724" + " tok"), which killed the single-text-node match. Match
+          // on LEAF elements instead: no child elements, whole text matches
+          // "N,NNN tok". The scoped observer re-applies after every React
+          // commit, so replacing textContent wholesale is safe.
           var re = /^([\d,]+)\s*tok$/;
-          var hits = [], m, total = 0;
-          while ((m = w.nextNode())) {
-            var t = String(m.nodeValue).trim();
+          var hits = [], total = 0;
+          var all = pop.querySelectorAll("span,div,b,strong");
+          for (var q = 0; q < all.length; q++) {
+            var el = all[q];
+            if (el.getAttribute("data-dshr-tok-total") !== null) continue;
+            if (el.children.length > 0) continue;
+            var t = String(el.textContent || "").trim();
+            if (t.indexOf("tok") === -1) continue;
             var mm = re.exec(t);
             if (!mm) continue;
             var v = parseInt(mm[1].replace(/,/g, ""), 10) || 0;
-            hits.push([m, t, v]);
+            hits.push([el, t, v]);
             total += v;
           }
           for (var i = 0; i < hits.length; i++) {
-            if (hits[i][2] >= 1000) hits[i][0].nodeValue = hits[i][1].replace(/[\d,]+(?=\s*tok)/, annoFmtTok(hits[i][2]));
+            if (hits[i][2] >= 1000) hits[i][0].textContent = annoFmtTok(hits[i][2]) + " tok";
           }
           if (hits.length && !pop.querySelector("[data-dshr-tok-total]")) {
             // Mimic the popover's own metric-item structure so label/value get
             // the native styles; put it in the GRID container as a full-width
             // row spanning both columns (inserting into one cell squeezed and
             // word-wrapped the label, user: "不太协调").
-            var valNode = hits[hits.length - 1][0].parentElement;
-            var item = valNode.parentElement;
+            var item = hits[hits.length - 1][0].parentElement;
             var grid = item.parentElement;
             var row = document.createElement("div");
             row.setAttribute("data-dshr-tok-total", "1");

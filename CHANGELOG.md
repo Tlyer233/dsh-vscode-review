@@ -13,6 +13,11 @@
 - 旧 Enter 拦截仅在**无 sendSession 的老 dsh** 上兜底(`window.__dshrSendWrapped` 在场即让位)。slash 直通/pill 追加/75s 超时自发语义原样搬进 gate。日志 `[send] sendSession gate installed (client 2.1.1)` 为启用铁证。
 - Windows `install.ps1` 移植到 2.1.0 规格:真实版本号(旧脚本硬编码 0.1.0!)、`%APPDATA%\Code\argv.json`(Windows 真位置,旧脚本只写 ~/.vscode)、CDP 9223、node_modules 拷贝(堆桥依赖 ws,旧脚本漏拷=装了即废)、remote.extensionKind=ui、tgz 版本钉死。install.sh 同步补 remote.extensionKind。三件套统一 v2.1.0 发 GitHub Release(assets: 插件 tgz + 扩展 vsix)。
 
+## 2.1.3/2.1.4:Total 行美观化 + 修 React 拆分文本节点导致的格式化失灵(2026-11-02)
+
+- 2.1.3:Total 行从"塞进右列格子"改为 **grid 全宽独立行**(`grid-column:1/-1`),标签继承原生字号,值右对齐一行放下——修用户实拍的"(in + out)换行挤压不协调"。
+- 2.1.4:真页面复验发现数字被 React 拆成两个文本节点("23,724"+" tok"),单节点整段正则落空(ego 探针一度被聊天页脚的"Usage 60.3K tok"假阳性骗过,raw 正则 {7,} 也漏判 6 位带逗号数)。改为**叶元素级匹配**(无子元素、textContent 整段匹配)+ textContent 整体重写,scoped observer 每次 React 提交后自动补刷。ego 自截终验:`23.7K/61.3K/1.1K tok` + `Total (in + out) 86.2K tok` 全绿,raw 计数 0。
+
 ## 2.1.2 客户端:context 统计浮层 K/M 单位 + Total(in+out) 行(2026-11-02)
 
 上游 dsh-client-ui-chat 的 "of context used" 浮层把 token 打成 `576,167,879 tok` 难读;cordis.patch.yml 只能注册插件不能改上游源码 → 我们插件做**事件驱动修饰**:点 context 钮时把 `N,NNN… tok` 文本节点重写为 K/M,并追加 Total(输入+输出)合计行;浮层存活期挂**局部** MutationObserver(React 活刷新会冲掉一次性改写),浮层断开即 disconnect——零定时器,零全局轮询(用户令:别轮询)。
