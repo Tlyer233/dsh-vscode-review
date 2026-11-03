@@ -51,6 +51,14 @@ $DSH_HOME/review/shadow/
   pending/<wbHash>.json     # 记录文件的版本号
 ```
 
+## VS Code 布局小技巧:破解 Chat 视图"独立不给分组"
+
+(2026-11-03 实得;VS Code 1.144.1 + 内置 Copilot 0.72.0。Chat 视图默认被核心锁成独立栈,直接拖不入组。)
+
+1. 把 **Terminal**(底部面板标签)拖进辅助侧栏,与 Chat **并列**占位;
+2. Terminal 落位后,Chat 旁会**裂出"二级"分组**;
+3. 此时 **Chat 解锁,随便拖**——和 Outline 等同级成组均可;Terminal 用完拖回底部即可。
+
 ## License
 
 MIT
