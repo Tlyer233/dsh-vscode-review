@@ -215,10 +215,25 @@ function activate(context) {
   // show the view). Previously a no-op (never registered), so "jump back to dsh"
   // silently failed.
   context.subscriptions.push(vscode.commands.registerCommand('dshReview.dshWebview.focus', async () => {
-    try { await vscode.commands.executeCommand('workbench.view.dsh') } catch (e) { /* noop */ }
+    // (2.1.3) 'workbench.view.dsh' is NOT the real id for a secondarySidebar
+    // container — the canonical one is 'workbench.view.extension.dsh'; the old
+    // throw was swallowed, so "open/toggle dsh" silently did nothing in
+    // windows where the part/view had been hidden. Chain now: open container →
+    // (part hidden?) expand auxiliary bar and retry → last resort view.show.
+    const tries = ['workbench.view.extension.dsh', 'workbench.view.dsh']
+    let ok = false
+    for (const id of tries) {
+      try { await vscode.commands.executeCommand(id); ok = true; break } catch (e) { /* next */ }
+    }
+    if (!ok) {
+      try { await vscode.commands.executeCommand('workbench.action.toggleAuxiliaryBar') } catch (e) { /* noop */ }
+      for (const id of tries) {
+        try { await vscode.commands.executeCommand(id); ok = true; break } catch (e) { /* next */ }
+      }
+    }
     const v = dshState.dshView
     if (v && typeof v.show === 'function') {
-      try { v.show(false) } catch (e) { /* noop */ }
+      try { v.show(!ok) } catch (e) { /* noop */ }
     }
   }))
 
