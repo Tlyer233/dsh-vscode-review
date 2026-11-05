@@ -627,7 +627,7 @@ async function annoPullState() {
   const driver = dshState.annoDriver
   if (!driver) return
   if (!(await copilotWidgetRendered())) return
-  const raw = await driver.eval('window.__dshAnnoWb && window.__dshAnnoWb.getState()')
+  const raw = await driver.readState()
   if (typeof raw === 'string' && raw) {
     try {
       const parsed = JSON.parse(raw)
@@ -1704,7 +1704,7 @@ async function annoSendSync(req) {
       await waitForWidgetRendered(2500)
       chips = annoCurrentChips.map((c) => ({ name: c.name, kind: c.kind || 'element', text: c.text || '' }))
     } else {
-      const raw = await driver.eval('window.__dshAnnoWb && window.__dshAnnoWb.getState()')
+      const raw = await driver.readState()
       let parsed = null
       try { parsed = (typeof raw === 'string' && raw) ? JSON.parse(raw) : null } catch (e) { parsed = null }
       if (!parsed) {
@@ -1861,7 +1861,7 @@ async function annoSendSync(req) {
         log.appendLine('[trump] clear: ' + clr + ' (background)')
         const late = await waitForChipBeacon(1000)
         if (!late) return
-        const rawL = await driver.eval('window.__dshAnnoWb && window.__dshAnnoWb.getState()')
+        const rawL = await driver.readState()
         let cL = []
         try { const pL = JSON.parse(rawL); cL = pL.chips || [] } catch (e) { /* ignore */ }
         if (!cL.length) return
@@ -1968,7 +1968,7 @@ function annoMirrorOnState(chips, lines, log) {
         // Verify the widget is now empty.
         await new Promise((r) => setTimeout(r, 250))
         if (await copilotWidgetRendered() && driver) {
-          const raw2 = await driver.eval('window.__dshAnnoWb && window.__dshAnnoWb.getState()')
+          const raw2 = await driver.readState()
           if (typeof raw2 === 'string' && raw2) {
             try {
               const p2 = JSON.parse(raw2)

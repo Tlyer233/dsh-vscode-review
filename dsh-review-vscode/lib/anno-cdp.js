@@ -282,6 +282,34 @@ class AnnoDriver {
   }
 
   /**
+   * (2.1.11) SELF-HEALING STATE READ. The page can be rebuilt under us
+   * (chat re-render / navigations we failed to catch) wiping
+   * window.__dshAnnoWb — every read then returns null and sends silently
+   * carry nothing (caught live 14:19: workbench NO-OBS while 2 real chips
+   * sat in a visible container). Instead of betting on why it died: before
+   * EVERY read, check presence and re-inject the same idempotent observer
+   * source if missing. Dead a thousand times does not matter — alive at
+   * read time is all that matters.
+   * @returns {Promise<any>} getState() value (string JSON) or null
+   */
+  async readState() {
+    if (!this.cdp) return null
+    try {
+      const chk = await this.cdp.send('Runtime.evaluate', { expression: '!!(window.__dshAnnoWb && window.__dshAnnoWb.getState)', returnByValue: true })
+      const alive = chk && chk.result && chk.result.result && chk.result.result.value === true
+      if (!alive) {
+        const inj = await this.cdp.send('Runtime.evaluate', { expression: observerSource(), returnByValue: true })
+        this.log('observer self-heal: was DEAD -> re-inject ' + String((inj && inj.result && inj.result.value) || '?').slice(0, 40))
+      }
+      const r = await this.cdp.send('Runtime.evaluate', { expression: 'window.__dshAnnoWb && window.__dshAnnoWb.getState()', returnByValue: true })
+      return (r && r.result) ? r.result.value : null
+    } catch (e) {
+      this.log('observer self-heal read failed: ' + ((e && e.message) || e))
+      return null
+    }
+  }
+
+  /**
    * Click the ✕ of the Copilot element chip named `name`, truly triggering the
    * native deletion. @param {string} name e.g. "div#count"
    * @returns {Promise<string>} "clicked:<name>" | "not-found:<name>" | ...
