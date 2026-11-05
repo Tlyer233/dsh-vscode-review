@@ -7,9 +7,13 @@
  * talks to the workbench over CDP (VS Code is launched with
  * --remote-debugging-port=9223 by install.sh). This module:
  *   1. Finds THIS window's workbench target: the dsh composer webview (matched
- *      by its host:port) lives inside a vscode-webview iframe whose parent is
- *      the workbench page. Walking parentId up to the vscode-file page scopes
- *      us to the right window (not a sibling SSH window).
+ *      by the per-window `_dshVscode` boot id carried in its URL) lives inside
+ *      a vscode-webview iframe whose parent is the workbench page. Walking
+ *      parentId up to the vscode-file page scopes us to the right window (not a
+ *      sibling SSH window). (2.1.14) host:port was the old key and is NOT
+ *      unique across SSH windows — two windows behind one forwarded port share
+ *      it, so each window's observer landed in the other's page and the
+ *      sending window's dock stayed empty (send shipped without the text).
  *   2. Injects the workbench-side observer (anno-observer.js) — event-driven
  *      MutationObserver, no polling.
  *   3. Captures the observer's console beacons (Runtime.consoleAPICalled) and
@@ -26,6 +30,12 @@ const { observerSource } = require('./anno-observer.js')
 const PREFIX = '__DSH_ANNO_WB__'
 const MAX_RETRY = 5
 const RETRY_MS = 1000
+// (2.1.14) After the fast budget, keep trying slowly instead of dying: an SSH
+// window may restore the dsh view (and thus create its iframe) long after the
+// extension activated. Giving up permanently was a real failure mode
+// ("no workbench ... giving up after 5 retries" → consumers return 'no-driver'
+// → send ships without the annotation text).
+const SLOW_RETRY_MS = 15000
 
 /** Minimal WebSocket CDP client (global WebSocket; Node 21+ / modern Electron). */
 class CDP {
@@ -94,22 +104,46 @@ async function listTargets(port) {
 }
 
 /**
- * Find the workbench (vscode-file page) that owns the dsh composer at hostPort.
+ * Find the workbench (vscode-file page) that owns THIS window's dsh composer.
+ *
+ * (2.1.14) Identity is the per-window `_dshVscode` boot id, not host:port.
+ * Two SSH windows behind one forwarded port carry the SAME host:port (e.g.
+ * both "100.85.98.34:3082" for SSH:3080), so the old host match took the
+ * first iframe and injected every window's observer into a sibling window's
+ * page: the sibling's dock stayed empty and its send lost the annotation text.
+ *
+ * Ambiguity fails closed (returns null → retry), never guesses a window.
+ *
  * @param {object[]} targets
  * @param {string} hostPort e.g. "127.0.0.1:3081"
+ * @param {string} [bootId] this window's `_dshVscode` value
  * @returns {object|null}
  */
-function findWorkbenchForDsh(targets, hostPort) {
+function findWorkbenchForDsh(targets, hostPort, bootId) {
   if (!hostPort) return null
   const byId = new Map(targets.map((t) => [t.id, t]))
-  let dshTarget = null
+  const frames = []
   for (const t of targets) {
     if (t.type !== 'iframe') continue
     const url = String(t.url || '')
     if (url.indexOf('http') !== 0) continue
-    let host
-    try { host = new URL(url).host } catch { continue }
-    if (host === hostPort) { dshTarget = t; break }
+    let u
+    try { u = new URL(url) } catch { continue }
+    if (u.host !== hostPort) continue
+    frames.push({ target: t, id: u.searchParams.get('_dshVscode') || '' })
+  }
+  let dshTarget = null
+  if (bootId) {
+    for (const f of frames) { if (f.id === bootId) { dshTarget = f.target; break } }
+    // Some proxy stripped the query? Accept the legacy path ONLY when exactly
+    // one candidate exists -- two candidates mean sibling windows, and picking
+    // one is the hijack we are fixing.
+    if (!dshTarget) {
+      const plain = frames.filter((f) => !f.id)
+      if (frames.length === 1 && plain.length === 1) dshTarget = plain[0].target
+    }
+  } else if (frames.length === 1) {
+    dshTarget = frames[0].target
   }
   if (!dshTarget) return null
   let cur = dshTarget
@@ -127,6 +161,7 @@ function findWorkbenchForDsh(targets, hostPort) {
  *   log: (s: string) => void,
  *   cdpPort?: number,
  *   getDshHostPort: () => Promise<string>,
+ *   getDshBootId?: () => string | Promise<string>,
  *   onState: (chips: object[], lines: object[]) => void,
  *   onOpened?: () => void,
  * }} opts
@@ -136,6 +171,7 @@ class AnnoDriver {
     this.log = opts.log || (() => {})
     this.cdpPort = opts.cdpPort || 9223
     this.getDshHostPort = opts.getDshHostPort || (async () => '')
+    this.getDshBootId = opts.getDshBootId || (() => '')
     this.onState = opts.onState || (() => {})
     this.onOpened = opts.onOpened || (() => {})
     this.cdp = null
@@ -163,9 +199,11 @@ class AnnoDriver {
       return false
     }
     const hostPort = await this.getDshHostPort()
-    const wb = findWorkbenchForDsh(targets, hostPort)
+    let bootId = ''
+    try { bootId = String((await this.getDshBootId()) || '') } catch (e) { bootId = '' }
+    const wb = findWorkbenchForDsh(targets, hostPort, bootId)
     if (!wb) {
-      this.log('no workbench for dsh ' + (hostPort || '?') + ' (targets=' + targets.length + ')')
+      this.log('no workbench for dsh ' + (hostPort || '?') + ' boot=' + (bootId || '?') + ' (targets=' + targets.length + ')')
       this._scheduleRetry()
       return false
     }
@@ -184,21 +222,24 @@ class AnnoDriver {
     await cdp.send('Runtime.enable')
     cdp.on('Runtime.consoleAPICalled', (params) => this._onConsole(params))
     const r = await cdp.send('Runtime.evaluate', { expression: observerSource(), returnByValue: true })
-    this.log('observer inject → ' + ((r && r.result && r.result.value) || 'failed') + ' | hostPort=' + (hostPort || '?') + ' target=' + wb.id + ' win=' + (this.winTitle || 'unknown'))
+    this.log('observer inject → ' + ((r && r.result && r.result.value) || 'failed') + ' | hostPort=' + (hostPort || '?') + ' boot=' + (bootId || '?') + ' target=' + wb.id + ' win=' + (this.winTitle || 'unknown'))
     return true
   }
 
   _scheduleRetry() {
     if (this.closing || this._retryTimer) return
-    if (this.retryCount >= MAX_RETRY) {
-      this.log('giving up after ' + MAX_RETRY + ' retries (CDP/workbench unavailable)')
-      return
+    // (2.1.14) Fast budget, then slow retry — a driver that never attached can
+    // still come alive when the window's dsh view finally appears.
+    const slow = this.retryCount >= MAX_RETRY
+    if (slow && !this._slowWarned) {
+      this._slowWarned = true
+      this.log('no workbench after ' + MAX_RETRY + ' fast retries — slow retry every ' + Math.round(SLOW_RETRY_MS / 1000) + 's (not giving up)')
     }
     this.retryCount++
     this._retryTimer = setTimeout(() => {
       this._retryTimer = null
       if (!this.closing) this._attach().catch((e) => this.log('re-attach failed: ' + ((e && e.message) || e)))
-    }, RETRY_MS)
+    }, slow ? SLOW_RETRY_MS : RETRY_MS)
   }
 
   _onWsClose() {

@@ -9,6 +9,7 @@ const { startPendingSync } = require('./lib/pending-sync.js')
 const {
   setLog, setupDshBrowser, sendRefsToDsh, sendAnnoDock, state: dshState, setFrameBaseUrl, reloadDshWebview,
   dshComposerHostPort,
+  dshComposerBootId,
 } = require('./lib/dsh-browser.js')
 const { AnnoDriver } = require('./lib/anno-cdp.js')
 const annoHeap = require('./lib/anno-heap.js')
@@ -122,6 +123,8 @@ function activate(context) {
         log: (msg) => log.appendLine('[anno] ' + msg),
         cdpPort: 9223,
         getDshHostPort: dshComposerHostPort,
+        // (2.1.14) per-window claim key: two SSH windows share host:port
+        getDshBootId: dshComposerBootId,
         onState: (chips, lines) => { annoWidgetBeaconed(); annoMirrorOnState(chips, lines, log); annoResyncIfOn(chips, lines, log) },
         // (0.1.119) 打开即回 (user's "0.0000000001ms"): the moment Copilot
         // opens, return to dsh — no debounce. Exception: while annoSendSync is

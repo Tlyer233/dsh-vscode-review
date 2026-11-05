@@ -548,6 +548,21 @@ function readOsClipboardImage() {
   return readLinuxClipboardImage()
 }
 
+// (2.1.14) Per-window identity for the sidebar iframe URL. One extension host
+// process = one VS Code window, so a module-level id is unique across windows.
+// The annotation CDP driver claims THIS window's workbench by this id; host:port
+// is shared by two SSH windows behind one forwarded port and used to cross-wire
+// their observers. Stable for the life of the window (not per html build), and
+// `_t` still busts the frame cache on every rewrite.
+const DSH_BOOT_ID = Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
+
+/**
+ * @returns {string} stable per-window `_dshVscode` boot id (see DSH_BOOT_ID).
+ */
+function dshComposerBootId() {
+  return DSH_BOOT_ID
+}
+
 /**
  * @param {string} url
  * @param {{ overlay?: 'hidden' | 'offline' | 'restarting', deferFrame?: boolean }} [opts]
@@ -557,7 +572,7 @@ function dshWebviewHtml(url, opts) {
   const u = String(url || 'http://127.0.0.1:3080')
   const safe = u.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;')
   const chrome = normalizeChrome((opts && opts.chrome) || iframeChrome)
-  const src = safe + (u.indexOf('?') >= 0 ? '&' : '?') + '_dshVscode=' + Date.now() + '&' + chromeQuery(chrome)
+  const src = safe + (u.indexOf('?') >= 0 ? '&' : '?') + '_dshVscode=' + DSH_BOOT_ID + '&_t=' + Date.now() + '&' + chromeQuery(chrome)
   const overlayKind = opts && opts.overlay
   const deferFrame = overlayKind === 'offline' || overlayKind === 'restarting' || !!(opts && opts.deferFrame)
   const overlayClass = overlayKind === 'offline' || overlayKind === 'restarting' ? '' : ' hidden'
@@ -1551,4 +1566,5 @@ module.exports = {
   setReviewOpener,
   scopePaths,
   dshComposerHostPort,
+  dshComposerBootId,
 }
