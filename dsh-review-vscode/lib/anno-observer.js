@@ -41,7 +41,7 @@ function observerSource() {
 
   // ---- idempotency: re-arm on re-injection, never duplicate observers ----
   if (window.__dshAnnoWb && typeof window.__dshAnnoWb.reinstall === 'function') {
-    if (window.__dshAnnoWb._version === 4) {
+    if (window.__dshAnnoWb._version === 5) {
       window.__dshAnnoWb.reinstall();
       return 'reinstalled';
     }
@@ -67,7 +67,12 @@ function observerSource() {
   // and reported 0 chips while the real anno sat in another container (ssh
   // 13:40: beacon chips=[] vs DOM probe chips=1). Scan all visible ones.
   function chipContainers() {
-    var all = document.querySelectorAll('.chat-attachments-container');
+    // (2.1.10) SESSIONS-tab input keeps its attachments in
+    // .sessions-chat-attached-context (vscode newChatInput.ts: that node
+    // hosts the SAME .chat-attached-context-attachment renderer). Old class
+    // alone = chips invisible to us in a sessions-style panel (ssh 14:08:
+    // DOM probe 2 chips vs observer chips=0).
+    var all = document.querySelectorAll('.chat-attachments-container, .sessions-chat-attached-context');
     var vis = [];
     for (var i = 0; i < all.length; i++) {
       var el = all[i];
@@ -80,7 +85,7 @@ function observerSource() {
   }
   function chipContainer() { var c = chipContainers(); return c.length ? c[0] : null; }
   function inputEditors() {
-    var all = document.querySelectorAll('.interactive-input-editor');
+    var all = document.querySelectorAll('.interactive-input-editor, .new-chat-input-area .monaco-editor');
     var vis = [];
     for (var i = 0; i < all.length; i++) {
       var el = all[i];
@@ -256,11 +261,11 @@ function observerSource() {
         var added = m.addedNodes || [];
         for (var j = 0; j < added.length; j++) {
           var n = added[j];
-          if (n.nodeType === 1 && (n.classList && (n.classList.contains('chat-attachments-container') || n.classList.contains('interactive-input-part')))) {
+          if (n.nodeType === 1 && (n.classList && (n.classList.contains('chat-attachments-container') || n.classList.contains('sessions-chat-attached-context') || n.classList.contains('interactive-input-part')))) {
             attachWidgetObservers();
             return;
           }
-          if (n.nodeType === 1 && n.querySelector && n.querySelector('.chat-attachments-container')) {
+          if (n.nodeType === 1 && n.querySelector && n.querySelector('.chat-attachments-container, .sessions-chat-attached-context')) {
             attachWidgetObservers();
             return;
           }
@@ -328,7 +333,7 @@ function observerSource() {
     getState: getState,
     deleteChip: deleteChip,
     reinstall: reinstall,
-    _version: 4
+    _version: 5
   };
 
   startDocObserver();
