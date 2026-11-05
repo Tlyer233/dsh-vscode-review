@@ -610,7 +610,6 @@ function scheduleReturnToDsh(delayMs) {
 /** Pull the live Copilot chip+line state via CDP and mirror it (dock + inline). */
 async function annoPullState() {
   const driver = dshState.annoDriver
-  if (driver && driver.ensure) { try { await driver.ensure() } catch (e) { /* stay degraded */ } }
   if (!driver) return
   if (!(await copilotWidgetRendered())) return
   const raw = await driver.eval('window.__dshAnnoWb && window.__dshAnnoWb.getState()')
@@ -668,7 +667,6 @@ async function flashCopilot() {
 /** Whether the Copilot chat widget is currently rendered in the workbench DOM. */
 async function copilotWidgetRendered() {
   const driver = dshState.annoDriver
-  if (driver && driver.ensure) { try { await driver.ensure() } catch (e) { /* stay degraded */ } }
   if (!driver) return false
   const v = await driver.eval('!!document.querySelector(".chat-attachments-container")')
   return v === true
@@ -682,7 +680,6 @@ async function copilotWidgetRendered() {
  */
 async function annoResync() {
   const driver = dshState.annoDriver
-  if (driver && driver.ensure) { try { await driver.ensure() } catch (e) { /* stay degraded */ } }
   if (!driver) return
   // The fresh client has an empty composer + empty dock: every known chip must
   // be fully re-mirrored (dock + inline), so drop the bookkeeping and let the
@@ -717,7 +714,6 @@ async function annoResync() {
  */
 async function realDeleteMiscChips() {
   const driver = dshState.annoDriver
-  if (driver && driver.ensure) { try { await driver.ensure() } catch (e) { /* stay degraded */ } }
   if (!driver) return 0
   try {
     const raw = await driver.eval(
@@ -752,7 +748,6 @@ async function realDeleteChip(name) {
 async function realDeleteChipInner(name, attempt, flashed) {
   attempt = attempt || 0
   const driver = dshState.annoDriver
-  if (driver && driver.ensure) { try { await driver.ensure() } catch (e) { /* stay degraded */ } }
   if (!driver) return 'no-driver'
   let res = 'no-cdp'
   try { res = await driver.deleteChip(name) } catch (e) { res = 'error:' + String((e && e.message) || e) }
@@ -785,7 +780,6 @@ async function realDeleteChipInner(name, attempt, flashed) {
 /** Clear the Copilot chat input (Monaco editor) via CDP keyboard events. */
 async function clearCopilotInput() {
   const driver = dshState.annoDriver
-  if (driver && driver.ensure) { try { await driver.ensure() } catch (e) { /* stay degraded */ } }
   if (!driver || !driver.cdp) return 'no-driver'
   try {
     // (0.1.127) PRIMARY clear: in-page execCommand on the focused editor.
@@ -845,7 +839,6 @@ async function clearCopilotInput() {
  */
 async function clearCopilotInputVerified(log, tag) {
   const driver = dshState.annoDriver
-  if (driver && driver.ensure) { try { await driver.ensure() } catch (e) { /* stay degraded */ } }
   const readInput = '(function(){var ed=document.querySelector(".interactive-input-editor");if(!ed)return "no-editor";var out="";var ls=ed.querySelectorAll(".view-line");for(var i=0;i<ls.length;i++){var t=(ls[i].textContent||"").trim();if(t)out+=t+" | ";}return out;})()'
   let r = await clearCopilotInput()
   let txt = driver ? await driver.eval(readInput) : 'no-driver'
@@ -945,7 +938,6 @@ async function dumpCopilotDom(driver, log) {
 async function copilotChipFullContexts(onlyIdx) {
   const log = dshState.logChannel
   const driver = dshState.annoDriver
-  if (driver && driver.ensure) { try { await driver.ensure() } catch (e) { /* stay degraded */ } }
   if (!driver || !driver.cdp) return []
   const listRaw = await driver.eval(
     '(() => { var out = []; var chips = document.querySelectorAll(".chat-attached-context-attachment");' +
@@ -1655,7 +1647,6 @@ async function annoSendSync(req) {
   annoSendBusy = true
   const log = dshState.logChannel
   const driver = dshState.annoDriver
-  if (driver && driver.ensure) { try { await driver.ensure() } catch (e) { /* stay degraded */ } }
   if (!driver) { // (0.1.180) answer + clear busy on EVERY exit
     annoSendBusy = false
     annoPostPrepared(req, '')
@@ -1940,7 +1931,6 @@ function annoMirrorOnState(chips, lines, log) {
     annoCurrentChips = []
     void (async () => {
       const driver = dshState.annoDriver
-  if (driver && driver.ensure) { try { await driver.ensure() } catch (e) { /* stay degraded */ } }
       // Freeze the flash-back while we work on the widget (else it hides mid-read).
       annoFreezeReturn = true
       try {
