@@ -122,6 +122,8 @@ function activate(context) {
         log: (msg) => log.appendLine('[anno] ' + msg),
         cdpPort: 9223,
         getDshHostPort: dshComposerHostPort,
+        // (2.1.5) per-window unique id stamped into the dsh iframe src
+        getDshBootTs: () => String(dshState.dshBootTs || ''),
         onState: (chips, lines) => { annoWidgetBeaconed(); annoMirrorOnState(chips, lines, log); annoResyncIfOn(chips, lines, log) },
         // (0.1.119) 打开即回 (user's "0.0000000001ms"): the moment Copilot
         // opens, return to dsh — no debounce. Exception: while annoSendSync is

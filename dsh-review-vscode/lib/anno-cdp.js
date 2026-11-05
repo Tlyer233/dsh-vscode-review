@@ -99,10 +99,24 @@ async function listTargets(port) {
  * @param {string} hostPort e.g. "127.0.0.1:3081"
  * @returns {object|null}
  */
-function findWorkbenchForDsh(targets, hostPort) {
-  if (!hostPort) return null
+function findWorkbenchForDsh(targets, hostPort, bootTs) {
+  if (!hostPort && !bootTs) return null
   const byId = new Map(targets.map((t) => [t.id, t]))
   let dshTarget = null
+  // (2.1.5) host:port ALONE cannot identify the owning window when TWO
+  // remote windows proxy the same host (two SSH windows → both
+  // 100.85.98.34:3082): the first driver grabbed the other window's
+  // workbench and the real window stayed driverless ("Copilot anno not
+  // carried on send"). The iframe src carries a per-window unique
+  // `_dshVscode=<ts>` — match that first, host only as fallback.
+  if (bootTs) {
+    const needle = '_dshVscode=' + bootTs
+    for (const t of targets) {
+      if (t.type !== 'iframe') continue
+      if (String(t.url || '').indexOf(needle) !== -1) { dshTarget = t; break }
+    }
+  }
+  if (!dshTarget && hostPort) {
   for (const t of targets) {
     if (t.type !== 'iframe') continue
     const url = String(t.url || '')
@@ -110,6 +124,7 @@ function findWorkbenchForDsh(targets, hostPort) {
     let host
     try { host = new URL(url).host } catch { continue }
     if (host === hostPort) { dshTarget = t; break }
+  }
   }
   if (!dshTarget) return null
   let cur = dshTarget
@@ -161,7 +176,9 @@ class AnnoDriver {
       return false
     }
     const hostPort = await this.getDshHostPort()
-    const wb = findWorkbenchForDsh(targets, hostPort)
+    let bootTs = ''
+    try { bootTs = this.getDshBootTs ? String(await this.getDshBootTs() || '') : '' } catch (e) { bootTs = '' }
+    const wb = findWorkbenchForDsh(targets, hostPort, bootTs)
     if (!wb) {
       this.log('no workbench for dsh ' + (hostPort || '?') + ' (targets=' + targets.length + ')')
       this._scheduleRetry()
