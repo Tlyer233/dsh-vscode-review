@@ -199,6 +199,29 @@ class AnnoDriver {
     }, RETRY_MS)
   }
 
+  /**
+   * (2.1.4) Lazy revival. The 5-retry startup budget expires while an SSH
+   * window's dsh panel is still closed — the workbench host only exists AFTER
+   * the panel resolves, so a late user action (send Copilot anno) would find
+   * no driver and silently drop the annotation's full context
+   * (copilotChipFullContexts -> []). Any consumer calls ensure() before use:
+   * one attach attempt, throttled to 20s while detached. Returns true when a
+   * live CDP session exists afterwards.
+   * @returns {Promise<boolean>}
+   */
+  async ensure() {
+    if (this.cdp) return true
+    const now = Date.now()
+    if (this._lastEnsureAt && now - this._lastEnsureAt < 20000) return false
+    this._lastEnsureAt = now
+    this.retryCount = 0
+    if (this._retryTimer) { clearTimeout(this._retryTimer); this._retryTimer = null }
+    try { return await this._attach() } catch (e) {
+      this.log('ensure attach failed: ' + ((e && e.message) || e))
+      return false
+    }
+  }
+
   _onWsClose() {
     if (this.closing) return
     this.cdp = null
