@@ -37,20 +37,11 @@ function observerSource() {
   var PREFIX = '__DSH_ANNO_WB__';
   var DEBOUNCE_MS = 120;
 
-  // (2.1.13) WINDOW IDENTITY IN EVERY LINE. Multi-window attribution was
-  // guesswork: the log says which exthost wrote a line, but NOT which workbench
-  // page the observer actually lives in (2.1.3 matches windows by host:port, and
-  // two SSH windows behind one forwarded port collide). document.title carries
-  // the folder plus the [SSH: host] suffix -> stamp it into every beacon and into
-  // getState(); the extension side echoes it into beacon / dock / send lines.
-  var WIN = '?';
-  try { WIN = String(document.title || '?').replace(/\s+/g, ' ').slice(0, 90); } catch (e) {}
-
   function beacon(o) { try { console.log(PREFIX + JSON.stringify(o)); } catch (e) {} }
 
   // ---- idempotency: re-arm on re-injection, never duplicate observers ----
   if (window.__dshAnnoWb && typeof window.__dshAnnoWb.reinstall === 'function') {
-    if (window.__dshAnnoWb._version === 3) {
+    if (window.__dshAnnoWb._version === 2) {
       window.__dshAnnoWb.reinstall();
       return 'reinstalled';
     }
@@ -134,7 +125,7 @@ function observerSource() {
     lastBeaconKey = key;
     // Diagnostic: timestamp + chip names so the extension log shows the exact
     // beacon sequence (which beacons have chips, which don't, and the timing).
-    beacon({ ev: 'state', win: WIN, chips: s.chips, lines: s.lines, t: Date.now() });
+    beacon({ ev: 'state', chips: s.chips, lines: s.lines, t: Date.now() });
   }
 
   function scheduleBeacon() {
@@ -197,7 +188,7 @@ function observerSource() {
     if (live && live !== attachedCont) {
       var wasNull = !attachedCont; // (0.1.117) none → some transition = panel opened
       attachWidgetObservers(); // re-arms + scheduleBeacon (immediate on count add)
-      if (wasNull) beacon({ ev: 'widget-opened', win: WIN, t: Date.now() });
+      if (wasNull) beacon({ ev: 'widget-opened', t: Date.now() });
       return;
     }
     var liveCount = live ? live.querySelectorAll('.chat-attached-context-attachment').length : 0;
@@ -243,7 +234,7 @@ function observerSource() {
   // ---- API exposed to the extension (called via CDP Runtime.evaluate) ----
   function getState() {
     var s = snapshot();
-    return JSON.stringify({ ev: 'state', win: WIN, chips: s.chips, lines: s.lines });
+    return JSON.stringify({ ev: 'state', chips: s.chips, lines: s.lines });
   }
 
   /**
@@ -274,18 +265,18 @@ function observerSource() {
     detachWidgetObservers();
     if (debounceTimer) { clearTimeout(debounceTimer); debounceTimer = null; }
     startDocObserver();
-    beacon({ ev: 'installed', win: WIN });
+    beacon({ ev: 'installed' });
   }
 
   window.__dshAnnoWb = {
     getState: getState,
     deleteChip: deleteChip,
     reinstall: reinstall,
-    _version: 3
+    _version: 2
   };
 
   startDocObserver();
-  beacon({ ev: 'installed', win: WIN });
+  beacon({ ev: 'installed' });
   return 'installed';
 })()
 `;

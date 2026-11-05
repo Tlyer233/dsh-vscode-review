@@ -9,7 +9,6 @@ const { startPendingSync } = require('./lib/pending-sync.js')
 const {
   setLog, setupDshBrowser, sendRefsToDsh, sendAnnoDock, state: dshState, setFrameBaseUrl, reloadDshWebview,
   dshComposerHostPort,
-  dshComposerBootId,
 } = require('./lib/dsh-browser.js')
 const { AnnoDriver } = require('./lib/anno-cdp.js')
 const annoHeap = require('./lib/anno-heap.js')
@@ -123,8 +122,6 @@ function activate(context) {
         log: (msg) => log.appendLine('[anno] ' + msg),
         cdpPort: 9223,
         getDshHostPort: dshComposerHostPort,
-        // (2.1.14) per-window claim key: two SSH windows share host:port
-        getDshBootId: dshComposerBootId,
         onState: (chips, lines) => { annoWidgetBeaconed(); annoMirrorOnState(chips, lines, log); annoResyncIfOn(chips, lines, log) },
         // (0.1.119) 打开即回 (user's "0.0000000001ms"): the moment Copilot
         // opens, return to dsh — no debounce. Exception: while annoSendSync is
@@ -1629,12 +1626,9 @@ async function annoPut(targetPath, content) {
     return lp
   }
 }
-function annoWinTag() {
-  try { return (dshState.annoDriver && dshState.annoDriver.winTitle) || 'unknown' } catch (e) { return 'unknown' }
-}
 async function annoSendSync(req) {
   dshState.log('[env] send window=' + (annoIsRemoteWindow() ? 'REMOTE(' + vscode.env.remoteName + ')' : 'LOCAL') +
-    ' | chips=' + annoCurrentChips.length + ' driver=' + (dshState.annoDriver ? 'yes' : 'NO') + ' busy=' + (annoSendBusy ? 'yes' : 'no') + ' heapOn=' + annoHeapOn() + ' win=' + annoWinTag())
+    ' | chips=' + annoCurrentChips.length + ' driver=' + (dshState.annoDriver ? 'yes' : 'NO') + ' busy=' + (annoSendBusy ? 'yes' : 'no') + ' heapOn=' + annoHeapOn())
   // (0.1.183) req numbers RESET on every client page load (annoPrepSeq starts
   // at 0 again) while this Set lived for the whole extension process: after a
   // refresh, req=1 was "already posted" forever -> blank sends hung the full
@@ -1891,7 +1885,7 @@ function annoMirrorOnState(chips, lines, log) {
   const changed = stateKey !== lastBeaconStateKey
   lastBeaconStateKey = stateKey
   if (changed) {
-    log.appendLine('[anno] beacon chips=[' + chips.map((c) => c.name).join(',') + '] lines=[' + lines.map((l) => l.ref).join(',') + '] win=' + annoWinTag())
+    log.appendLine('[anno] beacon chips=[' + chips.map((c) => c.name).join(',') + '] lines=[' + lines.map((l) => l.ref).join(',') + ']')
   }
   annoChipsBeaconed(chips.length) // (0.1.115) resolve empty-window waiters
   // (0.1.155) passive capture of freshly-seen non-baseline chips (read-only;

@@ -1,10 +1,3 @@
-## 2.1.14:多 ssh 窗认窗改按 `_dshVscode` 每窗唯一 id(2026-11-05)
-
-- **死因**:两扇 ssh 窗的 dsh 页 iframe 共用同一 host:port(`100.85.98.34:3082`,3080 同一个转发口),`findWorkbenchForDsh` 按 `host === hostPort` 取第一个匹配 → 后开窗把 observer 注进先开窗的 workbench,`window.__dshAnnoWb` 互相覆盖 → 你标注那扇窗自己的 dock 永远空 → 发送 gate 直通、`prepared posted 0 chars`。14:43 `win=` 日志双向亲证(5_261103 的进程报 ubuntu_handoff 的页标题,反之亦然)。
-- **修法**:`dsh-browser.js` 改为每窗唯一且窗口内稳定的 `_dshVscode`(模块级 id,`_t=` 仍负责每次重写的缓存破除),导出 `dshComposerBootId`;`anno-cdp.js` 先按该 id 精确认领,host 只在“唯一候选且无 id”时兜底,歧义一律 fail-closed 返回 null 重试;`extension.js` 把 id 喂给驱动。
-- **附带**:驱动不再“5 次重试后永久放弃”——快预算用尽转 15s 慢重试(ssh 窗 dsh 视图晚开时仍能自愈)。
-- **验证**:`CLAIM_TEST_OK` —— 双窗同 host:port 各自认领自己页面;未知 id、双候选空 id 均返回 null(不猜窗)。
-
 ## 2.0.50:busyEnter 改读 ctx.configForms + 3080 双进程 systemd 托管(2026-11-02)
 
 - **busyEnter 误读真身**(exa 挖到上游 `deepseek-harness` 源码实锤):web profile 服务器端**没有 settings 持久 provider**,`remote.settings.describe()` 永远只见默认值 queue;GUI 的 ComposerSubmissionPolicy 实际 adopt 的是**页内 `ctx.configForms.get("ui-conversation")`**。annoPromptMode 改同源读 configForms(describe 降为二级兜底)。`session.prompt(content,'queue'|'steer')` 语义与类型声明(`readonly running: boolean`)均获上游证实。
