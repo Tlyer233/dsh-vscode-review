@@ -60,7 +60,7 @@ const DUMP_IMAGE = `function(){ try {
 } catch (e) { return JSON.stringify({ err: e.message }); } }`
 
 /**
- * capture({ port, preferTitle, log }) ->
+ * capture({ port, targetId, preferTitle, log }) ->
  *   { entries: [{name,fullName,id,value,img(b64),imgLen,mime,dims,anc,attrs,inner}],
  *     images:  [{name,id,mime,b(b64),len}] }
  * Throws on any unmet precondition (no CDP, no target, parse failure) so the
@@ -71,10 +71,12 @@ async function capture(opts) {
   const log = (opts && opts.log) || { appendLine: () => {} }
   const port = (opts && opts.port) || 9223
   const prefer = (opts && opts.preferTitle) || ''
+  const targetId = (opts && opts.targetId) || ''
   const targets = await getTargets(port)
   const pages = targets.filter((x) => x.type === 'page' && String(x.url || '').indexOf('vscode-file') === 0)
   if (!pages.length) throw new Error('no workbench CDP target on ' + port)
-  const t = pages.find((p) => prefer && String(p.title || '').indexOf(prefer) !== -1) || pages[0]
+  const t = pages.find((p) => targetId && p.id === targetId) ||
+    pages.find((p) => prefer && String(p.title || '').indexOf(prefer) !== -1) || pages[0]
   const ws = new WebSocket(t.webSocketDebuggerUrl, { maxPayload: 256 * 1024 * 1024 })
   const handlers = {}
   let mid = 1

@@ -548,6 +548,16 @@ function readOsClipboardImage() {
   return readLinuxClipboardImage()
 }
 
+// One extension host = one VS Code window, so this id is unique per window and
+// stable across sidebar rebuilds. The annotation CDP driver claims its
+// workbench by it: host:port is shared by SSH windows behind one forwarded port.
+const DSH_BOOT_ID = Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
+
+/** @returns {string} this window's `_dshVscode` id (see DSH_BOOT_ID). */
+function dshComposerBootId() {
+  return DSH_BOOT_ID
+}
+
 /**
  * @param {string} url
  * @param {{ overlay?: 'hidden' | 'offline' | 'restarting', deferFrame?: boolean }} [opts]
@@ -557,7 +567,7 @@ function dshWebviewHtml(url, opts) {
   const u = String(url || 'http://127.0.0.1:3080')
   const safe = u.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;')
   const chrome = normalizeChrome((opts && opts.chrome) || iframeChrome)
-  const src = safe + (u.indexOf('?') >= 0 ? '&' : '?') + '_dshVscode=' + Date.now() + '&' + chromeQuery(chrome)
+  const src = safe + (u.indexOf('?') >= 0 ? '&' : '?') + '_dshVscode=' + DSH_BOOT_ID + '&_t=' + Date.now() + '&' + chromeQuery(chrome)
   const overlayKind = opts && opts.overlay
   const deferFrame = overlayKind === 'offline' || overlayKind === 'restarting' || !!(opts && opts.deferFrame)
   const overlayClass = overlayKind === 'offline' || overlayKind === 'restarting' ? '' : ' hidden'
@@ -1551,4 +1561,5 @@ module.exports = {
   setReviewOpener,
   scopePaths,
   dshComposerHostPort,
+  dshComposerBootId,
 }

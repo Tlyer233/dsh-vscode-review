@@ -26,6 +26,7 @@ const { observerSource } = require('./anno-observer.js')
 const PREFIX = '__DSH_ANNO_WB__'
 const MAX_RETRY = 5
 const RETRY_MS = 1000
+const SLOW_RETRY_MS = 15000
 
 /** Minimal WebSocket CDP client (global WebSocket; Node 21+ / modern Electron). */
 class CDP {
@@ -94,22 +95,35 @@ async function listTargets(port) {
 }
 
 /**
- * Find the workbench (vscode-file page) that owns the dsh composer at hostPort.
+ * Find the workbench (vscode-file page) that owns THIS window's dsh composer.
+ * Identity is the per-window `_dshVscode` id in the iframe URL; host:port is
+ * shared by SSH windows behind one forwarded port. Ambiguity returns null
+ * (caller retries) rather than guessing a sibling window.
  * @param {object[]} targets
  * @param {string} hostPort e.g. "127.0.0.1:3081"
+ * @param {string} [bootId] this window's `_dshVscode` value
  * @returns {object|null}
  */
-function findWorkbenchForDsh(targets, hostPort) {
+function findWorkbenchForDsh(targets, hostPort, bootId) {
   if (!hostPort) return null
   const byId = new Map(targets.map((t) => [t.id, t]))
-  let dshTarget = null
+  const frames = []
   for (const t of targets) {
     if (t.type !== 'iframe') continue
     const url = String(t.url || '')
     if (url.indexOf('http') !== 0) continue
-    let host
-    try { host = new URL(url).host } catch { continue }
-    if (host === hostPort) { dshTarget = t; break }
+    let u
+    try { u = new URL(url) } catch { continue }
+    if (u.host !== hostPort) continue
+    frames.push({ target: t, id: u.searchParams.get('_dshVscode') || '' })
+  }
+  let dshTarget = null
+  if (bootId) {
+    const mine = frames.find((f) => f.id === bootId)
+    if (mine) dshTarget = mine.target
+    else if (frames.length === 1 && !frames[0].id) dshTarget = frames[0].target
+  } else if (frames.length === 1) {
+    dshTarget = frames[0].target
   }
   if (!dshTarget) return null
   let cur = dshTarget
@@ -127,6 +141,7 @@ function findWorkbenchForDsh(targets, hostPort) {
  *   log: (s: string) => void,
  *   cdpPort?: number,
  *   getDshHostPort: () => Promise<string>,
+ *   getDshBootId?: () => string | Promise<string>,
  *   onState: (chips: object[], lines: object[]) => void,
  *   onOpened?: () => void,
  * }} opts
@@ -136,6 +151,7 @@ class AnnoDriver {
     this.log = opts.log || (() => {})
     this.cdpPort = opts.cdpPort || 9223
     this.getDshHostPort = opts.getDshHostPort || (async () => '')
+    this.getDshBootId = opts.getDshBootId || (() => '')
     this.onState = opts.onState || (() => {})
     this.onOpened = opts.onOpened || (() => {})
     this.cdp = null
@@ -161,9 +177,11 @@ class AnnoDriver {
       return false
     }
     const hostPort = await this.getDshHostPort()
-    const wb = findWorkbenchForDsh(targets, hostPort)
+    let bootId = ''
+    try { bootId = String((await this.getDshBootId()) || '') } catch { bootId = '' }
+    const wb = findWorkbenchForDsh(targets, hostPort, bootId)
     if (!wb) {
-      this.log('no workbench for dsh ' + (hostPort || '?') + ' (targets=' + targets.length + ')')
+      this.log('no workbench for dsh ' + (hostPort || '?') + ' boot=' + (bootId || '?') + ' (targets=' + targets.length + ')')
       this._scheduleRetry()
       return false
     }
@@ -182,21 +200,23 @@ class AnnoDriver {
     await cdp.send('Runtime.enable')
     cdp.on('Runtime.consoleAPICalled', (params) => this._onConsole(params))
     const r = await cdp.send('Runtime.evaluate', { expression: observerSource(), returnByValue: true })
-    this.log('observer inject → ' + ((r && r.result && r.result.value) || 'failed'))
+    this.log('observer inject → ' + ((r && r.result && r.result.value) || 'failed') + ' | boot=' + (bootId || '?') + ' target=' + wb.id + ' title=' + String(wb.title || '').slice(0, 80))
     return true
   }
 
   _scheduleRetry() {
     if (this.closing || this._retryTimer) return
-    if (this.retryCount >= MAX_RETRY) {
-      this.log('giving up after ' + MAX_RETRY + ' retries (CDP/workbench unavailable)')
-      return
+    // An SSH window may restore its dsh view long after activation: after the
+    // fast budget keep retrying slowly instead of leaving the driver dead.
+    const slow = this.retryCount >= MAX_RETRY
+    if (slow && this.retryCount === MAX_RETRY) {
+      this.log('no workbench after ' + MAX_RETRY + ' fast retries — retrying every ' + Math.round(SLOW_RETRY_MS / 1000) + 's')
     }
     this.retryCount++
     this._retryTimer = setTimeout(() => {
       this._retryTimer = null
       if (!this.closing) this._attach().catch((e) => this.log('re-attach failed: ' + ((e && e.message) || e)))
-    }, RETRY_MS)
+    }, slow ? SLOW_RETRY_MS : RETRY_MS)
   }
 
   _onWsClose() {

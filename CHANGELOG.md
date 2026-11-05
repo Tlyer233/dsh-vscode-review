@@ -1,3 +1,12 @@
+## ext 2.1.15:ssh 窗"Copilot 有标注、dsh 发送带不上"时好时坏 — 根治(2026-11-05)
+
+基于 2.1.3,最小改动。
+
+- **时好时坏的根因(15:24-15:27 日志实锤)**:客户端发送闸门只看 dock(`annoDockChips.length === 0` → 直接原样发出,不问扩展)。而扩展 `annoMirrorOnState` 在**更新 `annoCurrentChips` 之前**就预留文件、推 dock → dock 永远是**上一条** beacon 的状态。本该兜底的 `annoResyncIfOn` 在 0362da9(11-02)误删了 `const k = keys[i]`,一有新元素芯片就 `ReferenceError`,被 CDP 监听器的 try/catch 静默吞掉。结果:observer 分两条 beacon 报(先 `chips=[x] lines=[]` 再 `lines=[x]`)→ 第二条把 dock 补上 → **成功**;芯片和 `@x` 行同一条 beacon 到(`chips=[td] lines=[td]`)→ dock 停在 0 → **0 chars 发送**。和单窗/多窗无关,纯时序。
+- 修复:`annoCurrentChips` 移到预留/推 dock **之前**(恢复 0.1.115 注释"refreshed at beacon entry"的原意);`annoResyncIfOn` 补回 `const k`,并跳过 baseline 与进行中的预留;启动清理期间(`annoStartupCleanupRunning`)两条预留路径都不动遗留芯片(15:27 日志里遗留 `@span` 被误预留)。
+- **多窗口**:dsh iframe 的 `_dshVscode` 改为每窗固定 id(`DSH_BOOT_ID`,缓存破坏挪到 `_t`),`findWorkbenchForDsh` 按它认窗;同 host:port 多候选又对不上 id → 返回 null 重试,绝不猜。堆快照 `annoHeap.capture` 优先用驱动已认领的 `workbenchId`(原按文件夹名匹配标题,同项目双窗会串)。驱动 5 次快重试后转 15s 慢重试,不再永久放弃。
+- 排查手段:`no-undef` lint(eslint 9)能抓到这类 `node --check` 抓不到的未声明变量,旧 2.1.3 跑出 `'k' is not defined` ×2,新版 0 报错。
+
 ## 2.0.50:busyEnter 改读 ctx.configForms + 3080 双进程 systemd 托管(2026-11-02)
 
 - **busyEnter 误读真身**(exa 挖到上游 `deepseek-harness` 源码实锤):web profile 服务器端**没有 settings 持久 provider**,`remote.settings.describe()` 永远只见默认值 queue;GUI 的 ComposerSubmissionPolicy 实际 adopt 的是**页内 `ctx.configForms.get("ui-conversation")`**。annoPromptMode 改同源读 configForms(describe 降为二级兜底)。`session.prompt(content,'queue'|'steer')` 语义与类型声明(`readonly running: boolean`)均获上游证实。

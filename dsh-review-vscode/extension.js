@@ -9,6 +9,7 @@ const { startPendingSync } = require('./lib/pending-sync.js')
 const {
   setLog, setupDshBrowser, sendRefsToDsh, sendAnnoDock, state: dshState, setFrameBaseUrl, reloadDshWebview,
   dshComposerHostPort,
+  dshComposerBootId,
 } = require('./lib/dsh-browser.js')
 const { AnnoDriver } = require('./lib/anno-cdp.js')
 const annoHeap = require('./lib/anno-heap.js')
@@ -122,6 +123,7 @@ function activate(context) {
         log: (msg) => log.appendLine('[anno] ' + msg),
         cdpPort: 9223,
         getDshHostPort: dshComposerHostPort,
+        getDshBootId: dshComposerBootId,
         onState: (chips, lines) => { annoWidgetBeaconed(); annoMirrorOnState(chips, lines, log); annoResyncIfOn(chips, lines, log) },
         // (0.1.119) 打开即回 (user's "0.0000000001ms"): the moment Copilot
         // opens, return to dsh — no debounce. Exception: while annoSendSync is
@@ -411,6 +413,8 @@ let annoInitialRecorded = false
 let annoCurrentChips = []
 /** One-shot: first beacon after startup clears all leftover Copilot chips. */
 let annoStartupCleanup = true
+/** True while that startup cleanup is deleting leftovers (no reservations). */
+let annoStartupCleanupRunning = false
 /**
  * Return-to-dsh coordination. Flashing the Copilot panel (for a delete or a
  * resync) hides the dsh view; we must switch back — but ONLY after the state
@@ -1159,7 +1163,8 @@ async function annoHeapCaptureNow() {
   const log = dshState.logChannel
   let prefer = ''
   try { prefer = (vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders[0] && vscode.workspace.workspaceFolders[0].name) || '' } catch (e) { /* noop */ }
-  return annoHeap.capture({ preferTitle: prefer, log })
+  const targetId = (dshState.annoDriver && dshState.annoDriver.workbenchId) || ''
+  return annoHeap.capture({ targetId, preferTitle: prefer, log })
 }
 async function annoHeapPairFill(chips, keysSend, data) {
   const log = dshState.logChannel
@@ -1445,15 +1450,18 @@ let annoResyncDone = ''
 function annoResyncIfOn(chips, lines, log) {
   if (!annoFeatureOn()) { annoResyncDone = ''; return }
   if (!dshState.annoDriver) return
+  if (annoStartupCleanup || annoStartupCleanupRunning) return
   const keys = annoChipKeys(chips)
   const sig = keys.join('|')
   if (sig === annoResyncDone) return
   annoResyncDone = sig
   for (let i = 0; i < chips.length; i++) {
+    const k = keys[i]
     // (0.1.185) reservations are ELEMENT chips only (attachments come from
     // the heap at send; they never need a placeholder file).
     if (chips[i].kind && chips[i].kind !== 'element') continue
-    if (!annoCaptureFiles.has(k)) {
+    if (annoBaseline.has(chips[i].name)) continue
+    if (!annoCaptureFiles.has(k) && !annoCaptureInflight.has(k)) {
       log.appendLine('[anno] resync: feature re-enabled — reserving chip #' + (i + 1) + ' @' + chips[i].name)
       void annoQuietCapture(chips[i], i, k)
     }
@@ -1888,9 +1896,18 @@ function annoMirrorOnState(chips, lines, log) {
     log.appendLine('[anno] beacon chips=[' + chips.map((c) => c.name).join(',') + '] lines=[' + lines.map((l) => l.ref).join(',') + ']')
   }
   annoChipsBeaconed(chips.length) // (0.1.115) resolve empty-window waiters
+  // Refresh BEFORE the dock push: the client gate sends straight through when
+  // its dock is empty, so a dock built from the previous beacon drops the
+  // annotation whenever chip and @line arrive in a single beacon.
+  annoCurrentChips = chips.map((c) => {
+    const lineByRefT = new Map()
+    for (const l of lines) lineByRefT.set(l.ref, l.text)
+    return { name: c.name, kind: c.kind || 'element', text: lineByRefT.has(c.name) ? lineByRefT.get(c.name) : '' }
+  })
   // (0.1.155) passive capture of freshly-seen non-baseline chips (read-only;
   // chip untouched), then push the dock list for the client's sync compose.
-  if (annoFeatureOn() && dshState.annoDriver) {
+  // Startup leftovers are deleted by the cleanup below, never reserved.
+  if (annoFeatureOn() && dshState.annoDriver && !annoStartupCleanup && !annoStartupCleanupRunning) {
     try {
       const keysX = annoChipKeys(annoCurrentChips)
       annoCurrentChips.forEach((c, i) => { if (c.text) annoChipTexts.set(keysX[i], c.text) })
@@ -1910,12 +1927,6 @@ function annoMirrorOnState(chips, lines, log) {
       annoPushDockList()
     } catch (e) { /* non-fatal */ }
   }
-  // Track chip state for send-time sync (no real-time insertion into dsh).
-  annoCurrentChips = chips.map((c) => {
-    const lineByRefT = new Map()
-    for (const l of lines) lineByRefT.set(l.ref, l.text)
-    return { name: c.name, kind: c.kind || 'element', text: lineByRefT.has(c.name) ? lineByRefT.get(c.name) : '' }
-  })
   // (0.1.115) Toggle off = feature does not exist: no startup cleanup flash,
   // no flash-back. Beacon logging + chip tracking only (diagnostics).
   if (!annoFeatureOn()) { annoStartupCleanup = false; return }
@@ -1926,6 +1937,7 @@ function annoMirrorOnState(chips, lines, log) {
   // restarts even though chips do not).
   if (annoStartupCleanup) {
     annoStartupCleanup = false
+    annoStartupCleanupRunning = true
     log.appendLine('[anno] startup cleanup: chips=' + chips.length + ' lines=' + lines.length)
     const names = chips.map((c) => c.name)
     annoCurrentChips = []
@@ -1964,6 +1976,7 @@ function annoMirrorOnState(chips, lines, log) {
         }
         log.appendLine('[anno] startup cleanup done (baseline=' + [...annoBaseline].join(',') + ')')
       } finally {
+        annoStartupCleanupRunning = false
         annoFreezeReturn = false
         annoReturnIfIdle()
       }
