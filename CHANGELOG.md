@@ -1,3 +1,8 @@
+## ext 2.1.17:标注注释被截断(2026-11-05)
+
+- 现象:`这个数据集是prw和cuhk一起的吗?` 只剩 `这个数据集`;日志另有 `@td 这个太长了, 就是表格的表头只展示都有的, 其中各`。根因:observer 读的是 Copilot 输入框渲染出的 `.view-line`,输入框窄,Monaco 自动折行把一行 `@名字 注释` 拆成多个 `.view-line`,只有以 `@` 开头的第一段被认出,续行全丢。
+- 修复(只改扩展,不动 observer):`annoFullComment` 从输入框文本模型(scheme `chatSessionInput` / `sessions-chat`,`vscode.workspace.textDocuments`)取同名 `@ref` 的整行;仅当它**以渲染文字开头且更长**时替换(别的会话残留的旧注释不会串进来)。beacon 镜像(dock)与发送读取两处都过一遍。日志:`[anno] comment @x completed from input doc: N -> M chars`;若扩展看不到输入框文档,打一次 `[anno] comment: no chat input document visible (schemes=...)`。
+
 ## ext 2.1.16:窗口尺寸诊断 + 上传并行 + 忙时 TDZ(2026-11-05)
 
 - **"发送后 VS Code 应用窗口被缩成左半屏"**:15:47 实测一次带标注发送(2.5s)前后窗口未变,未复现;唯一一次尺寸变化(949×1065 左半屏 → 1920×1080)发生在无任何 anno 动作时,是用户手动恢复。发送链路无任何改窗口尺寸的调用(无 Emulation/setBounds)。加诊断:anno-cdp 注入独立 winmon(不碰 observer),resize/focus 时上报 `[x,y,w,h]`;扩展按步骤时间线(`annoStep`:flash-copilot / heap-snapshot / delete-chip / clear-input keys Cmd+A/Backspace / chat.newChat / return-to-dsh / send:start/done)标出变化发生在哪一步:日志 `[win] HH:MM:SS.mmm window [..] -> [..] | during: <step> +Nms`。

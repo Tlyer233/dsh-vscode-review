@@ -642,6 +642,44 @@ async function waitForWidgetRendered(timeoutMs) {
     setTimeout(() => finish(false), timeoutMs) // one-shot fallback, not a poll
   })
 }
+let annoInputDocWarned = false
+/**
+ * The observer reads Copilot's input from rendered `.view-line`s, and Monaco
+ * word-wraps a long `@name comment` into several of them — only the first
+ * segment survives. The input's text model (scheme chatSessionInput, or
+ * sessions-chat) holds the unwrapped line; use it when it EXTENDS the rendered
+ * text, so a stale line from another chat session can never replace it.
+ * @param {string} ref chip name
+ * @param {string} shown comment as rendered (possibly cut at a wrap)
+ * @returns {string}
+ */
+function annoFullComment(ref, shown) {
+  const head = String(shown || '').trim()
+  if (!head) return head
+  let best = head
+  let docs = 0
+  try {
+    for (const d of vscode.workspace.textDocuments) {
+      const s = d.uri.scheme
+      if (s !== 'chatSessionInput' && s !== 'sessions-chat') continue
+      docs++
+      for (const raw of d.getText().split(/\r?\n/)) {
+        const m = /^@(\S+)\s*(.*)$/.exec(raw.replace(/\u00a0/g, ' '))
+        if (!m || m[1] !== ref) continue
+        const full = m[2].trim()
+        if (full.length > best.length && full.indexOf(head) === 0) best = full
+      }
+    }
+  } catch (e) { return head }
+  if (!docs && !annoInputDocWarned) {
+    annoInputDocWarned = true
+    dshState.log('[anno] comment: no chat input document visible (schemes=' +
+      [...new Set(vscode.workspace.textDocuments.map((d) => d.uri.scheme))].join(',') + ') — wrapped comments may be cut')
+  }
+  if (best !== head) dshState.log('[anno] comment @' + ref + ' completed from input doc: ' + head.length + ' -> ' + best.length + ' chars')
+  return best
+}
+
 // Window-geometry diagnostics: the workbench reports every OS-window resize/move
 // (anno-cdp winmon); we name the anno step that was running when it began.
 const annoSteps = [] // [{ t, label }], newest last
@@ -1754,6 +1792,7 @@ async function annoSendSync(req) {
       }
       if (!chips.length) await dumpCopilotDom(driver, log)
     }
+    chips = chips.map((c) => Object.assign({}, c, { text: annoFullComment(c.name, c.text) }))
     // Idempotency: capture ONLY chips created this round (not the persistent
     // leftovers in the baseline). Leftovers are still deleted below to keep the
     // state clean, but they are never reported as the user's annotations.
@@ -1935,7 +1974,7 @@ function annoMirrorOnState(chips, lines, log) {
   annoCurrentChips = chips.map((c) => {
     const lineByRefT = new Map()
     for (const l of lines) lineByRefT.set(l.ref, l.text)
-    return { name: c.name, kind: c.kind || 'element', text: lineByRefT.has(c.name) ? lineByRefT.get(c.name) : '' }
+    return { name: c.name, kind: c.kind || 'element', text: lineByRefT.has(c.name) ? annoFullComment(c.name, lineByRefT.get(c.name)) : '' }
   })
   // (0.1.155) passive capture of freshly-seen non-baseline chips (read-only;
   // chip untouched), then push the dock list for the client's sync compose.
