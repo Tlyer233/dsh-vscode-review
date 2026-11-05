@@ -1519,6 +1519,12 @@ function setupDshBrowser(context) {
       state.log('sidebar html ' + url)
       view.webview.html = dshWebviewHtml(url)
       postScope(view)
+      // (2.1.6) Panel resolved LATER than the beacon stream (the classic:
+      // Copilot already carries annotations, no DOM mutation happens when the
+      // panel opens → no beacon → dock empty → send gate passes through and
+      // the anno is NOT carried). Pull the live chip state once per resolve
+      // so the dock mirrors Copilot immediately; also re-pull on re-show.
+      setTimeout(() => { try { void (state.annoKick && state.annoKick()) } catch (e) { /* noop */ } }, 700)
       view.onDidChangeVisibility(() => {
         state.dshVisible = !!view.visible
       })

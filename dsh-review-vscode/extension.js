@@ -143,6 +143,9 @@ function activate(context) {
       // Shared with the dsh webview host: dock ✕ (dshAnnoDelete) and consume
       // (dshAnnoConsumed) must land on the REAL CDP click, not a DOM fake.
       dshState.annoDriver = annoDriver
+      // (2.1.6) expose the state-pull so dsh-browser can kick it when the
+      // panel resolves/re-shows (beacon is mutation-driven only).
+      dshState.annoKick = annoPullState
       dshState.logChannel = log
       dshState.annoDeleteChip = (name) => realDeleteChip(String(name || ''))
       dshState.annoDeleteAll = (req) => annoSendSync(req)
