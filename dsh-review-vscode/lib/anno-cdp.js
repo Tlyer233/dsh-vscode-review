@@ -99,24 +99,10 @@ async function listTargets(port) {
  * @param {string} hostPort e.g. "127.0.0.1:3081"
  * @returns {object|null}
  */
-function findWorkbenchForDsh(targets, hostPort, bootTs) {
-  if (!hostPort && !bootTs) return null
+function findWorkbenchForDsh(targets, hostPort) {
+  if (!hostPort) return null
   const byId = new Map(targets.map((t) => [t.id, t]))
   let dshTarget = null
-  // (2.1.5) host:port ALONE cannot identify the owning window when TWO
-  // remote windows proxy the same host (two SSH windows → both
-  // 100.85.98.34:3082): the first driver grabbed the other window's
-  // workbench and the real window stayed driverless ("Copilot anno not
-  // carried on send"). The iframe src carries a per-window unique
-  // `_dshVscode=<ts>` — match that first, host only as fallback.
-  if (bootTs) {
-    const needle = '_dshVscode=' + bootTs
-    for (const t of targets) {
-      if (t.type !== 'iframe') continue
-      if (String(t.url || '').indexOf(needle) !== -1) { dshTarget = t; break }
-    }
-  }
-  if (!dshTarget && hostPort) {
   for (const t of targets) {
     if (t.type !== 'iframe') continue
     const url = String(t.url || '')
@@ -124,7 +110,6 @@ function findWorkbenchForDsh(targets, hostPort, bootTs) {
     let host
     try { host = new URL(url).host } catch { continue }
     if (host === hostPort) { dshTarget = t; break }
-  }
   }
   if (!dshTarget) return null
   let cur = dshTarget
@@ -176,9 +161,7 @@ class AnnoDriver {
       return false
     }
     const hostPort = await this.getDshHostPort()
-    let bootTs = ''
-    try { bootTs = this.getDshBootTs ? String(await this.getDshBootTs() || '') : '' } catch (e) { bootTs = '' }
-    const wb = findWorkbenchForDsh(targets, hostPort, bootTs)
+    const wb = findWorkbenchForDsh(targets, hostPort)
     if (!wb) {
       this.log('no workbench for dsh ' + (hostPort || '?') + ' (targets=' + targets.length + ')')
       this._scheduleRetry()
@@ -198,28 +181,6 @@ class AnnoDriver {
     this.retryCount = 0
     await cdp.send('Runtime.enable')
     cdp.on('Runtime.consoleAPICalled', (params) => this._onConsole(params))
-    // (2.1.7) RELOAD-AWARE INJECTION. A page reload keeps this CDP socket
-    // (no close event) but WIPES window.__dshAnnoWb — the driver then looks
-    // healthy while the observer is gone: beacons stop, dock empties, sends
-    // silently drop the Copilot anno (caught red-handed 13:36: DOM chip
-    // 'Attached element, span (Delete)' present, observer NO-OBS).
-    // Target id == root frame id (CDP contract): when THAT frame navigates,
-    // re-inject. Page reload = exactly one such event.
-    await cdp.send('Page.enable')
-    cdp.on('Page.frameNavigated', (params) => {
-      const f = params && params.frame
-      if (this.closing || !this.cdp || !f) return
-      if (String(f.id) !== String(this.workbenchId)) return
-      if (this._navTimer) clearTimeout(this._navTimer)
-      this._navTimer = setTimeout(() => {
-        this._navTimer = null
-        if (this.closing || !this.cdp) return
-        this.cdp.send('Runtime.evaluate', { expression: observerSource(), returnByValue: true }).then((r) => {
-          const v = (r && r.result && r.result.value) || 'failed'
-          if (String(v).indexOf('page navigated') === -1) this.log('page navigated → observer re-inject → ' + v)
-        }).catch(() => { /* socket raced a close; re-attach path covers it */ })
-      }, 400)
-    })
     const r = await cdp.send('Runtime.evaluate', { expression: observerSource(), returnByValue: true })
     this.log('observer inject → ' + ((r && r.result && r.result.value) || 'failed'))
     return true
@@ -236,25 +197,6 @@ class AnnoDriver {
       this._retryTimer = null
       if (!this.closing) this._attach().catch((e) => this.log('re-attach failed: ' + ((e && e.message) || e)))
     }, RETRY_MS)
-  }
-
-  /**
-   * (2.1.7) On-demand revival: the 5×1s startup budget expires while the
-   * dsh panel is still closed in a remote window; the first real use
-   * (panel-resolve kick, chip read) re-attaches once, throttled to 20s.
-   * @returns {Promise<boolean>} true when a live CDP session exists
-   */
-  async ensure() {
-    if (this.cdp) return true
-    const now = Date.now()
-    if (this._lastEnsureAt && now - this._lastEnsureAt < 20000) return false
-    this._lastEnsureAt = now
-    this.retryCount = 0
-    if (this._retryTimer) { clearTimeout(this._retryTimer); this._retryTimer = null }
-    try { return await this._attach() } catch (e) {
-      this.log('ensure attach failed: ' + ((e && e.message) || e))
-      return false
-    }
   }
 
   _onWsClose() {
@@ -278,34 +220,6 @@ class AnnoDriver {
         // (0.1.117) Copilot panel (re)opened: arm the flash-back upstream.
         this.onOpened()
       }
-    }
-  }
-
-  /**
-   * (2.1.11) SELF-HEALING STATE READ. The page can be rebuilt under us
-   * (chat re-render / navigations we failed to catch) wiping
-   * window.__dshAnnoWb — every read then returns null and sends silently
-   * carry nothing (caught live 14:19: workbench NO-OBS while 2 real chips
-   * sat in a visible container). Instead of betting on why it died: before
-   * EVERY read, check presence and re-inject the same idempotent observer
-   * source if missing. Dead a thousand times does not matter — alive at
-   * read time is all that matters.
-   * @returns {Promise<any>} getState() value (string JSON) or null
-   */
-  async readState() {
-    if (!this.cdp) return null
-    try {
-      const chk = await this.cdp.send('Runtime.evaluate', { expression: '!!(window.__dshAnnoWb && window.__dshAnnoWb.getState)', returnByValue: true })
-      const alive = chk && chk.result && chk.result.result && chk.result.result.value === true
-      if (!alive) {
-        const inj = await this.cdp.send('Runtime.evaluate', { expression: observerSource(), returnByValue: true })
-        this.log('observer self-heal: was DEAD -> re-inject ' + String((inj && inj.result && inj.result.value) || '?').slice(0, 40))
-      }
-      const r = await this.cdp.send('Runtime.evaluate', { expression: 'window.__dshAnnoWb && window.__dshAnnoWb.getState()', returnByValue: true })
-      return (r && r.result) ? r.result.value : null
-    } catch (e) {
-      this.log('observer self-heal read failed: ' + ((e && e.message) || e))
-      return null
     }
   }
 

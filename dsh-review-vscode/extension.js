@@ -122,8 +122,6 @@ function activate(context) {
         log: (msg) => log.appendLine('[anno] ' + msg),
         cdpPort: 9223,
         getDshHostPort: dshComposerHostPort,
-        // (2.1.5) per-window unique id stamped into the dsh iframe src
-        getDshBootTs: () => String(dshState.dshBootTs || ''),
         onState: (chips, lines) => { annoWidgetBeaconed(); annoMirrorOnState(chips, lines, log); annoResyncIfOn(chips, lines, log) },
         // (0.1.119) 打开即回 (user's "0.0000000001ms"): the moment Copilot
         // opens, return to dsh — no debounce. Exception: while annoSendSync is
@@ -143,19 +141,6 @@ function activate(context) {
       // Shared with the dsh webview host: dock ✕ (dshAnnoDelete) and consume
       // (dshAnnoConsumed) must land on the REAL CDP click, not a DOM fake.
       dshState.annoDriver = annoDriver
-      // (2.1.7) panel-resolve / re-show kick: revive the driver if the
-      // startup budget expired, then pull the live Copilot chip state so
-      // the dsh dock mirrors it BEFORE the next send (beacon only fires on
-      // DOM mutation — a late-opened panel would otherwise stay empty and
-      // the send gate would pass through, dropping the annotation).
-      dshState.annoKick = async () => {
-        const d = dshState.annoDriver
-        if (d && d.ensure) { try { await d.ensure() } catch (e) { /* stay degraded */ } }
-        try { await annoPullState() } catch (e) { /* stay degraded */ }
-      }
-      // (2.1.6) expose the state-pull so dsh-browser can kick it when the
-      // panel resolves/re-shows (beacon is mutation-driven only).
-      dshState.annoKick = annoPullState
       dshState.logChannel = log
       dshState.annoDeleteChip = (name) => realDeleteChip(String(name || ''))
       dshState.annoDeleteAll = (req) => annoSendSync(req)
@@ -627,7 +612,7 @@ async function annoPullState() {
   const driver = dshState.annoDriver
   if (!driver) return
   if (!(await copilotWidgetRendered())) return
-  const raw = await driver.readState()
+  const raw = await driver.eval('window.__dshAnnoWb && window.__dshAnnoWb.getState()')
   if (typeof raw === 'string' && raw) {
     try {
       const parsed = JSON.parse(raw)
@@ -1704,7 +1689,7 @@ async function annoSendSync(req) {
       await waitForWidgetRendered(2500)
       chips = annoCurrentChips.map((c) => ({ name: c.name, kind: c.kind || 'element', text: c.text || '' }))
     } else {
-      const raw = await driver.readState()
+      const raw = await driver.eval('window.__dshAnnoWb && window.__dshAnnoWb.getState()')
       let parsed = null
       try { parsed = (typeof raw === 'string' && raw) ? JSON.parse(raw) : null } catch (e) { parsed = null }
       if (!parsed) {
@@ -1861,7 +1846,7 @@ async function annoSendSync(req) {
         log.appendLine('[trump] clear: ' + clr + ' (background)')
         const late = await waitForChipBeacon(1000)
         if (!late) return
-        const rawL = await driver.readState()
+        const rawL = await driver.eval('window.__dshAnnoWb && window.__dshAnnoWb.getState()')
         let cL = []
         try { const pL = JSON.parse(rawL); cL = pL.chips || [] } catch (e) { /* ignore */ }
         if (!cL.length) return
@@ -1968,7 +1953,7 @@ function annoMirrorOnState(chips, lines, log) {
         // Verify the widget is now empty.
         await new Promise((r) => setTimeout(r, 250))
         if (await copilotWidgetRendered() && driver) {
-          const raw2 = await driver.readState()
+          const raw2 = await driver.eval('window.__dshAnnoWb && window.__dshAnnoWb.getState()')
           if (typeof raw2 === 'string' && raw2) {
             try {
               const p2 = JSON.parse(raw2)

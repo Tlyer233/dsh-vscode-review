@@ -41,7 +41,7 @@ function observerSource() {
 
   // ---- idempotency: re-arm on re-injection, never duplicate observers ----
   if (window.__dshAnnoWb && typeof window.__dshAnnoWb.reinstall === 'function') {
-    if (window.__dshAnnoWb._version === 5) {
+    if (window.__dshAnnoWb._version === 2) {
       window.__dshAnnoWb.reinstall();
       return 'reinstalled';
     }
@@ -52,72 +52,24 @@ function observerSource() {
     try { window.__dshAnnoWb = undefined; } catch (e) {}
   }
 
-  var chipObservers = [];    // (2.1.9) one per .chat-attachments-container — multi-tab
-  var lineObservers = [];    // (2.1.9) one per .interactive-input-editor   chat owns MANY
+  var chipObserver = null;   // MutationObserver on .chat-attachments-container
+  var lineObserver = null;   // MutationObserver on .interactive-input-editor
   var docObserver = null;    // MutationObserver on document (container appear/disappear)
-  var attachedConts = [];    // (2.1.9) container nodes currently observed
-  var attachedEds = [];      // (2.1.9) editor nodes currently observed
+  var attachedCont = null;   // (0.1.115) the container node chipObserver is bound to
   var debounceTimer = null;
   var armed = false;
   var lastChipCount = -1;    // previous beacon's chip count (for immediate-beacon on add)
   var lastBeaconKey = '';    // (0.1.116) last beaconed state key (dedupe identical beacons)
 
-  // (2.1.8) multi-session chat: EVERY open chat tab owns its own
-  // .chat-attachments-container; first-match counted an empty background tab
-  // and reported 0 chips while the real anno sat in another container (ssh
-  // 13:40: beacon chips=[] vs DOM probe chips=1). Scan all visible ones.
-  function chipContainers() {
-    // (2.1.10) SESSIONS-tab input keeps its attachments in
-    // .sessions-chat-attached-context (vscode newChatInput.ts: that node
-    // hosts the SAME .chat-attached-context-attachment renderer). Old class
-    // alone = chips invisible to us in a sessions-style panel (ssh 14:08:
-    // DOM probe 2 chips vs observer chips=0).
-    var all = document.querySelectorAll('.chat-attachments-container, .sessions-chat-attached-context');
-    var vis = [];
-    for (var i = 0; i < all.length; i++) {
-      var el = all[i];
-      if (el.offsetParent !== null || el.getClientRects().length > 0) vis.push(el);
-    }
-    if (vis.length) return vis;
-    var out2 = [];
-    for (var j = 0; j < all.length; j++) out2.push(all[j]);
-    return out2;
-  }
-  function chipContainer() { var c = chipContainers(); return c.length ? c[0] : null; }
-  function inputEditors() {
-    var all = document.querySelectorAll('.interactive-input-editor, .new-chat-input-area .monaco-editor');
-    var vis = [];
-    for (var i = 0; i < all.length; i++) {
-      var el = all[i];
-      if (el.offsetParent !== null || el.getClientRects().length > 0) vis.push(el);
-    }
-    if (vis.length) return vis;
-    var out2 = [];
-    for (var j = 0; j < all.length; j++) out2.push(all[j]);
-    return out2;
-  }
-  function inputEditor() { var e = inputEditors(); return e.length ? e[0] : null; }
-  function nodesDiffer(a, b) {
-    if (!a || !b || a.length !== b.length) return true;
-    for (var i = 0; i < a.length; i++) if (a[i] !== b[i]) return true;
-    return false;
-  }
-  function totalChips() {
-    var cs = chipContainers(); var n = 0;
-    for (var i = 0; i < cs.length; i++) n += cs[i].querySelectorAll('.chat-attached-context-attachment').length;
-    return n;
-  }
+  function chipContainer() { return document.querySelector('.chat-attachments-container'); }
+  function inputEditor() { return document.querySelector('.interactive-input-editor'); }
 
   // ---- state extraction ----
   function readChips() {
-    var conts = chipContainers();
-    if (!conts.length) return [];
+    var cont = chipContainer();
+    if (!cont) return [];
     var out = [];
-    var chips = [];
-    for (var ci = 0; ci < conts.length; ci++) {
-      var cs = conts[ci].querySelectorAll('.chat-attached-context-attachment');
-      for (var k2 = 0; k2 < cs.length; k2++) chips.push(cs[k2]);
-    }
+    var chips = cont.querySelectorAll('.chat-attached-context-attachment');
     for (var i = 0; i < chips.length; i++) {
       var c = chips[i];
       var aria = c.getAttribute('aria-label') || '';
@@ -142,14 +94,10 @@ function observerSource() {
   }
 
   function readLines() {
-    var eds = inputEditors();
-    if (!eds.length) return [];
+    var ed = inputEditor();
+    if (!ed) return [];
     var out = [];
-    var lines = [];
-    for (var ei = 0; ei < eds.length; ei++) {
-      var ls = eds[ei].querySelectorAll('.view-line');
-      for (var lj = 0; lj < ls.length; lj++) lines.push(ls[lj]);
-    }
+    var lines = ed.querySelectorAll('.view-line');
     for (var i = 0; i < lines.length; i++) {
       var t = (lines[i].textContent || '').replace(/\\u00a0/g, ' ');
       var m = /^@(\\S+)\\s*(.*)$/.exec(t);
@@ -186,7 +134,7 @@ function observerSource() {
     // for the 120ms debounce risks the beacon firing AFTER the widget is gone
     // (beaconing "no chips"). Adds are the critical event; deletes/line-changes
     // can wait for the debounce.
-    var nowCount = totalChips();
+    var nowCount = (chipContainer() ? chipContainer().querySelectorAll('.chat-attached-context-attachment').length : 0);
     if (lastChipCount >= 0 && nowCount > lastChipCount) {
       if (debounceTimer) { clearTimeout(debounceTimer); debounceTimer = null; }
       doBeacon();
@@ -202,19 +150,16 @@ function observerSource() {
   // ---- per-widget observers (re-attached when the widget re-renders) ----
   function attachWidgetObservers() {
     detachWidgetObservers();
-    var conts = chipContainers();
-    var eds = inputEditors();
-    attachedConts = conts;
-    attachedEds = eds;
-    for (var ci = 0; ci < conts.length; ci++) {
-      var ob = new MutationObserver(scheduleBeacon);
-      ob.observe(conts[ci], { childList: true, subtree: true, attributes: true, attributeFilter: ['aria-label', 'class'] });
-      chipObservers.push(ob);
+    var cont = chipContainer();
+    var ed = inputEditor();
+    attachedCont = cont;
+    if (cont) {
+      chipObserver = new MutationObserver(scheduleBeacon);
+      chipObserver.observe(cont, { childList: true, subtree: true, attributes: true, attributeFilter: ['aria-label', 'class'] });
     }
-    for (var ei2 = 0; ei2 < eds.length; ei2++) {
-      var ob2 = new MutationObserver(scheduleBeacon);
-      ob2.observe(eds[ei2], { childList: true, subtree: true, characterData: true });
-      lineObservers.push(ob2);
+    if (ed) {
+      lineObserver = new MutationObserver(scheduleBeacon);
+      lineObserver.observe(ed, { childList: true, subtree: true, characterData: true });
     }
     armed = true;
     // Emit the initial state so the extension has a baseline.
@@ -222,10 +167,9 @@ function observerSource() {
   }
 
   function detachWidgetObservers() {
-    for (var di = 0; di < chipObservers.length; di++) chipObservers[di].disconnect();
-    for (var dj = 0; dj < lineObservers.length; dj++) lineObservers[dj].disconnect();
-    chipObservers = []; lineObservers = [];
-    attachedConts = []; attachedEds = []; // (0.1.117) next appearance counts as "opened"
+    if (chipObserver) { chipObserver.disconnect(); chipObserver = null; }
+    if (lineObserver) { lineObserver.disconnect(); lineObserver = null; }
+    attachedCont = null; // (0.1.117) so the next appearance counts as "opened"
     armed = false;
   }
 
@@ -240,15 +184,14 @@ function observerSource() {
     // On ANY doc mutation: re-attach when the live container differs from the
     // attached one, and beacon immediately when the live chip count rises
     // above the last beaconed count. Event-driven, no polling.
-    var liveCs = chipContainers();
-    var liveEds = inputEditors();
-    if (liveCs.length && (nodesDiffer(liveCs, attachedConts) || nodesDiffer(liveEds, attachedEds))) {
-      var wasNull = !attachedConts.length; // none → some transition = panel opened
+    var live = chipContainer();
+    if (live && live !== attachedCont) {
+      var wasNull = !attachedCont; // (0.1.117) none → some transition = panel opened
       attachWidgetObservers(); // re-arms + scheduleBeacon (immediate on count add)
       if (wasNull) beacon({ ev: 'widget-opened', t: Date.now() });
       return;
     }
-    var liveCount = totalChips();
+    var liveCount = live ? live.querySelectorAll('.chat-attached-context-attachment').length : 0;
     if (liveCount > 0 && liveCount > lastChipCount) {
       if (debounceTimer) { clearTimeout(debounceTimer); debounceTimer = null; }
       doBeacon();
@@ -261,17 +204,17 @@ function observerSource() {
         var added = m.addedNodes || [];
         for (var j = 0; j < added.length; j++) {
           var n = added[j];
-          if (n.nodeType === 1 && (n.classList && (n.classList.contains('chat-attachments-container') || n.classList.contains('sessions-chat-attached-context') || n.classList.contains('interactive-input-part')))) {
+          if (n.nodeType === 1 && (n.classList && (n.classList.contains('chat-attachments-container') || n.classList.contains('interactive-input-part')))) {
             attachWidgetObservers();
             return;
           }
-          if (n.nodeType === 1 && n.querySelector && n.querySelector('.chat-attachments-container, .sessions-chat-attached-context')) {
+          if (n.nodeType === 1 && n.querySelector && n.querySelector('.chat-attachments-container')) {
             attachWidgetObservers();
             return;
           }
         }
         // Container removed → disarm (widget destroyed).
-        if (!chipContainers().length && !inputEditor()) {
+        if (!chipContainer() && !inputEditor()) {
           detachWidgetObservers();
           lastBeaconKey = ''; // (0.1.116) next render must beacon even if state looks identical
           beacon({ ev: 'widget-gone' });
@@ -301,13 +244,9 @@ function observerSource() {
    * @returns {string} 'clicked:<name>' | 'not-found:<name>'
    */
   function deleteChip(name) {
-    var conts = chipContainers();
-    if (!conts.length) return 'no-container';
-    var chips = [];
-    for (var ci = 0; ci < conts.length; ci++) {
-      var cs = conts[ci].querySelectorAll('.chat-attached-context-attachment');
-      for (var k2 = 0; k2 < cs.length; k2++) chips.push(cs[k2]);
-    }
+    var cont = chipContainer();
+    if (!cont) return 'no-container';
+    var chips = cont.querySelectorAll('.chat-attached-context-attachment');
     for (var i = 0; i < chips.length; i++) {
       var c = chips[i];
       var aria = c.getAttribute('aria-label') || '';
@@ -333,7 +272,7 @@ function observerSource() {
     getState: getState,
     deleteChip: deleteChip,
     reinstall: reinstall,
-    _version: 5
+    _version: 2
   };
 
   startDocObserver();

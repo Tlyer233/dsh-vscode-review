@@ -557,7 +557,7 @@ function dshWebviewHtml(url, opts) {
   const u = String(url || 'http://127.0.0.1:3080')
   const safe = u.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;')
   const chrome = normalizeChrome((opts && opts.chrome) || iframeChrome)
-  const src = safe + (u.indexOf('?') >= 0 ? '&' : '?') + '_dshVscode=' + (state.dshBootTs = String(Date.now())) + '&' + chromeQuery(chrome)
+  const src = safe + (u.indexOf('?') >= 0 ? '&' : '?') + '_dshVscode=' + Date.now() + '&' + chromeQuery(chrome)
   const overlayKind = opts && opts.overlay
   const deferFrame = overlayKind === 'offline' || overlayKind === 'restarting' || !!(opts && opts.deferFrame)
   const overlayClass = overlayKind === 'offline' || overlayKind === 'restarting' ? '' : ' hidden'
@@ -1519,15 +1519,8 @@ function setupDshBrowser(context) {
       state.log('sidebar html ' + url)
       view.webview.html = dshWebviewHtml(url)
       postScope(view)
-      // (2.1.6) Panel resolved LATER than the beacon stream (the classic:
-      // Copilot already carries annotations, no DOM mutation happens when the
-      // panel opens → no beacon → dock empty → send gate passes through and
-      // the anno is NOT carried). Pull the live chip state once per resolve
-      // so the dock mirrors Copilot immediately; also re-pull on re-show.
-      setTimeout(() => { try { void (state.annoKick && state.annoKick()) } catch (e) { /* noop */ } }, 700)
       view.onDidChangeVisibility(() => {
         state.dshVisible = !!view.visible
-        if (view.visible) { try { void (state.annoKick && state.annoKick()) } catch (e) { /* noop */ } }
       })
       view.onDidDispose(() => {
         if (state.dshView === view) {
