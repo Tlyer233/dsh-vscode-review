@@ -1182,7 +1182,7 @@ async function sendAnnoDock(chips) {
       type: 'dshAnnoDock',
       chips: Array.isArray(chips) ? chips : [],
     })
-    state.log('[anno] dock push ' + (Array.isArray(chips) ? chips.length : 0) + ' row(s) delivered=' + ok)
+    state.log('[anno] dock push ' + (Array.isArray(chips) ? chips.length : 0) + ' row(s) delivered=' + ok + ' win=' + ((state.annoDriver && state.annoDriver.winTitle) || 'unknown'))
     return ok
   } catch (e) {
     state.log('[anno] dock post failed: ' + (e && e.message || e))

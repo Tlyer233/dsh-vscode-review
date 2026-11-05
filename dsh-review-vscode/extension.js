@@ -1626,9 +1626,12 @@ async function annoPut(targetPath, content) {
     return lp
   }
 }
+function annoWinTag() {
+  try { return (dshState.annoDriver && dshState.annoDriver.winTitle) || 'unknown' } catch (e) { return 'unknown' }
+}
 async function annoSendSync(req) {
   dshState.log('[env] send window=' + (annoIsRemoteWindow() ? 'REMOTE(' + vscode.env.remoteName + ')' : 'LOCAL') +
-    ' | chips=' + annoCurrentChips.length + ' driver=' + (dshState.annoDriver ? 'yes' : 'NO') + ' busy=' + (annoSendBusy ? 'yes' : 'no') + ' heapOn=' + annoHeapOn())
+    ' | chips=' + annoCurrentChips.length + ' driver=' + (dshState.annoDriver ? 'yes' : 'NO') + ' busy=' + (annoSendBusy ? 'yes' : 'no') + ' heapOn=' + annoHeapOn() + ' win=' + annoWinTag())
   // (0.1.183) req numbers RESET on every client page load (annoPrepSeq starts
   // at 0 again) while this Set lived for the whole extension process: after a
   // refresh, req=1 was "already posted" forever -> blank sends hung the full
@@ -1885,7 +1888,7 @@ function annoMirrorOnState(chips, lines, log) {
   const changed = stateKey !== lastBeaconStateKey
   lastBeaconStateKey = stateKey
   if (changed) {
-    log.appendLine('[anno] beacon chips=[' + chips.map((c) => c.name).join(',') + '] lines=[' + lines.map((l) => l.ref).join(',') + ']')
+    log.appendLine('[anno] beacon chips=[' + chips.map((c) => c.name).join(',') + '] lines=[' + lines.map((l) => l.ref).join(',') + '] win=' + annoWinTag())
   }
   annoChipsBeaconed(chips.length) // (0.1.115) resolve empty-window waiters
   // (0.1.155) passive capture of freshly-seen non-baseline chips (read-only;

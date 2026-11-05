@@ -142,6 +142,8 @@ class AnnoDriver {
     this.workbenchId = null
     this.closing = false
     this.retryCount = 0
+    // (2.1.13) title of the workbench page our observer actually lives in
+    this.winTitle = ''
     this._retryTimer = null
   }
 
@@ -182,7 +184,7 @@ class AnnoDriver {
     await cdp.send('Runtime.enable')
     cdp.on('Runtime.consoleAPICalled', (params) => this._onConsole(params))
     const r = await cdp.send('Runtime.evaluate', { expression: observerSource(), returnByValue: true })
-    this.log('observer inject → ' + ((r && r.result && r.result.value) || 'failed'))
+    this.log('observer inject → ' + ((r && r.result && r.result.value) || 'failed') + ' | hostPort=' + (hostPort || '?') + ' target=' + wb.id + ' win=' + (this.winTitle || 'unknown'))
     return true
   }
 
@@ -214,6 +216,11 @@ class AnnoDriver {
       if (typeof v !== 'string' || v.indexOf(PREFIX) !== 0) continue
       let payload
       try { payload = JSON.parse(v.slice(PREFIX.length)) } catch { continue }
+      // (2.1.13) stamp WHICH workbench page this beacon came from
+      if (payload && payload.win && payload.win !== this.winTitle) {
+        this.winTitle = String(payload.win)
+        this.log('observer page = "' + this.winTitle + '"')
+      }
       if (payload && payload.ev === 'state') {
         this.onState(payload.chips || [], payload.lines || [])
       } else if (payload && payload.ev === 'widget-opened') {
