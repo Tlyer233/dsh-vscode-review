@@ -143,6 +143,16 @@ function activate(context) {
       // Shared with the dsh webview host: dock ✕ (dshAnnoDelete) and consume
       // (dshAnnoConsumed) must land on the REAL CDP click, not a DOM fake.
       dshState.annoDriver = annoDriver
+      // (2.1.7) panel-resolve / re-show kick: revive the driver if the
+      // startup budget expired, then pull the live Copilot chip state so
+      // the dsh dock mirrors it BEFORE the next send (beacon only fires on
+      // DOM mutation — a late-opened panel would otherwise stay empty and
+      // the send gate would pass through, dropping the annotation).
+      dshState.annoKick = async () => {
+        const d = dshState.annoDriver
+        if (d && d.ensure) { try { await d.ensure() } catch (e) { /* stay degraded */ } }
+        try { await annoPullState() } catch (e) { /* stay degraded */ }
+      }
       // (2.1.6) expose the state-pull so dsh-browser can kick it when the
       // panel resolves/re-shows (beacon is mutation-driven only).
       dshState.annoKick = annoPullState

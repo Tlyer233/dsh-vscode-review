@@ -198,6 +198,28 @@ class AnnoDriver {
     this.retryCount = 0
     await cdp.send('Runtime.enable')
     cdp.on('Runtime.consoleAPICalled', (params) => this._onConsole(params))
+    // (2.1.7) RELOAD-AWARE INJECTION. A page reload keeps this CDP socket
+    // (no close event) but WIPES window.__dshAnnoWb — the driver then looks
+    // healthy while the observer is gone: beacons stop, dock empties, sends
+    // silently drop the Copilot anno (caught red-handed 13:36: DOM chip
+    // 'Attached element, span (Delete)' present, observer NO-OBS).
+    // Target id == root frame id (CDP contract): when THAT frame navigates,
+    // re-inject. Page reload = exactly one such event.
+    await cdp.send('Page.enable')
+    cdp.on('Page.frameNavigated', (params) => {
+      const f = params && params.frame
+      if (this.closing || !this.cdp || !f) return
+      if (String(f.id) !== String(this.workbenchId)) return
+      if (this._navTimer) clearTimeout(this._navTimer)
+      this._navTimer = setTimeout(() => {
+        this._navTimer = null
+        if (this.closing || !this.cdp) return
+        this.cdp.send('Runtime.evaluate', { expression: observerSource(), returnByValue: true }).then((r) => {
+          const v = (r && r.result && r.result.value) || 'failed'
+          if (String(v).indexOf('page navigated') === -1) this.log('page navigated → observer re-inject → ' + v)
+        }).catch(() => { /* socket raced a close; re-attach path covers it */ })
+      }, 400)
+    })
     const r = await cdp.send('Runtime.evaluate', { expression: observerSource(), returnByValue: true })
     this.log('observer inject → ' + ((r && r.result && r.result.value) || 'failed'))
     return true
@@ -214,6 +236,25 @@ class AnnoDriver {
       this._retryTimer = null
       if (!this.closing) this._attach().catch((e) => this.log('re-attach failed: ' + ((e && e.message) || e)))
     }, RETRY_MS)
+  }
+
+  /**
+   * (2.1.7) On-demand revival: the 5×1s startup budget expires while the
+   * dsh panel is still closed in a remote window; the first real use
+   * (panel-resolve kick, chip read) re-attaches once, throttled to 20s.
+   * @returns {Promise<boolean>} true when a live CDP session exists
+   */
+  async ensure() {
+    if (this.cdp) return true
+    const now = Date.now()
+    if (this._lastEnsureAt && now - this._lastEnsureAt < 20000) return false
+    this._lastEnsureAt = now
+    this.retryCount = 0
+    if (this._retryTimer) { clearTimeout(this._retryTimer); this._retryTimer = null }
+    try { return await this._attach() } catch (e) {
+      this.log('ensure attach failed: ' + ((e && e.message) || e))
+      return false
+    }
   }
 
   _onWsClose() {

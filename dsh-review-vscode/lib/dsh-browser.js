@@ -1527,6 +1527,7 @@ function setupDshBrowser(context) {
       setTimeout(() => { try { void (state.annoKick && state.annoKick()) } catch (e) { /* noop */ } }, 700)
       view.onDidChangeVisibility(() => {
         state.dshVisible = !!view.visible
+        if (view.visible) { try { void (state.annoKick && state.annoKick()) } catch (e) { /* noop */ } }
       })
       view.onDidDispose(() => {
         if (state.dshView === view) {
