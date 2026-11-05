@@ -24,6 +24,30 @@
 const { observerSource } = require('./anno-observer.js')
 
 const PREFIX = '__DSH_ANNO_WB__'
+
+// Diagnostics only: beacons the OS-window geometry when it changes (resize, or
+// a move picked up on the next resize/focus). Re-injection replaces the old
+// listeners. t0 = first event of a burst, so the host can name the step.
+const WIN_MON_SOURCE = `(function () {
+  var P = ${JSON.stringify(PREFIX)};
+  var old = window.__dshWinMon;
+  if (old) { window.removeEventListener('resize', old); window.removeEventListener('focus', old); }
+  var timer = null, t0 = 0;
+  function geo() { return [screenX, screenY, outerWidth, outerHeight]; }
+  function fire() {
+    if (!t0) t0 = Date.now();
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(function () {
+      timer = null;
+      try { console.log(P + JSON.stringify({ ev: 'win', b: geo(), fs: !!document.fullscreenElement, t0: t0 })); } catch (e) {}
+      t0 = 0;
+    }, 120);
+  }
+  window.__dshWinMon = fire;
+  window.addEventListener('resize', fire);
+  window.addEventListener('focus', fire);
+  return JSON.stringify(geo());
+})()`
 const MAX_RETRY = 5
 const RETRY_MS = 1000
 const SLOW_RETRY_MS = 15000
@@ -144,6 +168,7 @@ function findWorkbenchForDsh(targets, hostPort, bootId) {
  *   getDshBootId?: () => string | Promise<string>,
  *   onState: (chips: object[], lines: object[]) => void,
  *   onOpened?: () => void,
+ *   onWin?: (p: { init?: boolean, b: number[], fs?: boolean, t0?: number }) => void,
  * }} opts
  */
 class AnnoDriver {
@@ -154,6 +179,7 @@ class AnnoDriver {
     this.getDshBootId = opts.getDshBootId || (() => '')
     this.onState = opts.onState || (() => {})
     this.onOpened = opts.onOpened || (() => {})
+    this.onWin = opts.onWin || (() => {})
     this.cdp = null
     this.workbenchId = null
     this.closing = false
@@ -201,6 +227,11 @@ class AnnoDriver {
     cdp.on('Runtime.consoleAPICalled', (params) => this._onConsole(params))
     const r = await cdp.send('Runtime.evaluate', { expression: observerSource(), returnByValue: true })
     this.log('observer inject → ' + ((r && r.result && r.result.value) || 'failed') + ' | boot=' + (bootId || '?') + ' target=' + wb.id + ' title=' + String(wb.title || '').slice(0, 80))
+    const wm = await cdp.send('Runtime.evaluate', { expression: WIN_MON_SOURCE, returnByValue: true })
+    try {
+      const v = wm && wm.result && wm.result.value
+      if (typeof v === 'string') this.onWin({ init: true, b: JSON.parse(v) })
+    } catch { /* diagnostics only */ }
     return true
   }
 
@@ -239,6 +270,8 @@ class AnnoDriver {
       } else if (payload && payload.ev === 'widget-opened') {
         // (0.1.117) Copilot panel (re)opened: arm the flash-back upstream.
         this.onOpened()
+      } else if (payload && payload.ev === 'win') {
+        try { this.onWin(payload) } catch { /* diagnostics only */ }
       }
     }
   }

@@ -1,3 +1,9 @@
+## ext 2.1.16:窗口尺寸诊断 + 上传并行 + 忙时 TDZ(2026-11-05)
+
+- **"发送后 VS Code 应用窗口被缩成左半屏"**:15:47 实测一次带标注发送(2.5s)前后窗口未变,未复现;唯一一次尺寸变化(949×1065 左半屏 → 1920×1080)发生在无任何 anno 动作时,是用户手动恢复。发送链路无任何改窗口尺寸的调用(无 Emulation/setBounds)。加诊断:anno-cdp 注入独立 winmon(不碰 observer),resize/focus 时上报 `[x,y,w,h]`;扩展按步骤时间线(`annoStep`:flash-copilot / heap-snapshot / delete-chip / clear-input keys Cmd+A/Backspace / chat.newChat / return-to-dsh / send:start/done)标出变化发生在哪一步:日志 `[win] HH:MM:SS.mmm window [..] -> [..] | during: <step> +Nms`。
+- **提速(零风险部分)**:同一标注的截图与全文文件改为并行上传(各 ~0.3s 走 ssh 通道,原先串行),内容不变。实测耗时分布:堆快照 ~0.8s、桥接取全文 ~1.4s、上传 ~0.3s/件。
+- `annoSendSync` 忙时分支在 `const log` 声明前使用 `log`(TDZ)→ 抛错不回包 → 客户端干等 75s;声明上移。
+
 ## ext 2.1.15:ssh 窗"Copilot 有标注、dsh 发送带不上"时好时坏 — 根治(2026-11-05)
 
 基于 2.1.3,最小改动。

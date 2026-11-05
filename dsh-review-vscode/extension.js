@@ -125,6 +125,7 @@ function activate(context) {
         getDshHostPort: dshComposerHostPort,
         getDshBootId: dshComposerBootId,
         onState: (chips, lines) => { annoWidgetBeaconed(); annoMirrorOnState(chips, lines, log); annoResyncIfOn(chips, lines, log) },
+        onWin: annoOnWin,
         // (0.1.119) 打开即回 (user's "0.0000000001ms"): the moment Copilot
         // opens, return to dsh — no debounce. Exception: while annoSendSync is
         // reading/deleting (freeze) or ✕ deletes are in flight, keep it open,
@@ -538,6 +539,7 @@ function annoReturnIfIdle() {
   if (annoReturnTimeout) { clearTimeout(annoReturnTimeout); annoReturnTimeout = null }
   if (!annoReturnToDsh || annoDeletesInFlight > 0) return
   annoReturnToDsh = false
+  annoStep('return-to-dsh')
   dshState.log('[anno] return-to-dsh: dshView=' + (dshState.dshView ? 'yes' : 'NO') + ' deletesInFlight=' + annoDeletesInFlight)
   // Switch the secondary sidebar back to the dsh container. `dshView.show(true)`
   // (reveal=true) ACTIVATES the dsh container and shows the view — this is the
@@ -640,6 +642,28 @@ async function waitForWidgetRendered(timeoutMs) {
     setTimeout(() => finish(false), timeoutMs) // one-shot fallback, not a poll
   })
 }
+// Window-geometry diagnostics: the workbench reports every OS-window resize/move
+// (anno-cdp winmon); we name the anno step that was running when it began.
+const annoSteps = [] // [{ t, label }], newest last
+let annoWinLast = ''
+function annoStep(label) {
+  annoSteps.push({ t: Date.now(), label })
+  if (annoSteps.length > 60) annoSteps.shift()
+}
+function annoStepAt(t) {
+  let hit = null
+  for (const s of annoSteps) { if (s.t <= t) hit = s }
+  return hit ? hit.label + ' +' + (t - hit.t) + 'ms' : 'idle'
+}
+function annoOnWin(p) {
+  const b = JSON.stringify(p.b || [])
+  if (p.init) { annoWinLast = b; dshState.log('[win] baseline [x,y,w,h]=' + b); return }
+  if (b === annoWinLast) return
+  const t0 = Number(p.t0) || Date.now()
+  dshState.log('[win] ' + new Date(t0).toISOString().slice(11, 23) + ' window ' + annoWinLast + ' -> ' + b +
+    (p.fs ? ' (fullscreen)' : '') + ' | during: ' + annoStepAt(t0))
+  annoWinLast = b
+}
 /** Called by the observer beacon (onState) to resolve the widget waiter. */
 function annoWidgetBeaconed() {
   if (annoWidgetWaiter) { annoWidgetWaiter.resolve(); annoWidgetWaiter = null }
@@ -658,6 +682,7 @@ async function flashCopilot() {
   ]
   for (const cmd of candidates) {
     try {
+      annoStep('flash-copilot ' + cmd)
       await vscode.commands.executeCommand(cmd)
       dshState.log('[anno] flash copilot: ' + cmd + ' ok')
       return cmd
@@ -754,6 +779,7 @@ async function realDeleteChipInner(name, attempt, flashed) {
   const driver = dshState.annoDriver
   if (!driver) return 'no-driver'
   let res = 'no-cdp'
+  annoStep('delete-chip ' + name)
   try { res = await driver.deleteChip(name) } catch (e) { res = 'error:' + String((e && e.message) || e) }
   dshState.log('[anno] real delete: ' + name + ' -> ' + res + (attempt ? ' (retry ' + attempt + ')' : ''))
   if (String(res).indexOf('clicked:') === 0) {
@@ -801,6 +827,7 @@ async function clearCopilotInput() {
       return 'cleared:exec ' + before + '->' + after;
     })()`)
     // (0.1.127) Keyboard backstop.
+    annoStep('clear-input keys Cmd+A/Backspace')
     await driver.cdp.send('Input.dispatchKeyEvent', { type: 'keyDown', modifiers: 4, key: 'a', code: 'KeyA', windowsVirtualKeyCode: 65, nativeVirtualKeyCode: 65 })
     await driver.cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', modifiers: 4, key: 'a', code: 'KeyA', windowsVirtualKeyCode: 65, nativeVirtualKeyCode: 65 })
     await driver.cdp.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Backspace', code: 'Backspace', windowsVirtualKeyCode: 8, nativeVirtualKeyCode: 8 })
@@ -822,6 +849,7 @@ async function clearCopilotInput() {
     let viaCmd = ''
     if (still && String(still).indexOf('lines:') === 0) {
       try {
+        annoStep('clear-input chat.open setInput')
         await vscode.commands.executeCommand('workbench.action.chat.open', { query: ' ', isPartialQuery: true })
         await driver.cdp.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Backspace', code: 'Backspace', windowsVirtualKeyCode: 8, nativeVirtualKeyCode: 8 })
         await driver.cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Backspace', code: 'Backspace', windowsVirtualKeyCode: 8, nativeVirtualKeyCode: 8 })
@@ -865,6 +893,7 @@ async function clearCopilotInputVerified(log, tag) {
  */
 async function clearCopilotSession() {
   try {
+    annoStep('chat.newChat')
     await vscode.commands.executeCommand('workbench.action.chat.newChat')
     return 'newChat ok'
   } catch (e) {
@@ -1143,10 +1172,11 @@ async function annoWriteHeapFile(i, name, comment, E, keepPath) {
     const safe = String(name).replace(/[^a-zA-Z0-9_-]+/g, '_').slice(0, 40)
     const f = keepPath || path.join(dir, stamp + '-' + (i + 1) + '-' + safe + '.txt')
     let imgRef = ''
+    let imgPut = null
     if (E.img) {
       const ext = String(E.mime || '').indexOf('png') !== -1 ? '.png' : '.jpg'
       const ip = f.replace(/\.txt$/, '') + ext
-      await annoPut(ip, Buffer.from(E.img, 'base64'))
+      imgPut = annoPut(ip, Buffer.from(E.img, 'base64'))
       imgRef = '## SCREENSHOT (pick-time, ' + (E.imgLen || 0) + 'B)\n文件: ' + ip + '\n\n'
     }
     const head = '# element: ' + (E.fullName || E.name || name) +
@@ -1154,13 +1184,14 @@ async function annoWriteHeapFile(i, name, comment, E, keepPath) {
       '\n# time: ' + new Date().toString() +
       '\n# entry id: ' + (E.id || '') +
       '\n# via: dsh-review (heap-bridge, no hover)\n\n' + imgRef
-    await annoPut(f, head + E.value + '\n')
+    await Promise.all([imgPut, annoPut(f, head + E.value + '\n')])
     log.appendLine('[trump] heap file: ' + f + ' (' + String(E.value).length + 'B value' + (E.img ? ', img ' + E.imgLen + 'B' : '') + ')')
     return f
   } catch (e) { log.appendLine('[trump] heap file write failed: ' + String(e).slice(0, 100)); return null }
 }
 async function annoHeapCaptureNow() {
   const log = dshState.logChannel
+  annoStep('heap-snapshot')
   let prefer = ''
   try { prefer = (vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders[0] && vscode.workspace.workspaceFolders[0].name) || '' } catch (e) { /* noop */ }
   const targetId = (dshState.annoDriver && dshState.annoDriver.workbenchId) || ''
@@ -1645,6 +1676,7 @@ async function annoSendSync(req) {
   // Duplicate answers that leak across generations are harmless: the client
   // ignores prepared() for unknown reqs.
   annoPreparedPostedFor.clear()
+  const log = dshState.logChannel
   if (annoSendBusy) {
     // A read is already running for this send — do NOT double-drive the widget
     // and do NOT answer with a stale block; the running read will post for req.
@@ -1653,7 +1685,7 @@ async function annoSendSync(req) {
     return
   }
   annoSendBusy = true
-  const log = dshState.logChannel
+  annoStep('send:start')
   const driver = dshState.annoDriver
   if (!driver) { // (0.1.180) answer + clear busy on EVERY exit
     annoSendBusy = false
@@ -1873,6 +1905,7 @@ async function annoSendSync(req) {
         annoReturnIfIdle()
       }
     })()
+    annoStep('send:done')
     log.appendLine('[trump] done (view back now; session cleanup backgrounded)')
   } finally {
     if (req !== undefined && req !== null) annoPostPrepared(req, annoPreparedBlock || '') // never hang the client
