@@ -41,7 +41,7 @@ function observerSource() {
 
   // ---- idempotency: re-arm on re-injection, never duplicate observers ----
   if (window.__dshAnnoWb && typeof window.__dshAnnoWb.reinstall === 'function') {
-    if (window.__dshAnnoWb._version === 2) {
+    if (window.__dshAnnoWb._version === 3) {
       window.__dshAnnoWb.reinstall();
       return 'reinstalled';
     }
@@ -61,15 +61,35 @@ function observerSource() {
   var lastChipCount = -1;    // previous beacon's chip count (for immediate-beacon on add)
   var lastBeaconKey = '';    // (0.1.116) last beaconed state key (dedupe identical beacons)
 
-  function chipContainer() { return document.querySelector('.chat-attachments-container'); }
+  // (2.1.8) multi-session chat: EVERY open chat tab owns its own
+  // .chat-attachments-container; first-match counted an empty background tab
+  // and reported 0 chips while the real anno sat in another container (ssh
+  // 13:40: beacon chips=[] vs DOM probe chips=1). Scan all visible ones.
+  function chipContainers() {
+    var all = document.querySelectorAll('.chat-attachments-container');
+    var vis = [];
+    for (var i = 0; i < all.length; i++) {
+      var el = all[i];
+      if (el.offsetParent !== null || el.getClientRects().length > 0) vis.push(el);
+    }
+    if (vis.length) return vis;
+    var out2 = [];
+    for (var j = 0; j < all.length; j++) out2.push(all[j]);
+    return out2;
+  }
+  function chipContainer() { var c = chipContainers(); return c.length ? c[0] : null; }
   function inputEditor() { return document.querySelector('.interactive-input-editor'); }
 
   // ---- state extraction ----
   function readChips() {
-    var cont = chipContainer();
-    if (!cont) return [];
+    var conts = chipContainers();
+    if (!conts.length) return [];
     var out = [];
-    var chips = cont.querySelectorAll('.chat-attached-context-attachment');
+    var chips = [];
+    for (var ci = 0; ci < conts.length; ci++) {
+      var cs = conts[ci].querySelectorAll('.chat-attached-context-attachment');
+      for (var k2 = 0; k2 < cs.length; k2++) chips.push(cs[k2]);
+    }
     for (var i = 0; i < chips.length; i++) {
       var c = chips[i];
       var aria = c.getAttribute('aria-label') || '';
@@ -244,9 +264,13 @@ function observerSource() {
    * @returns {string} 'clicked:<name>' | 'not-found:<name>'
    */
   function deleteChip(name) {
-    var cont = chipContainer();
-    if (!cont) return 'no-container';
-    var chips = cont.querySelectorAll('.chat-attached-context-attachment');
+    var conts = chipContainers();
+    if (!conts.length) return 'no-container';
+    var chips = [];
+    for (var ci = 0; ci < conts.length; ci++) {
+      var cs = conts[ci].querySelectorAll('.chat-attached-context-attachment');
+      for (var k2 = 0; k2 < cs.length; k2++) chips.push(cs[k2]);
+    }
     for (var i = 0; i < chips.length; i++) {
       var c = chips[i];
       var aria = c.getAttribute('aria-label') || '';
@@ -272,7 +296,7 @@ function observerSource() {
     getState: getState,
     deleteChip: deleteChip,
     reinstall: reinstall,
-    _version: 2
+    _version: 3
   };
 
   startDocObserver();
