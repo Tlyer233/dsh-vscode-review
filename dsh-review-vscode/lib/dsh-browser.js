@@ -557,7 +557,7 @@ function dshWebviewHtml(url, opts) {
   const u = String(url || 'http://127.0.0.1:3080')
   const safe = u.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;')
   const chrome = normalizeChrome((opts && opts.chrome) || iframeChrome)
-  const src = safe + (u.indexOf('?') >= 0 ? '&' : '?') + '_dshVscode=' + (state.dshBootTs = String(Date.now())) + '&' + chromeQuery(chrome)
+  const src = safe + (u.indexOf('?') >= 0 ? '&' : '?') + '_dshVscode=' + Date.now() + '&' + chromeQuery(chrome)
   const overlayKind = opts && opts.overlay
   const deferFrame = overlayKind === 'offline' || overlayKind === 'restarting' || !!(opts && opts.deferFrame)
   const overlayClass = overlayKind === 'offline' || overlayKind === 'restarting' ? '' : ' hidden'
