@@ -698,6 +698,7 @@ window.__ModuleLoader__.load({
         if (!(bridgeActive || vscodeIframeHint())) return;
         const side = getReviewSettings().sidebarSide;
         if (iframeChromeLive && iframeChromeLive.railSide !== side) setIframeRailSide(side);
+        applySidebarMode();
       } catch (err) { /* noop */ }
     }
 
@@ -759,6 +760,78 @@ window.__ModuleLoader__.load({
       btn.setAttribute("aria-label", label);
       btn.title = label;
       btn.classList.toggle("is-open", !hidden);
+    }
+
+    // Floating session panel (设置 → 代码审查 → 悬浮会话按钮). On: the rail
+    // track stays zeroed and dsh's own expanded sidebar is re-positioned as a
+    // fixed card next to an always-visible corner button (works on every
+    // page, so Plugins / settings always have a way back). Off: the rail is
+    // always shown.
+    const FLOAT_TOGGLE_ID = "dsh-review-float-toggle";
+    const FLOAT_OPEN_KEY = "dsh-review-float-open";
+    const FLOAT_TOGGLE_SVG = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" aria-hidden="true">'
+      + '<rect x="2" y="2.5" width="12" height="11" rx="2"/><path d="M5 6h6M5 8.5h6M5 11h3.5"/></svg>';
+
+    // Set by the scope watchdog (it owns the workspace/session lists).
+    let jumpToLatestSession = null;
+
+    function sidebarFloatMode() {
+      return getReviewSettings().sidebarFloat;
+    }
+
+    function floatPanelStoredOpen() {
+      try { return localStorage.getItem(FLOAT_OPEN_KEY) === "1"; } catch (err) { return false; }
+    }
+
+    function setFloatPanelOpen(open) {
+      try { localStorage.setItem(FLOAT_OPEN_KEY, open ? "1" : "0"); } catch (err) { /* noop */ }
+      try { document.documentElement.classList.toggle("dsh-float-open", !!open); } catch (err) { /* noop */ }
+      const btn = document.getElementById(FLOAT_TOGGLE_ID);
+      if (btn) {
+        const label = open ? "收起会话列表" : "展开会话列表";
+        btn.classList.toggle("is-open", !!open);
+        btn.setAttribute("aria-expanded", open ? "true" : "false");
+        btn.setAttribute("aria-label", label);
+        btn.title = label;
+      }
+      // A collapsed (icon-rail) sidebar would float as a 56px strip.
+      if (open) {
+        const t = document.querySelector('[data-slot="root"] [aria-keyshortcuts="Alt+Meta+B"]');
+        if (t && /expand/i.test(String(t.getAttribute("aria-label") || ""))) {
+          try { t.click(); } catch (err) { /* noop */ }
+        }
+      }
+    }
+
+    function applySidebarMode() {
+      if (typeof document === "undefined") return;
+      if (!bridgeActive && !vscodeIframeHint()) return;
+      const float = sidebarFloatMode();
+      const html = document.documentElement;
+      html.classList.toggle("dsh-rail-float", float);
+      setIframeRailHidden(float);
+      let btn = document.getElementById(FLOAT_TOGGLE_ID);
+      if (!float) {
+        if (btn && btn.parentNode) btn.parentNode.removeChild(btn);
+        html.classList.remove("dsh-float-open");
+        return;
+      }
+      if (!btn) {
+        btn = document.createElement("button");
+        btn.id = FLOAT_TOGGLE_ID;
+        btn.type = "button";
+        btn.innerHTML = FLOAT_TOGGLE_SVG;
+        btn.addEventListener("click", function (event) {
+          event.preventDefault();
+          event.stopPropagation();
+          setFloatPanelOpen(!html.classList.contains("dsh-float-open"));
+          // Second click of a double-click: the toggle above undid the first
+          // click's toggle, so the panel keeps its state; then jump.
+          if (event.detail === 2 && typeof jumpToLatestSession === "function") jumpToLatestSession();
+        });
+        try { document.body.appendChild(btn); } catch (err) { /* noop */ }
+      }
+      setFloatPanelOpen(floatPanelStoredOpen());
     }
 
     /**
@@ -847,7 +920,7 @@ window.__ModuleLoader__.load({
         "html.dsh-vscode-iframe.dsh-rail-right [data-sidebar-collapsed] > *, html.dsh-vscode-iframe.dsh-rail-right [data-details-collapsed] > *, html.dsh-vscode-iframe.dsh-rail-right [data-slot=\"root\"] > * > * {",
         "  direction: ltr;",
         "}",
-      ].join("\n");
+      ].concat(floatPanelCss()).join("\n");
       let tag = document.getElementById(IFRAME_SIDEBAR_STYLE_ID);
       if (!tag) {
         tag = document.createElement("style");
@@ -861,84 +934,45 @@ window.__ModuleLoader__.load({
       });
       const chrome = currentIframeChrome();
       setIframeRailSide(chrome.railSide);
-      setIframeRailHidden(chrome.railHidden);
+      applySidebarMode();
       compactNativeStatsLine();
     }
 
-    // Auto-hide the docked rail: edge hover reveals it, mouse leave collapses
-    // it after a short delay. Drives the same dsh-rail-hidden class (and the
-    // same expand-button state) as the manual toggle, so no parallel state.
-    //
-    // The dsh sidebar has TWO visible states, both living in the frame's
-    // FIRST grid track: the ~56px icon rail (the track itself) and the
-    // expanded ~200px panel (an overflow panel mounted inside the same
-    // track; the track width stays 56px). No DOM attribute survives across
-    // dsh builds, so the visible rail area is computed as the union of the
-    // track's rect and all its visible descendants — exactly the visible
-    // rail in both states — with no elementFromPoint, no climbing, no
-    // cached root.
-    let railAutoHideInstalled = false;
-    function installIframeRailAutoHide() {
-      if (typeof document === "undefined") return;
-      if (!bridgeActive && !vscodeIframeHint()) return;
-      if (railAutoHideInstalled) return;
-      railAutoHideInstalled = true;
-      let hideTimer = null;
-      const html = document.documentElement;
-      const isHidden = () => html.classList.contains("dsh-rail-hidden");
-      const show = () => {
-        if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; }
-        if (isHidden()) setIframeRailHidden(false);
-      };
-      // 0.1.26 keep zone = paint hit test, not geometry. Debug showed the
-      // sidebar column lays out ~73px right of its painted position when
-      // right-docked (RTL/zoom push layout rects out of the viewport), so
-      // rect math said "pointer outside" while the pointer sat on the rail
-      // icons and auto-hide fired instantly. elementFromPoint sees exactly
-      // what is painted: keep showing while the hit element belongs to the
-      // sidebar column subtree (rail icons, hover panel, settings gear).
-      function overRail(x, y) {
-        const frame = document.querySelector('[data-slot="root"] > *');
-        const col = frame && frame.children[0];
-        if (!col) return false;
-        let hit = null;
-        try { hit = document.elementFromPoint(x, y); } catch (err) { /* noop */ }
-        if (!hit) return false;
-        // 0.1.57: portaled popovers live on document.body OUTSIDE the sidebar
-        // column — an open row "..." menu (role=menu) or a session HoverCard
-        // (role=tooltip) resting under the pointer must NOT read as "left the
-        // rail", else auto-hide blanks the whole sidebar under the floating
-        // panel (panel content vanishes, only the body-level portal remains).
-        if (hit.closest && hit.closest('[role="menu"], [role="tooltip"]')) return true;
-        return col === hit || col.contains(hit);
-      }
-      document.addEventListener("mousemove", (event) => {
-        const w = window.innerWidth;
-        // dsh-rail-right (RTL) docks the rail on the RIGHT edge; without it
-        // the rail sits on the left. children[0] of the frame grid is the
-        // sidebar track in both dockings.
-        const railEdgeRight = html.classList.contains("dsh-rail-right");
-        // Summon zone: only the rail's own edge, 3px.
-        const nearRailEdge = railEdgeRight
-          ? event.clientX >= w - 3
-          : event.clientX <= 3;
-        if (nearRailEdge) {
-          if (isHidden()) postScopeMessage("dshScopeDiag", { action: "ah-show edge" });
-          show();
-          return;
-        }
-        if (isHidden()) return;
-        if (overRail(event.clientX, event.clientY)) { show(); return; }
-        if (!hideTimer) {
-          hideTimer = setTimeout(function () {
-            hideTimer = null;
-            postScopeMessage("dshScopeDiag", { action: "ah-fire-hide x=" + Math.round(event.clientX) });
-            if (!isHidden()) setIframeRailHidden(true);
-          }, 150);
-        }
-      }, { passive: true });
-
-      // (rightbar narrow hint moved to apply() level — see there)
+    // z-index 90/95: above conversation layers (≤70), below every dsh menu,
+    // popover and toast (100+) so menus opened from the panel stay on top.
+    function floatPanelCss() {
+      const sr = 'html.dsh-rail-float.dsh-float-open [data-slot="root"] > * > :first-child [data-slot="sidebar"] > :first-child';
+      return [
+        sr + " {",
+        "  position: fixed !important; top: 42px !important; right: 38px !important; left: auto !important; bottom: auto !important;",
+        "  width: 280px !important; height: auto !important; max-height: min(78vh, calc(100vh - 54px)) !important;",
+        "  z-index: 90 !important; direction: ltr !important; overflow: hidden !important; border-radius: 12px !important;",
+        "  background: var(--dsh-color-surface-elevated, var(--dsh-color-surface, #1f1f1e)) !important;",
+        "  border: 1px solid var(--dsh-color-border, rgba(255,255,255,0.10)) !important;",
+        "  box-shadow: 0 16px 40px rgba(0,0,0,0.45), 0 2px 8px rgba(0,0,0,0.30) !important;",
+        "  transform-origin: top right; animation: dshr-float-in 0.14s cubic-bezier(0.2, 0.8, 0.2, 1);",
+        "}",
+        // Fit-content height: every flex level down to the list may shrink,
+        // so the footer sits right under the list and only the list scrolls.
+        sr + ' [class*="_regionArea"] { display: flex !important; flex-direction: column !important; }',
+        sr + ' [class*="_regionArea"], ' + sr + ' [class*="_regionArea"] > * > *, ' + sr + ' [class*="_listArea"] { flex: 0 1 auto !important; min-height: 0 !important; }',
+        sr + ' [class*="_listArea"] > * { flex: 0 1 auto !important; min-height: 0 !important; display: flex !important; flex-direction: column !important; }',
+        sr + ' [data-dsh-claude-part="list"], ' + sr + ' [class*="_listArea"] > * > [class*="_list"] { flex: 0 1 auto !important; min-height: 0 !important; overflow-y: auto !important; overscroll-behavior: contain; }',
+        sr + ' [aria-keyshortcuts="Alt+Meta+B"] { display: none !important; }',
+        "@keyframes dshr-float-in { from { opacity: 0; transform: translateY(-4px) scale(0.98); } to { opacity: 1; transform: none; } }",
+        "#" + FLOAT_TOGGLE_ID + " {",
+        "  position: fixed; top: 42px; right: 6px; z-index: 95; width: 26px; height: 26px; padding: 0; margin: 0;",
+        "  display: grid; place-items: center; border-radius: 8px; cursor: pointer;",
+        "  border: 1px solid var(--dsh-color-border, rgba(255,255,255,0.12));",
+        "  color: var(--dsh-color-text-secondary, rgba(255,255,255,0.72));",
+        "  background: var(--dsh-color-surface-elevated, rgba(40,40,38,0.92));",
+        "  box-shadow: 0 4px 12px rgba(0,0,0,0.35);",
+        "  transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;",
+        "}",
+        "#" + FLOAT_TOGGLE_ID + ":hover { color: var(--dsh-color-text, #fff); background: var(--dsh-color-surface-hover, rgba(60,60,58,0.95)); }",
+        "#" + FLOAT_TOGGLE_ID + ".is-open { color: var(--dsh-color-accent, #d97757); border-color: color-mix(in srgb, var(--dsh-color-accent, #d97757) 45%, transparent); }",
+        "#" + FLOAT_TOGGLE_ID + " svg { width: 15px; height: 15px; display: block; }",
+      ];
     }
 
     const STATS_COMPACT_STYLE_ID = "dsh-review-compact-statsline";
@@ -1043,13 +1077,13 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * @returns {{ enabled: boolean, fileSend: string, snippetSend: string, sidebarSide: string, jobsTerminal: boolean, scopeFilter: boolean, autoWorkspace: boolean, openFilesInVscode: boolean, claudeAdapt: boolean, annotationToDsh: boolean }}
+     * @returns {{ enabled: boolean, fileSend: string, snippetSend: string, sidebarSide: string, sidebarFloat: boolean, jobsTerminal: boolean, scopeFilter: boolean, autoWorkspace: boolean, openFilesInVscode: boolean, claudeAdapt: boolean, annotationToDsh: boolean }}
      * @description Live 设置 → 代码审查 values; defaults if the scope is not ready.
      */
     function getReviewSettings() {
       // Default to pointer: matches the user's persisted yaml choice; fence
       // is only used when the live scope explicitly says fence.
-      const d = { enabled: true, fileSend: "path", snippetSend: "pointer", sidebarSide: "left", jobsTerminal: false, scopeFilter: true, autoWorkspace: true, openFilesInVscode: true, claudeAdapt: true, annotationToDsh: true, annoHeapBridge: true };
+      const d = { enabled: true, fileSend: "path", snippetSend: "pointer", sidebarSide: "left", sidebarFloat: true, jobsTerminal: false, scopeFilter: true, autoWorkspace: true, openFilesInVscode: true, claudeAdapt: true, annotationToDsh: true, annoHeapBridge: true };
       if (!reviewSettingsScope || typeof reviewSettingsScope.getSnapshot !== "function") return d;
       const snap = reviewSettingsScope.getSnapshot();
       const val = snap && snap.value;
@@ -1063,6 +1097,7 @@ window.__ModuleLoader__.load({
         fileSend: v.fileSend === "prefixed" ? "prefixed" : "path",
         snippetSend: v.snippetSend === "pointer" ? "pointer" : "fence",
         sidebarSide: v.sidebarSide === "right" ? "right" : "left",
+        sidebarFloat: v.sidebarFloat !== false,
         jobsTerminal: v.jobsTerminal === true,
         scopeFilter: v.scopeFilter !== false,
         autoWorkspace: v.autoWorkspace !== false,
@@ -2397,7 +2432,6 @@ window.__ModuleLoader__.load({
             reportActivity();
             installClipboardBridge();
             installIframeSidebarPeek();
-            installIframeRailAutoHide();
             compactNativeStatsLine();
             setTimeout(compactNativeStatsLine, 800);
             applyZoom();
@@ -2407,7 +2441,6 @@ window.__ModuleLoader__.load({
           }
           if (msg.type === "dshChromeState") {
             if (msg.railSide === "left" || msg.railSide === "right") setIframeRailSide(msg.railSide);
-            if (typeof msg.railHidden === "boolean") setIframeRailHidden(msg.railHidden);
             if (msg.zoom !== undefined && msg.zoom !== null) {
               zoom = clampIframeZoom(msg.zoom);
               applyZoom();
@@ -3336,6 +3369,7 @@ window.__ModuleLoader__.load({
     let reviewSettingsScope = null;
     const REVIEW_CARD_CSS_ID = "dsh-review/plugin-card.css";
     const REVIEW_CARD_CSS = "" +
+      ".dshr-page{list-style:none;margin:0;padding:0}" +
       ".dshr-card{border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-3);border-radius:12px;list-style:none;transition:border-color .16s,background .16s}" +
       ".dshr-card:hover{border-color:var(--dsw-alias-label-dimmed)}" +
       ".dshr-cardOpen{background:var(--dsw-alias-bg-layer-2);border-color:var(--dsw-alias-label-dimmed)}" +
@@ -3460,16 +3494,17 @@ window.__ModuleLoader__.load({
           return function () { if (typeof off === "function") off(); };
         });
         ensureReviewCardCss();
-        function ReviewSettingsCard() {
+        function ReviewSettingsCard(props) {
           const snap = useSyncExternalStore(
             function (onStore) { return reviewScope.subscribe(onStore); },
             function () { return reviewScope.getSnapshot(); },
           );
-          const [open, setOpen] = useState(false);
+          const [open, setOpen] = useState(!!(props && props.page));
           const [draftEnabled, setDraftEnabled] = useState(null);
           const [draftFileSend, setDraftFileSend] = useState(null);
           const [draftSnippetSend, setDraftSnippetSend] = useState(null);
           const [draftSidebarSide, setDraftSidebarSide] = useState(null);
+          const [draftSidebarFloat, setDraftSidebarFloat] = useState(null);
           const [draftJobsTerminal, setDraftJobsTerminal] = useState(null);
           const [draftScopeFilter, setDraftScopeFilter] = useState(null);
           const [draftAutoWorkspace, setDraftAutoWorkspace] = useState(null);
@@ -3484,6 +3519,7 @@ window.__ModuleLoader__.load({
           const liveFileSend = live.fileSend;
           const liveSnippetSend = live.snippetSend;
           const liveSidebarSide = live.sidebarSide;
+          const liveSidebarFloat = live.sidebarFloat;
           const liveJobsTerminal = live.jobsTerminal;
           const liveScopeFilter = live.scopeFilter;
           const liveAutoWorkspace = live.autoWorkspace;
@@ -3495,6 +3531,7 @@ window.__ModuleLoader__.load({
           const shownFileSend = draftFileSend == null ? liveFileSend : draftFileSend;
           const shownSnippetSend = draftSnippetSend == null ? liveSnippetSend : draftSnippetSend;
           const shownSidebarSide = draftSidebarSide == null ? liveSidebarSide : draftSidebarSide;
+          const shownSidebarFloat = draftSidebarFloat == null ? liveSidebarFloat : draftSidebarFloat;
           const shownJobsTerminal = draftJobsTerminal == null ? liveJobsTerminal : draftJobsTerminal;
           const shownScopeFilter = draftScopeFilter == null ? liveScopeFilter : draftScopeFilter;
           const shownAutoWorkspace = draftAutoWorkspace == null ? liveAutoWorkspace : draftAutoWorkspace;
@@ -3506,6 +3543,7 @@ window.__ModuleLoader__.load({
             || shownFileSend !== liveFileSend
             || shownSnippetSend !== liveSnippetSend
             || shownSidebarSide !== liveSidebarSide
+            || shownSidebarFloat !== liveSidebarFloat
             || shownJobsTerminal !== liveJobsTerminal
             || shownScopeFilter !== liveScopeFilter
             || shownAutoWorkspace !== liveAutoWorkspace
@@ -3521,6 +3559,7 @@ window.__ModuleLoader__.load({
             setDraftFileSend(null);
             setDraftSnippetSend(null);
             setDraftSidebarSide(null);
+            setDraftSidebarFloat(null);
             setDraftJobsTerminal(null);
             setDraftScopeFilter(null);
             setDraftAutoWorkspace(null);
@@ -3529,7 +3568,7 @@ window.__ModuleLoader__.load({
             setDraftAnnotationToDsh(null);
             setDraftAnnoHeapBridge(null);
             setFailed(false);
-          }, [liveEnabled, liveFileSend, liveSnippetSend, liveSidebarSide, liveJobsTerminal, liveScopeFilter, liveAutoWorkspace, liveOpenFilesVs, liveClaudeAdapt, liveAnnotationToDsh, liveAnnoHeapBridge]);
+          }, [liveEnabled, liveFileSend, liveSnippetSend, liveSidebarSide, liveSidebarFloat, liveJobsTerminal, liveScopeFilter, liveAutoWorkspace, liveOpenFilesVs, liveClaudeAdapt, liveAnnotationToDsh, liveAnnoHeapBridge]);
 
           if (!available) return null;
 
@@ -3538,6 +3577,7 @@ window.__ModuleLoader__.load({
             setDraftFileSend(null);
             setDraftSnippetSend(null);
             setDraftSidebarSide(null);
+            setDraftSidebarFloat(null);
             setDraftJobsTerminal(null);
             setDraftScopeFilter(null);
             setDraftAutoWorkspace(null);
@@ -3566,6 +3606,9 @@ window.__ModuleLoader__.load({
             }
             if (shownSidebarSide !== liveSidebarSide) {
               chain = chain.then(function () { return reviewScope.set("sidebarSide", shownSidebarSide); });
+            }
+            if (shownSidebarFloat !== liveSidebarFloat) {
+              chain = chain.then(function () { return reviewScope.set("sidebarFloat", shownSidebarFloat); });
             }
             if (shownJobsTerminal !== liveJobsTerminal) {
               chain = chain.then(function () { return reviewScope.set("jobsTerminal", shownJobsTerminal); });
@@ -3677,7 +3720,23 @@ window.__ModuleLoader__.load({
                     h("option", { value: "left" }, "左侧"),
                     h("option", { value: "right" }, "右侧"),
                   ),
-                  h("p", { className: "dshr-hint" }, "dsh 会话侧栏贴窗口左/右边缘（VS Code 侧栏内生效，保存后立即换边）。"),
+                  h("p", { className: "dshr-hint" }, "常驻侧栏贴窗口左/右边缘（VS Code 侧栏内生效，保存后立即换边；悬浮模式下不显示侧栏）。"),
+                ),
+              ),
+              h("div", { className: "dshr-field" },
+                h("input", {
+                  id: "dshr-sidebar-float",
+                  type: "checkbox",
+                  checked: shownSidebarFloat,
+                  disabled: !writable || saving,
+                  onChange: function (e) {
+                    setDraftSidebarFloat(!!e.target.checked);
+                    setFailed(false);
+                  },
+                }),
+                h("div", null,
+                  h("label", { htmlFor: "dshr-sidebar-float" }, "会话列表改为悬浮按钮"),
+                  h("p", { className: "dshr-hint" }, "开启：不显示侧栏，右上角常驻一个按钮：单击展开/收起悬浮会话列表（含底部设置，开关状态会记住），双击跳回本工作区最近活跃的会话。关闭：侧栏常驻显示。仅 VS Code 侧栏内生效。"),
                 ),
               ),
               h("div", { className: "dshr-field" },
@@ -3810,23 +3869,24 @@ window.__ModuleLoader__.load({
             ) : null,
           );
         }
+        function ReviewSettingsPage() {
+          return h("ul", { className: "dshr-page" }, h(ReviewSettingsCard, { page: true }));
+        }
         sctx.effect(function () {
           const registered = [];
+          // Own page in the Settings dialog nav (below the built-in sections,
+          // which use order -10..20). The settings shell declares the slot
+          // after we load, so register from slots.inject's callback - a bare
+          // register races the owner and throws "slot is not declared".
           const seats = [
-            // dsh rc.2 plugin-manager page: keyed by the bundle package name;
-            // the manager client declares this slot and loads AFTER us, so we
-            // must go through slots.inject (waits for the declaration) and
-            // register from its callback - a bare register races the owner and
-            // throws "slot is not declared" (voice-input does exactly this).
-            { name: "plugins.bundle.config", key: "dsh-review" },
-            // Upstream dsh master settings card slot; no owner on rc.2, the
-            // inject stays pending and pairs automatically on future hosts.
-            { name: "settings.plugin.item", key: REVIEW_SETTINGS_NS },
+            { name: "settings.section", id: "dsh-review", order: 200, label: function () { return "代码审查"; }, component: ReviewSettingsPage },
           ];
           seats.forEach(function (seat) {
             const off = sctx.slots.inject(seat.name, function () {
               try {
-                sctx.slots.register(seat, ReviewSettingsCard);
+                const opts = Object.assign({}, seat);
+                delete opts.component;
+                sctx.slots.register(opts, seat.component);
               } catch (err) {
                 console.log("[dsh-review] seat skip", seat.name, (err && err.message || "").slice(0, 80));
               }
@@ -3956,7 +4016,6 @@ window.__ModuleLoader__.load({
     }
     function apply(ctx) {
       installIframeSidebarPeek();
-      installIframeRailAutoHide();
       installReviewSettingsCard(ctx);
       // 0.2.0: narrow-sidebar hint for the RIGHT sidebar (workspace files).
       // dsh's computeColumns returns rightbar=0 when available width < 300px,
@@ -4204,6 +4263,35 @@ window.__ModuleLoader__.load({
           return false;
         }
       }
+
+      // Same "most recently active" rule as the refresh landing: newest user
+      // message in this window's workspaces; all workspaces when no folder is
+      // open (a session outside the scope would just be pulled back).
+      jumpToLatestSession = function () {
+        try {
+          const wsnap = ctx.workspaces.list.getSnapshot();
+          const ssnap = ctx.sessions.list.getSnapshot();
+          const items = Array.isArray(wsnap && wsnap.items) ? wsnap.items : [];
+          const byId = (ssnap && ssnap.byId) || {};
+          let best = null;
+          if (scopeIsActive()) {
+            best = latestWhitelistedSession(items, byId);
+          } else {
+            let bestAt = -Infinity;
+            for (const id of Object.keys(byId)) {
+              const sum = byId[id];
+              if (!isRealSession(sum) || sum.archived) continue;
+              const at = typeof sum.updatedAt === "number" ? sum.updatedAt : 0;
+              if (at > bestAt) { best = id; bestAt = at; }
+            }
+          }
+          if (!best || currentSessionOf(ssnap) === best) return false;
+          return openKnownSession(ctx.sessions, best, "");
+        } catch (e) {
+          console.warn("[dsh-review] jump to latest session failed:", e && e.message || e);
+          return false;
+        }
+      };
 
       /**
        * @description Open latest whitelist chat, or a blank session if none exist.

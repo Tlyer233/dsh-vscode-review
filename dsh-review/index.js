@@ -14,7 +14,7 @@ const REVIEW_NS = 'dsh-review'
 /**
  * Minimal schemastery-shaped schema: callable resolver + toJSON for describe().
  * @param {unknown} value
- * @returns {{ enabled: boolean, fileSend: string, snippetSend: string, sidebarSide: string, jobsTerminal: boolean, scopeFilter: boolean, autoWorkspace: boolean, openFilesInVscode: boolean, claudeAdapt: boolean, annotationToDsh: boolean }}
+ * @returns {{ enabled: boolean, fileSend: string, snippetSend: string, sidebarSide: string, sidebarFloat: boolean, jobsTerminal: boolean, scopeFilter: boolean, autoWorkspace: boolean, openFilesInVscode: boolean, claudeAdapt: boolean, annotationToDsh: boolean }}
  */
 function reviewConfigSchema(value) {
   const v = value && typeof value === 'object' ? value : {}
@@ -23,6 +23,7 @@ function reviewConfigSchema(value) {
     fileSend: v.fileSend === 'prefixed' ? 'prefixed' : 'path',
     snippetSend: v.snippetSend === 'pointer' ? 'pointer' : 'fence',
     sidebarSide: v.sidebarSide === 'right' ? 'right' : 'left',
+    sidebarFloat: v.sidebarFloat !== false,
     // Off by default: background-job terminals stay out of VS Code until asked.
     jobsTerminal: v.jobsTerminal === true,
     // Both on by default: 0.1.43 row filter and 0.1.45 auto-register shipped
@@ -48,6 +49,7 @@ reviewConfigSchema.toJSON = function toJSON() {
       fileSend: { type: 'string', default: 'path' },
       snippetSend: { type: 'string', default: 'fence' },
       sidebarSide: { type: 'string', default: 'left' },
+      sidebarFloat: { type: 'boolean', default: true },
       jobsTerminal: { type: 'boolean', default: false },
       scopeFilter: { type: 'boolean', default: true },
       autoWorkspace: { type: 'boolean', default: true },

@@ -1,3 +1,26 @@
+## 2.1.16 ~ 2.1.18:会话列表改为右上角悬浮按钮 / 设置移入 Settings 对话框 / 双击回最近会话(2026-11-07)
+
+- **悬浮按钮取代侧边隐藏侧栏**(原"贴边自动隐藏"容易误触):新设置 `sidebarFloat`(默认开,"会话列表改为悬浮按钮")。
+  - 开:不渲染侧栏列,右上角(`top:42px; right:6px`)常驻一个 26×26 按钮。按钮挂在 `document.body` 上,所以进 Plugins 等页面时也在。
+  - 单击:展开 / 收起悬浮面板,面板内容就是原侧栏:搜索、新会话、插件、会话列表、底部设置行。
+    - 面板宽 280px,`max-height: min(78vh, 100vh - 54px)`,只有会话列表区自身滚动;
+    - 展开 / 收起状态存 localStorage,刷新后保留;
+    - 若 dsh 侧栏处于折叠状态,展开时自动点一次 Alt+Meta+B。
+  - 关:侧栏常驻显示,左 / 右位置设置照旧。
+  - 删掉 `installIframeRailAutoHide`(靠近边缘才显示侧栏)以及 `dshChromeState.railHidden` 这条路径。
+- **按钮常驻可见**:最初做的是鼠标靠近才显示,用户那边看不到,改为一直显示。
+- **面板盖住过滤弹层**:面板最初 `z-index:2147483000`,把 dsh 自己的弹层(z ≥ 100)压在下面点不到。改为面板 90、按钮 95,低于所有 dsh 弹层、高于正文(≤ 70)。
+- **"代码审查"设置移进 Settings 对话框**:原来在 Plugins 页里的折叠卡片,现在通过 `settings.section` slot 注册为左侧导航一项(order 200,排在 Claude Style 下面)。卡片在页面模式下默认展开,内容和保存逻辑不变。
+- **双击按钮回到最近活跃会话**:判断 `event.detail === 2`。两次单击先开再关,面板回到原状态,然后跳转。
+  - "最近活跃"与刷新落地同口径,即本窗口工作区里最后一条用户消息最新的会话;
+  - 没打开工作区时取全部未归档的真实会话(排除 subagent);
+  - 已经在该会话时不做任何事。
+- 验证(CDP,ssh 侧栏):
+  - Settings 左栏为 `… / Claude Style / 代码审查`,点进去能看到全部设置项;
+  - 模拟 detail 1 → 2 的点击,面板状态先开后关,无告警;
+  - 面板与按钮在截图里位置正确。
+- 部署:Mac 与 3080 均装 2.1.18(非软链,md5 一致)。3080 `systemctl --user restart dsh-web`;Mac 用 setsid 双 fork 重启。
+
 ## 2.1.15 + ext 2.1.19:刷新后落到错的会话 / 缩放后浮层飘移 / 插入代码块后不聚焦(2026-11-07)
 
 - **刷新后不跳到最后对话的会话**(用户实测已修):`isRealSession` 把 `parentId` 当成 subagent 标记一律排除,而 fork 出来的会话(如 `CFine论文TBPS难点 (6)`)在客户端 store 里同样带 `parentId`(指向被 fork 的会话)→ 工作区里所有 fork 都被跳过,落到"最新的非 fork 会话"(`论文摘要逐句翻译`,看起来像"最近创建")。改为只排除真 subagent:`origin==='subagent'`、`projectionValues.subagent` 非空,或带 parent 且 id 不是 `session-` 前缀(dsh 给 subagent 的 id 形态)。实测 store:fork `subagent=null`,subagent `subagent={mode,label}`;新规则选中 (6),旧规则选中 `论文摘要逐句翻译`,与用户所见一致。"活跃"口径不变 = 最后一条用户消息时间(`updatedAt`)。
