@@ -1,3 +1,13 @@
+## 2.1.13:VS Code 侧栏里 dsh 复制按钮 / Cmd+C 时灵时不灵(2026-11-07)
+
+- 根因(CDP 实测 ssh 侧栏 iframe):页面是 `http://100.85.98.34:3082`,非安全上下文 → `isSecureContext=false`、`navigator.clipboard` 不存在。`installClipboardBridge` 见 `!navigator.clipboard` 直接 return,桥没装;dsh 代码块复制按钮于是退到隐藏 textarea + `execCommand('copy')`,webview iframe 里这条路写不进系统剪贴板,扩展也收不到 `dshCopyText`。Cmd+C 在 textarea 里选中时,`getSelectionText` 只处理 INPUT,`window.getSelection()` 看不到表单内选区 → 返回空 → 不拦截、走原生 → 同样失败。本机侧栏(`127.0.0.1` 算安全上下文)基本正常,所以"有时候"。
+- 修复(只改 client.js,扩展不动,`dshCopyText` 通道早已存在):
+  - 缺 `navigator.clipboard` 时补一个只写的 shim(`writeText` / `write` 取 text/plain → 发给扩展),不提供 read,粘贴路径与以前一致;
+  - 包 `document.execCommand`:`copy` / `cut` 时把当前选区发给扩展,再照常调用原函数;
+  - `getSelectionText` 的表单分支加上 TEXTAREA(按 `selectionStart/End` 截取)。
+- 验证:ssh 侧栏 iframe 里注入同逻辑后点代码块 Copy,`pbpaste` 拿到完整代码块;用户实测通过。
+- 部署:本机 Mac web profile 装 2.1.13(非软链)并重启 3080(孤儿 pid 90929 → 新进程);3080 机器装 2.1.13(md5 与源码一致),杀掉占 3080 口近 4 天的孤儿 pid 2477219,`dsh-web.service` 接管(此前它因端口被占一直在重启,NRestarts≈5 万),接管后不再增长;3082 auth proxy 不动。
+
 ## ext 2.1.18:Copilot 里的截图附件发送时带不上(2026-11-07)
 
 - 11-07 10:24 日志:`scan: 3 element, 1 image entries` → 截图已 `remote-delivered` → `[trump] heap shot failed: TypeError: Assignment to constant variable.` → `0 shot(s)`,消息里没有"浏览器截图附件"段。根因:截图写盘 `const p = ...; p = await annoPut(p, ...)`(2.0.2 / 7a151da 引入),截图第一次真正走到这一行就抛错。改为一次性 `const p = await annoPut(...)`。不是 2.1.15~2.1.17 的改动引入,但之前的日志里从没有过 image entries > 0 的发送。

@@ -1454,7 +1454,8 @@ window.__ModuleLoader__.load({
           const el = document.activeElement;
           const expanded = occurrenceExpandedSelection(el);
           if (expanded !== null) return expanded;
-          if (el && el.tagName === "INPUT" && typeof el.value === "string") {
+          // window.getSelection() does not see a selection inside a form field.
+          if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA") && typeof el.value === "string") {
             const start = el.selectionStart;
             const end = el.selectionEnd;
             if (Number.isFinite(start) && Number.isFinite(end) && start < end) return el.value.slice(start, end);
@@ -2525,12 +2526,50 @@ window.__ModuleLoader__.load({
         // inside the VS Code webview iframe. Bridge that to the extension.
         function installClipboardBridge() {
           if (clipboardBridged) return;
-          if (!navigator.clipboard) return;
           clipboardBridged = true;
           function sendCopy(text) {
             const s = String(text ?? "");
             if (!s) return;
             postToParent({ type: "dshCopyText", text: s });
+          }
+          function forwardPlainText(items) {
+            try {
+              const list = items || [];
+              for (let i = 0; i < list.length; i++) {
+                const item = list[i];
+                if (!item || typeof item.getType !== "function") continue;
+                const types = item.types || [];
+                if (Array.prototype.indexOf.call(types, "text/plain") < 0) continue;
+                item.getType("text/plain").then(function (blob) {
+                  return blob && typeof blob.text === "function" ? blob.text() : "";
+                }).then(function (t) { sendCopy(t); }).catch(function () { /* noop */ });
+                break;
+              }
+            } catch (err) { /* noop */ }
+          }
+          // A plain-http host (the ssh sidebar's http://<ip>:3082) is not a
+          // secure context, so navigator.clipboard does not exist and dsh's copy
+          // buttons fall back to execCommand("copy") on a hidden textarea.
+          // Writes go through the extension either way; reads stay absent.
+          try {
+            const origExec = document.execCommand;
+            document.execCommand = function (command) {
+              const c = String(command || "").toLowerCase();
+              if (c === "copy" || c === "cut") sendCopy(getSelectionText());
+              return origExec.apply(document, arguments);
+            };
+          } catch (err) { /* noop */ }
+          if (!navigator.clipboard) {
+            try {
+              Object.defineProperty(navigator, "clipboard", {
+                configurable: true,
+                value: {
+                  writeText: function (text) { sendCopy(text); return Promise.resolve(); },
+                  write: function (items) { forwardPlainText(items); return Promise.resolve(); },
+                },
+              });
+            } catch (err) { /* noop */ }
+            return;
           }
           try {
             if (typeof navigator.clipboard.writeText === "function") {
@@ -2545,19 +2584,7 @@ window.__ModuleLoader__.load({
             if (typeof navigator.clipboard.write === "function") {
               const origWrite = navigator.clipboard.write.bind(navigator.clipboard);
               navigator.clipboard.write = function (items) {
-                try {
-                  const list = items || [];
-                  for (let i = 0; i < list.length; i++) {
-                    const item = list[i];
-                    if (!item || typeof item.getType !== "function") continue;
-                    const types = item.types || [];
-                    if (Array.prototype.indexOf.call(types, "text/plain") < 0) continue;
-                    item.getType("text/plain").then(function (blob) {
-                      return blob && typeof blob.text === "function" ? blob.text() : "";
-                    }).then(function (t) { sendCopy(t); }).catch(function () { /* noop */ });
-                    break;
-                  }
-                } catch (err) { /* noop */ }
+                forwardPlainText(items);
                 return origWrite(items).catch(function () { return undefined; });
               };
             }
