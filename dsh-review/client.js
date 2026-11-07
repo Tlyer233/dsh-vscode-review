@@ -595,6 +595,10 @@ window.__ModuleLoader__.load({
       return { railSide: railSide, railHidden: railHidden, zoom: zoom };
     }
 
+    function hostScalesFrame() {
+      try { return new URLSearchParams(String(location.search || "")).get("_dshFrameZoom") === "1"; } catch (err) { return false; }
+    }
+
     /**
      * @returns {{ railSide: "left" | "right", railHidden: boolean, zoom: number }}
      */
@@ -2344,7 +2348,9 @@ window.__ModuleLoader__.load({
 
         function applyZoom() {
           if (!inVscodeIframe() && !vscodeIframeHint()) return;
-          const value = zoom === 1 ? "" : String(zoom);
+          // A host that scales the iframe element itself (ext ≥ 2.1.19) owns the
+          // zoom; CSS zoom here would double it and desync popover positioning.
+          const value = zoom === 1 || hostScalesFrame() ? "" : String(zoom);
           try { document.documentElement.style.zoom = value; } catch (err) { /* noop */ }
           try { document.body.style.zoom = ""; } catch (err) { /* noop */ }
           persistIframeChrome({ zoom: zoom });
@@ -4066,8 +4072,16 @@ window.__ModuleLoader__.load({
        */
       function isRealSession(summary) {
         if (!summary || summary.blank) return false;
-        if (summary.origin === "subagent" || summary.parentId) return false;
-        return true;
+        return !isSubagentSession(summary);
+      }
+
+      // Forks also carry parentId, so parentId alone must not exclude them.
+      function isSubagentSession(summary) {
+        if (summary.origin === "subagent") return true;
+        const pv = summary.projectionValues;
+        if (pv && pv.subagent) return true;
+        const id = String(summary.id || summary.sessionId || "");
+        return !!(summary.parentId || summary.parentSessionId) && id.indexOf("session-") !== 0;
       }
 
       function latestBoundSession(workspace, byId) {

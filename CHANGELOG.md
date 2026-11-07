@@ -1,3 +1,10 @@
+## 2.1.15 + ext 2.1.19:刷新后落到错的会话 / 缩放后浮层飘移 / 插入代码块后不聚焦(2026-11-07)
+
+- **刷新后不跳到最后对话的会话**(用户实测已修):`isRealSession` 把 `parentId` 当成 subagent 标记一律排除,而 fork 出来的会话(如 `CFine论文TBPS难点 (6)`)在客户端 store 里同样带 `parentId`(指向被 fork 的会话)→ 工作区里所有 fork 都被跳过,落到"最新的非 fork 会话"(`论文摘要逐句翻译`,看起来像"最近创建")。改为只排除真 subagent:`origin==='subagent'`、`projectionValues.subagent` 非空,或带 parent 且 id 不是 `session-` 前缀(dsh 给 subagent 的 id 形态)。实测 store:fork `subagent=null`,subagent `subagent={mode,label}`;新规则选中 (6),旧规则选中 `论文摘要逐句翻译`,与用户所见一致。"活跃"口径不变 = 最后一条用户消息时间(`updatedAt`)。
+- **缩放后浮层/选区飘移**(用户实测已修):侧栏缩放原用 `document.documentElement.style.zoom`。Chromium 150 的标准化 CSS zoom 下 `getBoundingClientRect` 与布局视口不一致(实测 zoom 0.8:`innerWidth=813`、body 宽 1016;zoom 1.1 时模型按钮报 `top=1684` > 视口 1032)→ 浮层定位与选区命中都按错误坐标算。改由 webview 宿主缩放 iframe 元素本身(`width/height = 100%/z` + `transform: scale(z)`,ext 2.1.19 `applyFrameZoom`),页面内始终 zoom 1。宿主在 iframe URL 上带 `_dshFrameZoom=1`,客户端见此参数才放弃 CSS zoom(旧扩展 + 新客户端仍走旧路径,不会丢缩放)。
+- **Cmd+L 插入代码块后光标不在 dsh 输入框**:插入完成后扩展本来就会 `focusDshSidebar()` 再发 `dshFocusComposer`,但宿主页转发白名单里没有这个类型,消息被丢 → 这条聚焦路径从未生效。白名单补上并同时 `frame.focus()`;150ms 后再补发一次,防视图焦点晚于第一次到位。终端选区(Cmd+U Cmd+U)走同一条插入结果路径。
+- 部署:Mac 与 3080 均装 2.1.15(非软链,md5 与源码一致),3080 `systemctl --user restart dsh-web`(NRestarts=0)。Mac 上 10:33 那次重启用 `nohup … & disown` 起的进程随工具 shell 退出被带走,约 10:33–10:45 本机 dsh 未运行;改用 `setsid` 双 fork 脱离后常驻(之后跨命令验证仍在)。扩展 2.1.19 已装入 `~/.vscode/extensions`,需 Reload Window 生效;生效前当前窗口已用 CDP 临时注入同等宿主逻辑。
+
 ## 2.1.13:VS Code 侧栏里 dsh 复制按钮 / Cmd+C 时灵时不灵(2026-11-07)
 
 - 根因(CDP 实测 ssh 侧栏 iframe):页面是 `http://100.85.98.34:3082`,非安全上下文 → `isSecureContext=false`、`navigator.clipboard` 不存在。`installClipboardBridge` 见 `!navigator.clipboard` 直接 return,桥没装;dsh 代码块复制按钮于是退到隐藏 textarea + `execCommand('copy')`,webview iframe 里这条路写不进系统剪贴板,扩展也收不到 `dshCopyText`。Cmd+C 在 textarea 里选中时,`getSelectionText` 只处理 INPUT,`window.getSelection()` 看不到表单内选区 → 返回空 → 不拦截、走原生 → 同样失败。本机侧栏(`127.0.0.1` 算安全上下文)基本正常,所以"有时候"。

@@ -284,6 +284,7 @@ function chromeQuery(chrome) {
   return '_dshRail=' + encodeURIComponent(c.railSide)
     + '&_dshHidden=' + (c.railHidden ? '1' : '0')
     + '&_dshZoom=' + encodeURIComponent(String(c.zoom))
+    + '&_dshFrameZoom=1'
 }
 
 /**
@@ -606,6 +607,20 @@ function dshWebviewHtml(url, opts) {
     '  var overlay = document.getElementById("overlay");' +
     '  var connected = false;' +
     '  var dshChrome = ' + JSON.stringify(chrome) + ';' +
+    // CSS zoom inside the dsh page desyncs getBoundingClientRect from the
+    // layout viewport (Chromium standardized zoom), so floating UI and
+    // selection hit-testing drift. Scale the iframe element instead: the
+    // page renders at zoom 1 in a 1/z-sized viewport.
+    '  function applyFrameZoom(z) {' +
+    '    z = Number(z) || 1;' +
+    '    if (!frame) return;' +
+    '    var s = frame.style;' +
+    '    if (z === 1) { s.position = ""; s.left = ""; s.top = ""; s.width = ""; s.height = ""; s.transform = ""; s.transformOrigin = ""; return; }' +
+    '    s.position = "absolute"; s.left = "0"; s.top = "0";' +
+    '    s.width = (100 / z) + "%"; s.height = (100 / z) + "%";' +
+    '    s.transformOrigin = "0 0"; s.transform = "scale(" + z + ")";' +
+    '  }' +
+    '  applyFrameZoom(dshChrome.zoom);' +
     '  var watchdog = setTimeout(function () {' +
     '    if (!connected && overlay) overlay.classList.remove("hidden");' +
     '  }, 8000);' +
@@ -779,15 +794,16 @@ function dshWebviewHtml(url, opts) {
     '    } else if (msg.type === "dshPasteImageRequest") {' +
     '      pasteLog("parent image request hadText=" + !!msg.hadText);' +
     '      forwardParentImages(!!msg.hadText);' +
-    '    } else if (msg.type === "dshInsertText" || msg.type === "dshInsertRefs" || msg.type === "dshPasteText" || msg.type === "dshPasteImages" || msg.type === "dshSetScope" || msg.type === "dshPendingUpdated" || msg.type === "dshAnnoDock" || msg.type === "dshRemoveReference" || msg.type === "dshAnnoPrepared" || msg.type === "dshAnnoFocus" || msg.type === "dshAnnoProg") {' +
+    '    } else if (msg.type === "dshInsertText" || msg.type === "dshInsertRefs" || msg.type === "dshPasteText" || msg.type === "dshPasteImages" || msg.type === "dshSetScope" || msg.type === "dshPendingUpdated" || msg.type === "dshAnnoDock" || msg.type === "dshRemoveReference" || msg.type === "dshAnnoPrepared" || msg.type === "dshAnnoFocus" || msg.type === "dshAnnoProg" || msg.type === "dshFocusComposer") {' +
     '      if (frame && frame.contentWindow) {' +
     '        frame.contentWindow.postMessage(msg, "*");' +
-    '        if (msg.type === "dshInsertText" || msg.type === "dshInsertRefs") {' +
+    '        if (msg.type === "dshInsertText" || msg.type === "dshInsertRefs" || msg.type === "dshFocusComposer") {' +
     '          try { frame.focus(); } catch (e) {}' +
     '        }' +
     '      }' +
     '    } else if (msg.type === "dshChromeState") {' +
     '      dshChrome = { railSide: msg.railSide === "right" ? "right" : "left", railHidden: !!msg.railHidden, zoom: Number(msg.zoom) || 1 };' +
+    '      applyFrameZoom(dshChrome.zoom);' +
     '      vscode.postMessage(msg);' +
     '    } else if (msg.type === "dshViewActive" || msg.type === "dshOpenExternal" || msg.type === "dshOpenFile" || msg.type === "dshOpenPlan" || msg.type === "dshPendingRequest" || msg.type === "dshReviewAll" || msg.type === "dshScopeViolation" || msg.type === "dshScopeMissing" || msg.type === "dshScopeEmpty" || msg.type === "dshWorkspaceCreated" || msg.type === "dshScopeDiag" || msg.type === "dshScopeRequest" || msg.type === "dshCopyText" || msg.type === "dshPasteRequest" || msg.type === "dshInsertResult" || msg.type === "dshShowCommands" || msg.type === "dshAnnoDelete" || msg.type === "dshAnnoConsumed" || msg.type === "dshAnnoPrepareReq") {' +
     '      vscode.postMessage(msg);' +
@@ -1518,8 +1534,11 @@ function setupDshBrowser(context) {
           // Pull VS Code focus back to the sidebar after every chip insert
           // (selection AND drag-drop flows), then ping the iframe so the DOM
           // focus lands on the composer (the Lexical caret needs it).
+          // Second ping: the view's DOM focus can settle after the first one
+          // (seen with Cmd+L from the editor).
           void focusDshSidebar().then(() => {
             void view.webview.postMessage({ type: 'dshFocusComposer' })
+            setTimeout(() => { void view.webview.postMessage({ type: 'dshFocusComposer' }) }, 150)
           })
         }
       })
