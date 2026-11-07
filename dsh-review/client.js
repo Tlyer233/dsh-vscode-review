@@ -4285,7 +4285,11 @@ window.__ModuleLoader__.load({
               if (at > bestAt) { best = id; bestAt = at; }
             }
           }
-          if (!best || currentSessionOf(ssnap) === best) return false;
+          if (!best) return false;
+          // Plugins / Automation pages keep the last session retained by the
+          // main view, so "current" alone doesn't mean the chat is on screen.
+          const chatShown = !!document.querySelector('[contenteditable="true"], textarea');
+          if (chatShown && currentSessionOf(ssnap) === best) return false;
           return openKnownSession(ctx.sessions, best, "");
         } catch (e) {
           console.warn("[dsh-review] jump to latest session failed:", e && e.message || e);
