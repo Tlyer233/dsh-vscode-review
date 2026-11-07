@@ -795,11 +795,19 @@ window.__ModuleLoader__.load({
         btn.title = label;
       }
       // A collapsed (icon-rail) sidebar would float as a 56px strip.
-      if (open) {
-        const t = document.querySelector('[data-slot="root"] [aria-keyshortcuts="Alt+Meta+B"]');
-        if (t && /expand/i.test(String(t.getAttribute("aria-label") || ""))) {
-          try { t.click(); } catch (err) { /* noop */ }
-        }
+      if (open) expandCollapsedSidebar();
+    }
+
+    function expandCollapsedSidebar() {
+      const root = document.querySelector('[data-slot="root"]');
+      if (!root) return;
+      const host = root.querySelector(':scope > * > :first-child [data-slot="sidebar"] > :first-child');
+      const t = root.querySelector('[aria-keyshortcuts="Alt+Meta+B"]');
+      if (!t) return;
+      const collapsed = (host && /_collapsed\b/.test(String(host.className || ""))) ||
+        /expand|open/i.test(String(t.getAttribute("aria-label") || ""));
+      if (collapsed) {
+        try { t.click(); } catch (err) { /* noop */ }
       }
     }
 
@@ -832,6 +840,7 @@ window.__ModuleLoader__.load({
         try { document.body.appendChild(btn); } catch (err) { /* noop */ }
       }
       installFloatOutsideClose();
+      expandCollapsedSidebar();
       setFloatPanelOpen(floatPanelStoredOpen());
     }
 
