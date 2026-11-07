@@ -831,7 +831,28 @@ window.__ModuleLoader__.load({
         });
         try { document.body.appendChild(btn); } catch (err) { /* noop */ }
       }
+      installFloatOutsideClose();
       setFloatPanelOpen(floatPanelStoredOpen());
+    }
+
+    let floatOutsideCloseInstalled = false;
+    // Menus / dialogs opened from the panel are portaled outside
+    // [data-slot="root"]; only presses inside root but outside the panel close.
+    function installFloatOutsideClose() {
+      if (floatOutsideCloseInstalled) return;
+      floatOutsideCloseInstalled = true;
+      document.addEventListener("pointerdown", function (event) {
+        const html = document.documentElement;
+        if (!html.classList.contains("dsh-rail-float") || !html.classList.contains("dsh-float-open")) return;
+        const target = event.target;
+        if (!target || typeof target.closest !== "function") return;
+        if (target.closest("#" + FLOAT_TOGGLE_ID)) return;
+        const root = target.closest('[data-slot="root"]');
+        if (!root) return;
+        const panel = root.querySelector(':scope > * > :first-child [data-slot="sidebar"] > :first-child');
+        if (panel && panel.contains(target)) return;
+        setFloatPanelOpen(false);
+      }, true);
     }
 
     /**
