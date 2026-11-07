@@ -1,3 +1,9 @@
+## ext 2.1.18:Copilot 里的截图附件发送时带不上(2026-11-07)
+
+- 11-07 10:24 日志:`scan: 3 element, 1 image entries` → 截图已 `remote-delivered` → `[trump] heap shot failed: TypeError: Assignment to constant variable.` → `0 shot(s)`,消息里没有"浏览器截图附件"段。根因:截图写盘 `const p = ...; p = await annoPut(p, ...)`(2.0.2 / 7a151da 引入),截图第一次真正走到这一行就抛错。改为一次性 `const p = await annoPut(...)`。不是 2.1.15~2.1.17 的改动引入,但之前的日志里从没有过 image entries > 0 的发送。
+- 工作区事故:11-06 09:20 `extension.js` / `anno-cdp.js` / `dsh-browser.js` 被改回 2.1.14 内容(未提交;已装的 2.1.17 不受影响)。差异备份为 `/tmp/worktree-2026-11-06-reverted-to-2.1.14.patch`,三文件已恢复到 2.1.17 再修。
+- lint 加严(no-const-assign / no-use-before-define 等 15 条),扩展 0 报错;client.js 唯一命中是有意包裹 `apply`,非 bug。
+
 ## ext 2.1.17:标注注释被截断(2026-11-05)
 
 - 现象:`这个数据集是prw和cuhk一起的吗?` 只剩 `这个数据集`;日志另有 `@td 这个太长了, 就是表格的表头只展示都有的, 其中各`。根因:observer 读的是 Copilot 输入框渲染出的 `.view-line`,输入框窄,Monaco 自动折行把一行 `@名字 注释` 拆成多个 `.view-line`,只有以 `@` 开头的第一段被认出,续行全丢。

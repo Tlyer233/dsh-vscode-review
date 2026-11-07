@@ -1271,8 +1271,7 @@ async function annoHeapPairFill(chips, keysSend, data) {
     try {
       const safe = key.replace(/[^a-zA-Z0-9_ -]+/g, '_').replace(/\s+/g, '_').slice(0, 40)
       const ext = String(I.mime || '').indexOf('png') !== -1 ? '.png' : '.jpg'
-      const p = path.join(dir, stamp + '-shot-' + safe + ext)
-      p = await annoPut(p, Buffer.from(I.b, 'base64'))
+      const p = await annoPut(path.join(dir, stamp + '-shot-' + safe + ext), Buffer.from(I.b, 'base64'))
       annoHeapShots.push(p)
       log.appendLine('[trump] heap shot: ' + p + ' (' + I.len + 'B)')
     } catch (e) { log.appendLine('[trump] heap shot failed: ' + String(e).slice(0, 90)) }
