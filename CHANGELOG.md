@@ -1,3 +1,15 @@
+## 2.1.22:影子仓 12G 膨胀 + 删除审查丢失 + 双进程竞态(2026-11-09)
+
+- 根因一(bare 仓删 blob 必败):`update-index --force-remove` 在无 work tree 的 bare 仓里 100% 报 `must be run in a work tree`(实测 rc=128),而 shadow.js 的 `catch { /* not in tree */ }` 把它当"本来就不在树里"吞了 → 影子树只加不删;被删/移走文件的 blob 永久钉在 HEAD。3080 实测 6704 对象 12.21 GiB 全部被 HEAD 直接引用,其中 zip 家族(PK\x03\x04)≈11.8 GiB,删历史收益=0。
+- 根因二(无体积/类型闸门):快照对任何文件整份 `hash-object -w`,`fileSend:"path"` 只管发给 Copilot 的格式,快照正门无过滤 → 巨型 zip 全文入库。
+- 根因三(双进程竞态):dsh 插件与 VS Code 扩展各有一套进程内 Promise 队列,互不可见;两边都做 `rev-parse HEAD → commit-tree → update-ref HEAD`(无 CAS)→ 交错时孤儿 commit;pending JSON 也是无锁 read-modify-write,后写者覆盖前者。
+- 根因四(blobKey 路径分叉):写侧对不存在的文件 realpath 失败退 raw 路径,同一文件删除前后算出两个 sha1 key → 读不回基线。
+- 修复(写侧 shadow.js/index.js):快照 >8 MiB 或 NUL/常见魔数(PK/gzip/PNG/JPEG/PDF/ELF/class/Rar)只写一行 `DSSHADOW1 ptr <abs> <size> <mtime>` 指针 blob;删除改为 `ls-tree -z` 过滤 key 后一次 `update-index -z --stdin` 重灌索引(bare 安全);HEAD 移动改 `update-ref HEAD <new> <old>` CAS + `.snapshot.lock` 跨进程锁(僵尸夺锁);pending 改存 **blob id** 而非 commit hash(commit 会钉住整棵累积树,gc 无从回收);blobKey 只 realpath 父目录;`cleanEnv` 追加 `GIT_CONFIG_GLOBAL/SYSTEM=/dev/null`;被吞的 fatal 全部转日志;每文件 pre-execute/result 走 chainFile 串行队列,并发编辑不再串位。
+- 修复(读侧 lib/):镜像同一 canonical/blobKey/锁/CAS;`showAt` 先 `cat-file -t` 验型再读(防 commit 对象裸字节污染基线);指针条目跳过 startReview 且不误清 pending;persistRolling 全程持 `.snapshot.lock`;`extension.js` 三处硬编码 `~/.dsh` 改走 `dshHome()`(尊重 DSH_HOME)。
+- 新增维护作业 `maintain.js`(两进程 detached 触发,7 天标记节流,hermes-agent/opencode#36093/DeepSeek-TUI#1126 打法):pending 在用的哈希逐个 `refs/dsh-review/pin/<hash>` 钉住 → 链超 500 时 HEAD 折叠成指向当前 tree 的孤儿 commit → 丢弃无人引用的 before/after/pin refs → `reflog expire --all` + 后台 `gc --prune=1.day.ago`。init 时本地写 `gc.auto=0`、`core.autocrlf=false`。
+- 验证:26 项临时 DSH_HOME 探针全绿(删除后 `ls-tree` 归零、旧基线仍可读、zip/PNG 只落指针、CRLF/无末行换行字节忠实、3 进程×8 并发快照 24 提交零丢失 + fsck 干净、截断后 pending 基线存活、清 pending 后死 blob 不再可达、死 pin 清零)。
+- 部署:GitHub main;Mac 与 3080 均经 `install.sh`(拷贝制,脚本自带软链检测)升级 plugin 2.1.22 + ext 2.1.20;dsh web 由用户手动重启。
+
 ## 2.1.21:悬浮面板只剩一列图标(2026-11-07)
 
 - 根因:dsh 侧栏被切成了折叠的图标栏(host root 带 `_collapsed` 类)。展开面板时本应自动点一次 Alt+Meta+B,但判断条件只匹配 aria-label 里的 "expand",而 dsh 实际用的是 "Open sidebar",所以一直没展开。折叠状态由 dsh 自己持久化,重启 dsh 也恢复不了。

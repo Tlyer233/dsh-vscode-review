@@ -17,6 +17,23 @@ const { restartDsh, restartDshProxy, restartDshBili, restartDshAtUrl, stopDsh, d
 const { startAuthProxy } = require('./lib/dsh-auth-proxy.js')
 const { connectDshJobs } = require('./lib/dsh-jobs.js')
 const { ensureProposedApi } = require('./lib/enable-insets.js')
+const wbPaths = require('./lib/workbench.js')
+
+/**
+ * Read <dshHome>/review/shadow/settings.json (DSH_HOME-aware: the plugin host
+ * and install.sh both key on DSH_HOME, so hardcoding ~/.dsh split-brained the
+ * settings card from the extension when DSH_HOME was set).
+ * @returns {object|null} parsed settings, null when missing/corrupt
+ */
+function readShadowSettings() {
+  try {
+    const p = path.join(wbPaths.shadowRoot(), 'settings.json')
+    const raw = JSON.parse(fs.readFileSync(p, 'utf8'))
+    return raw && typeof raw === 'object' ? raw : null
+  } catch (e) {
+    return null
+  }
+}
 
 function activate(context) {
   const log = vscode.window.createOutputChannel('dsh review / dsh')
@@ -495,7 +512,8 @@ function annoHoverCardVisible() {
   // path — the heap main path never hovers) does the temporary
   // visibility:hidden trick arm.
   try {
-    const raw = JSON.parse(fs.readFileSync(path.join(os.homedir(), '.dsh', 'review', 'shadow', 'settings.json'), 'utf8'))
+    const raw = readShadowSettings()
+    if (!raw) return true
     return raw.hideHoverCard !== true
   } catch (e) {
     return true
@@ -503,7 +521,8 @@ function annoHoverCardVisible() {
 }
 function annoFeatureOn() {
   try {
-    const raw = JSON.parse(fs.readFileSync(path.join(os.homedir(), '.dsh', 'review', 'shadow', 'settings.json'), 'utf8'))
+    const raw = readShadowSettings()
+    if (!raw) return true
     return raw.annotationToDsh !== false
   } catch (e) {
     return true
@@ -1107,7 +1126,8 @@ function annoChipKeys(chips) {
  */
 function annoHeapOn() {
   try {
-    const raw = JSON.parse(fs.readFileSync(path.join(os.homedir(), '.dsh', 'review', 'shadow', 'settings.json'), 'utf8'))
+    const raw = readShadowSettings()
+    if (!raw) return true
     return raw.annoHeapBridge !== false
   } catch (e) { return true }
 }

@@ -12,7 +12,8 @@ const vscode = require('vscode')
 const wbPaths = require('./workbench.js')
 const { entryOwnedByThisWindow } = require('./workbench-match.js')
 const { readOwnedPending, upsertRolling, removeEntry } = require('./shadow-pending.js')
-const { showAt, readDisk, hashTextBlob, pinRollingBlobs } = require('./shadow-git.js')
+const { showAt, readDisk, hashTextBlob, pinRollingBlobs, isPointerBlob } = require('./shadow-git.js')
+const { acquireLock, releaseLock } = require('./lockfile.js')
 const { notifyPendingToDsh, setReviewOpener } = require('./dsh-browser.js')
 
 function startPendingSync(context, host) {
@@ -80,7 +81,12 @@ function startPendingSync(context, host) {
   async function persistRolling(session) {
     if (!session || !session.meta) return
     writing = true
+    // Shared with the dsh host: one blob-write + ref-pin + pending-JSON
+    // window must be atomic, else a crash leaves a prunable dangling blob
+    // behind a hash the pending file already points at.
+    let snapLock = null
     try {
+      snapLock = acquireLock(path.join(root, '.snapshot.lock'))
       const filePath = session.meta.filePath
       const [before, after] = await Promise.all([
         hashTextBlob(session.core.originalText), // remaining baseline
@@ -97,6 +103,7 @@ function startPendingSync(context, host) {
     } catch (e) {
       log.appendLine('persistRolling git failed: ' + (e && e.message || e))
     } finally {
+      if (snapLock) releaseLock(snapLock)
       setTimeout(() => { writing = false }, 80)
     }
   }
@@ -206,6 +213,22 @@ function startPendingSync(context, host) {
         showAt(wb, entry.before, filePath), // blob id or commit:path
         showAt(wb, entry.after, filePath),
       ])
+      // Oversize/binary files are stored as pointer lines, never as bodies
+      // (host snapshotGate). No text → no inline review; keep the dock row
+      // informational so the watcher does not remount it every round.
+      const pointerSide =
+        (entry.before && (await isPointerBlob(entry.before)))
+        || (entry.after && (await isPointerBlob(entry.after)))
+      if (pointerSide) {
+        log.appendLine(
+          'skip oversize/binary ' + path.basename(filePath)
+          + ' before=' + String(entry.before || '').slice(0, 8)
+          + ' after=' + String(entry.after || '').slice(0, 8)
+          + ' (pointer-only snapshot; no inline review)',
+        )
+        applied.set(key, { before: entry.before, after: entry.after })
+        return
+      }
       oldText = pair[0]
       if (oldText == null) oldText = ''
       newText = pair[1]

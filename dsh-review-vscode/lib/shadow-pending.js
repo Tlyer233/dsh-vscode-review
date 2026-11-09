@@ -10,6 +10,27 @@ const {
   canonicalWorkbench,
 } = require('./workbench.js')
 const { thisWindowWorkbenchPaths } = require('./workbench-match.js')
+const { acquireLock, releaseLock } = require('./lockfile.js')
+
+/**
+ * Per-pending-file lock (shared with the dsh host): both processes do
+ * read-modify-write on this JSON; lock-free, the later writer silently
+ * reverts the earlier one's entries.
+ * @param {string} workbench
+ * @param {() => any} fn
+ */
+function withPendingLock(workbench, fn) {
+  const id = pendingFileFor(workbench).split(/[\\/]/).pop().replace(/\.json$/, '')
+  const lock = path.join(pendingDir(), '.' + id + '.lock')
+  let acquired = false
+  try {
+    acquireLock(lock, { timeoutMs: 3000 })
+    acquired = true
+    return fn()
+  } finally {
+    if (acquired) releaseLock(lock)
+  }
+}
 
 /**
  * @param {string} workbench
@@ -65,7 +86,7 @@ function writePendingAtomic(workbench, entries) {
   if (!workbench) return
   const p = pendingFileFor(workbench)
   fs.mkdirSync(path.dirname(p), { recursive: true })
-  const tmp = p + '.tmp'
+  const tmp = p + '.' + process.pid + '.tmp'
   fs.writeFileSync(tmp, JSON.stringify(entries, null, 2) + '\n', 'utf8')
   fs.renameSync(tmp, p)
 }
@@ -78,21 +99,24 @@ function writePendingAtomic(workbench, entries) {
 function upsertRolling(filePath, rolling, workbench) {
   const wbs = workbench ? [canonicalWorkbench(workbench)] : ownedWorkbenchRoots()
   for (const wb of wbs) {
-    const list = readPending(wb)
-    const idx = list.findIndex((e) => e && e.filePath === filePath)
-    if (idx < 0) continue
-    const prev = list[idx]
-    const next = {
-      ...prev,
-      before: rolling.before,
-      after: rolling.after,
-      updatedAt: Date.now(),
-    }
-    delete next.baselineText
-    delete next.documentText
-    list[idx] = next
-    writePendingAtomic(wb, list)
-    return true
+    const hit = withPendingLock(wb, () => {
+      const list = readPending(wb)
+      const idx = list.findIndex((e) => e && e.filePath === filePath)
+      if (idx < 0) return false
+      const prev = list[idx]
+      const next = {
+        ...prev,
+        before: rolling.before,
+        after: rolling.after,
+        updatedAt: Date.now(),
+      }
+      delete next.baselineText
+      delete next.documentText
+      list[idx] = next
+      writePendingAtomic(wb, list)
+      return true
+    })
+    if (hit) return true
   }
   return false
 }
@@ -104,11 +128,14 @@ function upsertRolling(filePath, rolling, workbench) {
 function removeEntry(filePath, workbench) {
   const wbs = workbench ? [canonicalWorkbench(workbench)] : ownedWorkbenchRoots()
   for (const wb of wbs) {
-    const list = readPending(wb)
-    const next = list.filter((e) => e && e.filePath !== filePath)
-    if (next.length === list.length) continue
-    writePendingAtomic(wb, next)
-    return true
+    const hit = withPendingLock(wb, () => {
+      const list = readPending(wb)
+      const next = list.filter((e) => e && e.filePath !== filePath)
+      if (next.length === list.length) return false
+      writePendingAtomic(wb, next)
+      return true
+    })
+    if (hit) return true
   }
   return false
 }

@@ -1,6 +1,6 @@
 {
   "name": "dsh-review",
-  "version": "2.1.21",
+  "version": "2.1.22",
   "description": "dsh review: shadow git + pending for VS Code inline review",
   "license": "MIT",
   "type": "module",
@@ -21,6 +21,8 @@
     "pending.js",
     "shadow.js",
     "workbench.js",
+    "lockfile.js",
+    "maintain.js",
     "cordis.patch.yml"
   ],
   "dsh": {

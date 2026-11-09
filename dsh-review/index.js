@@ -1,6 +1,6 @@
 import { resolve } from 'node:path'
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
-import { commitFileSnapshot, ensureShadowRepo, relPath } from './shadow.js'
+import { commitFileSnapshot, ensureShadowRepo, relPath, treeEntryBlobId } from './shadow.js'
 import { readPending, upsertPending } from './pending.js'
 import { shadowRoot } from './workbench.js'
 import { installJobsBridge } from './jobs.js'
@@ -87,6 +87,21 @@ const SHELL_TOOLS = new Set(['bash', 'run_code', 'shell'])
 
 /** filePath abs -> { beforeHash, chained, workbench, operation } */
 const beforeByFile = new Map()
+
+/**
+ * Per-file task queue: the pre-execute and result stages for one path must
+ * not interleave with the next tool call on the same file (beforeByFile used
+ * to be overwritten mid-flight → mispaired before/after, dropped reviews).
+ * @param {string} key
+ * @param {() => Promise<any>} fn
+ */
+function chainFile(key, fn) {
+  const prev = fileChains.get(key) || Promise.resolve()
+  const run = prev.then(fn, fn)
+  fileChains.set(key, run.then(() => undefined, () => undefined))
+  return run
+}
+const fileChains = new Map()
 
 /** dsh session workbench = session.header.cwd (the Workspace the agent is in). */
 function sessionWorkbench(exec) {
@@ -233,9 +248,10 @@ async function prepareDeletesFromShell(exec) {
       await commitFileSnapshot(abs, 'before(delete-chain) ' + relPath(wb, abs))
       console.info('[dsh-review] delete-before(keep)', relPath(wb, abs), kept.slice(0, 8), 'wb=' + wb)
     } else {
-      const hash = await commitFileSnapshot(abs, 'before(delete) ' + relPath(wb, abs))
-      beforeByFile.set(abs, { beforeHash: hash, chained: false, workbench: wb, operation: 'delete', prevOp })
-      console.info('[dsh-review] delete-before', relPath(wb, abs), hash.slice(0, 8), 'wb=' + wb)
+      const commit = await commitFileSnapshot(abs, 'before(delete) ' + relPath(wb, abs))
+      const blob = (await treeEntryBlobId(commit, abs)) || commit
+      beforeByFile.set(abs, { beforeHash: blob, chained: false, workbench: wb, operation: 'delete', prevOp })
+      console.info('[dsh-review] delete-before', relPath(wb, abs), blob.slice(0, 8), 'wb=' + wb)
     }
   }
 }
@@ -336,29 +352,35 @@ export function apply(ctx, config) {
         const filePath = exec.arguments && exec.arguments.file_path
         const abs = toAbs(exec, filePath)
         if (abs) {
-          await ensureShadowRepo()
-          const existed = existsSync(abs)
-          const operation = exec.name === 'write' && !existed ? 'create' : 'edit'
-          const kept = baselineToKeep(abs, wb)
-          if (kept) {
-            // Keep create if this file was originally a create still pending.
-            const prevOp = (pendingEntry(abs, wb) && pendingEntry(abs, wb).operation) || operation
-            const op = prevOp === 'create' ? 'create' : operation
-            beforeByFile.set(abs, { beforeHash: kept, chained: true, workbench: wb, operation: op })
-            await commitFileSnapshot(abs, 'before(chain) ' + relPath(wb, abs))
-            console.info('[dsh-review] before(keep)', relPath(wb, abs), kept.slice(0, 8), 'op=' + op, 'wb=' + wb)
-          } else {
-            const hash = await commitFileSnapshot(abs, 'before ' + relPath(wb, abs))
-            beforeByFile.set(abs, { beforeHash: hash, chained: false, workbench: wb, operation })
-            upsertPending({
-              filePath: abs,
-              before: hash,
-              after: null,
-              workbench: wb,
-              operation,
-            }, { clearRolling: true })
-            console.info('[dsh-review] before', relPath(wb, abs), hash.slice(0, 8), 'op=' + operation, 'wb=' + wb)
-          }
+          await chainFile(abs, async () => {
+            await ensureShadowRepo()
+            const existed = existsSync(abs)
+            const operation = exec.name === 'write' && !existed ? 'create' : 'edit'
+            const kept = baselineToKeep(abs, wb)
+            if (kept) {
+              // Keep create if this file was originally a create still pending.
+              const prevOp = (pendingEntry(abs, wb) && pendingEntry(abs, wb).operation) || operation
+              const op = prevOp === 'create' ? 'create' : operation
+              beforeByFile.set(abs, { beforeHash: kept, chained: true, workbench: wb, operation: op })
+              await commitFileSnapshot(abs, 'before(chain) ' + relPath(wb, abs))
+              console.info('[dsh-review] before(keep)', relPath(wb, abs), kept.slice(0, 8), 'op=' + op, 'wb=' + wb)
+            } else {
+              const commit = await commitFileSnapshot(abs, 'before ' + relPath(wb, abs))
+              // pending carries the BLOB id, not the commit id: a commit pins
+              // the whole cumulative tree and defeats gc reclaim (opencode
+              // #36093 pin design only works for per-hash reachable objects).
+              const blob = (await treeEntryBlobId(commit, abs)) || commit
+              beforeByFile.set(abs, { beforeHash: blob, chained: false, workbench: wb, operation })
+              upsertPending({
+                filePath: abs,
+                before: blob,
+                after: null,
+                workbench: wb,
+                operation,
+              }, { clearRolling: true })
+              console.info('[dsh-review] before', relPath(wb, abs), blob.slice(0, 8), 'op=' + operation, 'wb=' + wb)
+            }
+          })
         }
       }
     } catch (e) {
@@ -388,7 +410,11 @@ export function apply(ctx, config) {
       if (abs) beforeByFile.delete(abs)
       return
     }
-    void (async () => {
+    // Queue key resolved synchronously so this result serialises against the
+    // file's next pre-execute even while the tool chain is mid-flight.
+    const chainKey = toAbs(exec, (result && result.value && result.value.path)
+      || (exec.arguments && exec.arguments.file_path)) || '__no_path__'
+    void chainFile(chainKey, async () => {
       try {
         const wb = sessionWorkbench(exec)
         const raw = (result && result.value && result.value.path)
@@ -396,7 +422,8 @@ export function apply(ctx, config) {
         const abs = toAbs(exec, raw)
         if (!abs) return
         await ensureShadowRepo()
-        const afterHash = await commitFileSnapshot(abs, 'after ' + relPath(wb, abs))
+        const afterCommit = await commitFileSnapshot(abs, 'after ' + relPath(wb, abs))
+        const afterHash = (await treeEntryBlobId(afterCommit, abs)) || afterCommit
         const prev = beforeByFile.get(abs)
         beforeByFile.delete(abs)
         const beforeHash = (prev && prev.beforeHash)
