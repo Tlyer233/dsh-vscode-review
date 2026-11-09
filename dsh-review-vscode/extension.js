@@ -123,9 +123,9 @@ function activate(context) {
         log: (msg) => log.appendLine('[anno] ' + msg),
         cdpPort: 9223,
         getDshHostPort: dshComposerHostPort,
+        // (2.1.14) per-window claim key: two SSH windows share host:port
         getDshBootId: dshComposerBootId,
         onState: (chips, lines) => { annoWidgetBeaconed(); annoMirrorOnState(chips, lines, log); annoResyncIfOn(chips, lines, log) },
-        onWin: annoOnWin,
         // (0.1.119) 打开即回 (user's "0.0000000001ms"): the moment Copilot
         // opens, return to dsh — no debounce. Exception: while annoSendSync is
         // reading/deleting (freeze) or ✕ deletes are in flight, keep it open,
@@ -414,8 +414,6 @@ let annoInitialRecorded = false
 let annoCurrentChips = []
 /** One-shot: first beacon after startup clears all leftover Copilot chips. */
 let annoStartupCleanup = true
-/** True while that startup cleanup is deleting leftovers (no reservations). */
-let annoStartupCleanupRunning = false
 /**
  * Return-to-dsh coordination. Flashing the Copilot panel (for a delete or a
  * resync) hides the dsh view; we must switch back — but ONLY after the state
@@ -539,7 +537,6 @@ function annoReturnIfIdle() {
   if (annoReturnTimeout) { clearTimeout(annoReturnTimeout); annoReturnTimeout = null }
   if (!annoReturnToDsh || annoDeletesInFlight > 0) return
   annoReturnToDsh = false
-  annoStep('return-to-dsh')
   dshState.log('[anno] return-to-dsh: dshView=' + (dshState.dshView ? 'yes' : 'NO') + ' deletesInFlight=' + annoDeletesInFlight)
   // Switch the secondary sidebar back to the dsh container. `dshView.show(true)`
   // (reveal=true) ACTIVATES the dsh container and shows the view — this is the
@@ -585,7 +582,7 @@ function annoReturnIfIdle() {
         const h = (d) => { const m = JSON.parse(d.toString()); if (m.id === 1) { ws.off('message', h); resolve() } }
         ws.on('message', h); setTimeout(resolve, 1200)
       })
-      try { ws.close() } catch (e) {}
+      try { ws.close() } catch (e) { }
     })().catch(() => { /* best effort */ })
   }
   cdpFocus()
@@ -642,66 +639,6 @@ async function waitForWidgetRendered(timeoutMs) {
     setTimeout(() => finish(false), timeoutMs) // one-shot fallback, not a poll
   })
 }
-let annoInputDocWarned = false
-/**
- * The observer reads Copilot's input from rendered `.view-line`s, and Monaco
- * word-wraps a long `@name comment` into several of them — only the first
- * segment survives. The input's text model (scheme chatSessionInput, or
- * sessions-chat) holds the unwrapped line; use it when it EXTENDS the rendered
- * text, so a stale line from another chat session can never replace it.
- * @param {string} ref chip name
- * @param {string} shown comment as rendered (possibly cut at a wrap)
- * @returns {string}
- */
-function annoFullComment(ref, shown) {
-  const head = String(shown || '').trim()
-  if (!head) return head
-  let best = head
-  let docs = 0
-  try {
-    for (const d of vscode.workspace.textDocuments) {
-      const s = d.uri.scheme
-      if (s !== 'chatSessionInput' && s !== 'sessions-chat') continue
-      docs++
-      for (const raw of d.getText().split(/\r?\n/)) {
-        const m = /^@(\S+)\s*(.*)$/.exec(raw.replace(/\u00a0/g, ' '))
-        if (!m || m[1] !== ref) continue
-        const full = m[2].trim()
-        if (full.length > best.length && full.indexOf(head) === 0) best = full
-      }
-    }
-  } catch (e) { return head }
-  if (!docs && !annoInputDocWarned) {
-    annoInputDocWarned = true
-    dshState.log('[anno] comment: no chat input document visible (schemes=' +
-      [...new Set(vscode.workspace.textDocuments.map((d) => d.uri.scheme))].join(',') + ') — wrapped comments may be cut')
-  }
-  if (best !== head) dshState.log('[anno] comment @' + ref + ' completed from input doc: ' + head.length + ' -> ' + best.length + ' chars')
-  return best
-}
-
-// Window-geometry diagnostics: the workbench reports every OS-window resize/move
-// (anno-cdp winmon); we name the anno step that was running when it began.
-const annoSteps = [] // [{ t, label }], newest last
-let annoWinLast = ''
-function annoStep(label) {
-  annoSteps.push({ t: Date.now(), label })
-  if (annoSteps.length > 60) annoSteps.shift()
-}
-function annoStepAt(t) {
-  let hit = null
-  for (const s of annoSteps) { if (s.t <= t) hit = s }
-  return hit ? hit.label + ' +' + (t - hit.t) + 'ms' : 'idle'
-}
-function annoOnWin(p) {
-  const b = JSON.stringify(p.b || [])
-  if (p.init) { annoWinLast = b; dshState.log('[win] baseline [x,y,w,h]=' + b); return }
-  if (b === annoWinLast) return
-  const t0 = Number(p.t0) || Date.now()
-  dshState.log('[win] ' + new Date(t0).toISOString().slice(11, 23) + ' window ' + annoWinLast + ' -> ' + b +
-    (p.fs ? ' (fullscreen)' : '') + ' | during: ' + annoStepAt(t0))
-  annoWinLast = b
-}
 /** Called by the observer beacon (onState) to resolve the widget waiter. */
 function annoWidgetBeaconed() {
   if (annoWidgetWaiter) { annoWidgetWaiter.resolve(); annoWidgetWaiter = null }
@@ -720,7 +657,6 @@ async function flashCopilot() {
   ]
   for (const cmd of candidates) {
     try {
-      annoStep('flash-copilot ' + cmd)
       await vscode.commands.executeCommand(cmd)
       dshState.log('[anno] flash copilot: ' + cmd + ' ok')
       return cmd
@@ -817,7 +753,6 @@ async function realDeleteChipInner(name, attempt, flashed) {
   const driver = dshState.annoDriver
   if (!driver) return 'no-driver'
   let res = 'no-cdp'
-  annoStep('delete-chip ' + name)
   try { res = await driver.deleteChip(name) } catch (e) { res = 'error:' + String((e && e.message) || e) }
   dshState.log('[anno] real delete: ' + name + ' -> ' + res + (attempt ? ' (retry ' + attempt + ')' : ''))
   if (String(res).indexOf('clicked:') === 0) {
@@ -865,7 +800,6 @@ async function clearCopilotInput() {
       return 'cleared:exec ' + before + '->' + after;
     })()`)
     // (0.1.127) Keyboard backstop.
-    annoStep('clear-input keys Cmd+A/Backspace')
     await driver.cdp.send('Input.dispatchKeyEvent', { type: 'keyDown', modifiers: 4, key: 'a', code: 'KeyA', windowsVirtualKeyCode: 65, nativeVirtualKeyCode: 65 })
     await driver.cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', modifiers: 4, key: 'a', code: 'KeyA', windowsVirtualKeyCode: 65, nativeVirtualKeyCode: 65 })
     await driver.cdp.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Backspace', code: 'Backspace', windowsVirtualKeyCode: 8, nativeVirtualKeyCode: 8 })
@@ -887,7 +821,6 @@ async function clearCopilotInput() {
     let viaCmd = ''
     if (still && String(still).indexOf('lines:') === 0) {
       try {
-        annoStep('clear-input chat.open setInput')
         await vscode.commands.executeCommand('workbench.action.chat.open', { query: ' ', isPartialQuery: true })
         await driver.cdp.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Backspace', code: 'Backspace', windowsVirtualKeyCode: 8, nativeVirtualKeyCode: 8 })
         await driver.cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Backspace', code: 'Backspace', windowsVirtualKeyCode: 8, nativeVirtualKeyCode: 8 })
@@ -931,7 +864,6 @@ async function clearCopilotInputVerified(log, tag) {
  */
 async function clearCopilotSession() {
   try {
-    annoStep('chat.newChat')
     await vscode.commands.executeCommand('workbench.action.chat.newChat')
     return 'newChat ok'
   } catch (e) {
@@ -1042,109 +974,109 @@ async function copilotChipFullContexts(onlyIdx) {
     ' window.__dshrHoverHide.observe(document.body, { childList: true, subtree: true }); }' +
     ' window.__dshrHideHoverFix(); return "armed"; })()')
   try {
-  for (let idx = 0; idx < chips.length; idx++) {
-    const chip = chips[idx]
-    // (0.1.139) onlyIdx: chips already page-rebuilt skip the hover entirely
-    // (null placeholder keeps the array aligned by INDEX with the DOM order).
-    if (Array.isArray(onlyIdx) && onlyIdx.indexOf(idx) === -1) { out.push({ name: chip.name, text: null }); continue }
-    try {
-      const hoverIn = (dy) =>
-        '(() => { var chips = document.querySelectorAll(".chat-attached-context-attachment");' +
-        ' var el = null, n = 0; for (var i = 0; i < chips.length; i++) {' +
-        ' if ((chips[i].getAttribute("aria-label") || "").indexOf("Attached element,") === 0) { if (n === ' + idx + ') { el = chips[i]; break; } n++; } }' +
-        ' if (!el) return "no-chip";' +
-        ' var r = el.getBoundingClientRect();' +
-        ' var o = { bubbles: true, cancelable: true, clientX: r.left + 10, clientY: r.top + r.height / 2 + (' + dy + '), view: window, buttons: 0 };' +
-        ' el.dispatchEvent(new PointerEvent("pointerover", Object.assign({ pointerId: 1, pointerType: "mouse", isPrimary: true }, o)));' +
-        ' el.dispatchEvent(new MouseEvent("mouseover", o));' +
-        ' el.dispatchEvent(new MouseEvent("mousemove", o));' +
-        ' return "hovered"; })()'
-      const hov = await driver.eval(hoverIn(0))
-      if (hov !== 'hovered') { out.push({ name: chip.name, text: '<<' + String(hov) + '>>' }); continue }
-      // (0.1.138) BACK to 0.1.135's proven timing: the micro-move must be
-      // dispatched from the EXTENSION HOST (its sleep is immune to renderer
-      // load), not from an in-page setTimeout — 0.1.136/137 both timed out
-      // 3/3 chips at 09:14/09:15 because the busy workbench delayed the
-      // in-page timer and the hover never armed. Only kept wins: 80ms poll
-      // granularity and skipping the dismiss after the LAST chip.
-      await new Promise((r) => setTimeout(r, 400))
-      await driver.eval(hoverIn(-1))
-      const expr = 'new Promise((resolve) => {' +
-        ' var NAME = ' + JSON.stringify(chip.name) + ';' +
-        ' var vis = function () { var all = document.querySelectorAll(".context-view,.monaco-hover,[role=tooltip]"); var best = null;' +
-        ' for (var i = 0; i < all.length; i++) { var h = all[i]; var cs = getComputedStyle(h);' +
-        ' if (cs.display === "none" || !h.offsetParent) continue; var t = (h.textContent || "").trim();' +
-        // (0.1.129) must be the ELEMENT hover — other context-views (generic
-        // "Structured browser element context…" blurbs) also pop; the 08:41
-        // round captured one of those for span#mv-temp. Require section markers.
-        ' if (!/KEY COMPUTED STYLES|POSITION & SIZE|INNER TEXT|HTML PATH/.test(t)) continue;' +
-        ' if (t.length > 30 && (!best || t.length > best.textContent.length)) best = h; } return best; };' +
-        ' var t0 = Date.now(); var lastLen = -1; var stableAt = 0;' +
-        ' var step = function () { var h = vis();' +
-        ' if (h) { var SHOT = null; try { var im = h.querySelector("img");' +
-        ' if (im && (im.naturalWidth || im.width)) { var cv = document.createElement("canvas");' +
-        ' cv.width = im.naturalWidth || im.width; cv.height = im.naturalHeight || im.height;' +
-        ' cv.getContext("2d").drawImage(im, 0, 0); SHOT = cv.toDataURL("image/png").slice(22); } } catch (e6) {}' +
-        ' var txt = (h.textContent || "").slice(0, 12000);' +
-        // (0.1.172) the card renders PROGRESSIVELY: first-hit reads returned a
-        // ~900B fragment (user: 裸tag抓的不全, vs 14KB page file). Now wait for
-        // the LAST section (INNER TEXT) AND a 240ms length-stable settle,
-        // bounded at 2.5s, then take the finished card.
-        ' if (!h.getAttribute("data-dshr-scrolled")) { h.setAttribute("data-dshr-scrolled", "1");' +
-        ' try { h.scrollTop = h.scrollHeight; var kids = h.querySelectorAll("*");' +
-        ' for (var q = 0; q < kids.length; q++) { try { kids[q].scrollTop = kids[q].scrollHeight; } catch (e7) {} } } catch (e8) {}' +
-        ' lastLen = -1; setTimeout(step, 120); return; }' +
-        ' var done = txt.indexOf("INNER TEXT") !== -1;' +
-        ' if (done && txt.length === lastLen && Date.now() - stableAt > 240) { resolve(JSON.stringify({ name: NAME, text: txt, shot: SHOT })); return; }' +
-        ' if (txt.length !== lastLen) { lastLen = txt.length; stableAt = Date.now(); }' +
-        ' if (Date.now() - t0 > 4000) { resolve(JSON.stringify({ name: NAME, text: txt, shot: SHOT, partial: !done })); return; } }' +
-        ' setTimeout(step, 80); };' +
-        ' step(); })'
-      let r = await driver.cdp.send('Runtime.evaluate', { expression: expr, returnByValue: true, awaitPromise: true })
-      // (0.1.146) one bounded retry: monaco's delayed-hover occasionally
-      // exceeds 1.5s while the panel tab is being switched under freeze
-      // (09:35 round: 2/3 timeouts, 3rd chip fine). Re-hover + re-wait once;
-      // still nothing -> report the timeout honestly in the file.
-      const timedOut = (res) => { const q = unwrap(res); const v = q && q.result ? q.result.value : null; return typeof v === 'string' && v.indexOf('timeout') !== -1 }
-      if (timedOut(r)) {
-        await driver.eval(hoverIn(0))
-        await new Promise((rz) => setTimeout(rz, 300))
-        await driver.eval(hoverIn(-1))
-        r = await driver.cdp.send('Runtime.evaluate', { expression: expr, returnByValue: true, awaitPromise: true })
-        log.appendLine('[trump] hover retry @' + chip.name + (timedOut(r) ? ' -> still timeout' : ' -> ok'))
-      }
-      const rr = unwrap(r)
-      if (rr && rr.exceptionDetails) {
-        out.push({ name: chip.name, text: '<<eval-error: ' + String((rr.exceptionDetails.exception && rr.exceptionDetails.exception.description) || rr.exceptionDetails.message || '?').slice(0, 160) + '>>' })
-      } else {
-        const val = rr && rr.result ? rr.result.value : null
-        let parsed = null
-        try { parsed = JSON.parse(String(val)) } catch (e) { /* ignore */ }
-        out.push(parsed || { name: chip.name, text: '<<no-value: ' + JSON.stringify(rr).slice(0, 200) + '>>' })
-      }
-      // dismiss the hover (synthetic mouseout — still no click) before the next chip
-      if (idx < chips.length - 1) {
-        await driver.eval(
+    for (let idx = 0; idx < chips.length; idx++) {
+      const chip = chips[idx]
+      // (0.1.139) onlyIdx: chips already page-rebuilt skip the hover entirely
+      // (null placeholder keeps the array aligned by INDEX with the DOM order).
+      if (Array.isArray(onlyIdx) && onlyIdx.indexOf(idx) === -1) { out.push({ name: chip.name, text: null }); continue }
+      try {
+        const hoverIn = (dy) =>
           '(() => { var chips = document.querySelectorAll(".chat-attached-context-attachment");' +
           ' var el = null, n = 0; for (var i = 0; i < chips.length; i++) {' +
           ' if ((chips[i].getAttribute("aria-label") || "").indexOf("Attached element,") === 0) { if (n === ' + idx + ') { el = chips[i]; break; } n++; } }' +
-          ' if (!el) return "gone"; var r = el.getBoundingClientRect();' +
-          ' var o = { bubbles: true, cancelable: true, clientX: r.left + 10, clientY: r.top + r.height / 2, view: window, buttons: 0 };' +
-          ' el.dispatchEvent(new PointerEvent("pointerout", Object.assign({ pointerId: 1, pointerType: "mouse", isPrimary: true }, o)));' +
-          ' el.dispatchEvent(new MouseEvent("mouseout", o));' +
-          ' return "out"; })()')
-        await new Promise((r) => setTimeout(r, 60))
+          ' if (!el) return "no-chip";' +
+          ' var r = el.getBoundingClientRect();' +
+          ' var o = { bubbles: true, cancelable: true, clientX: r.left + 10, clientY: r.top + r.height / 2 + (' + dy + '), view: window, buttons: 0 };' +
+          ' el.dispatchEvent(new PointerEvent("pointerover", Object.assign({ pointerId: 1, pointerType: "mouse", isPrimary: true }, o)));' +
+          ' el.dispatchEvent(new MouseEvent("mouseover", o));' +
+          ' el.dispatchEvent(new MouseEvent("mousemove", o));' +
+          ' return "hovered"; })()'
+        const hov = await driver.eval(hoverIn(0))
+        if (hov !== 'hovered') { out.push({ name: chip.name, text: '<<' + String(hov) + '>>' }); continue }
+        // (0.1.138) BACK to 0.1.135's proven timing: the micro-move must be
+        // dispatched from the EXTENSION HOST (its sleep is immune to renderer
+        // load), not from an in-page setTimeout — 0.1.136/137 both timed out
+        // 3/3 chips at 09:14/09:15 because the busy workbench delayed the
+        // in-page timer and the hover never armed. Only kept wins: 80ms poll
+        // granularity and skipping the dismiss after the LAST chip.
+        await new Promise((r) => setTimeout(r, 400))
+        await driver.eval(hoverIn(-1))
+        const expr = 'new Promise((resolve) => {' +
+          ' var NAME = ' + JSON.stringify(chip.name) + ';' +
+          ' var vis = function () { var all = document.querySelectorAll(".context-view,.monaco-hover,[role=tooltip]"); var best = null;' +
+          ' for (var i = 0; i < all.length; i++) { var h = all[i]; var cs = getComputedStyle(h);' +
+          ' if (cs.display === "none" || !h.offsetParent) continue; var t = (h.textContent || "").trim();' +
+          // (0.1.129) must be the ELEMENT hover — other context-views (generic
+          // "Structured browser element context…" blurbs) also pop; the 08:41
+          // round captured one of those for span#mv-temp. Require section markers.
+          ' if (!/KEY COMPUTED STYLES|POSITION & SIZE|INNER TEXT|HTML PATH/.test(t)) continue;' +
+          ' if (t.length > 30 && (!best || t.length > best.textContent.length)) best = h; } return best; };' +
+          ' var t0 = Date.now(); var lastLen = -1; var stableAt = 0;' +
+          ' var step = function () { var h = vis();' +
+          ' if (h) { var SHOT = null; try { var im = h.querySelector("img");' +
+          ' if (im && (im.naturalWidth || im.width)) { var cv = document.createElement("canvas");' +
+          ' cv.width = im.naturalWidth || im.width; cv.height = im.naturalHeight || im.height;' +
+          ' cv.getContext("2d").drawImage(im, 0, 0); SHOT = cv.toDataURL("image/png").slice(22); } } catch (e6) {}' +
+          ' var txt = (h.textContent || "").slice(0, 12000);' +
+          // (0.1.172) the card renders PROGRESSIVELY: first-hit reads returned a
+          // ~900B fragment (user: 裸tag抓的不全, vs 14KB page file). Now wait for
+          // the LAST section (INNER TEXT) AND a 240ms length-stable settle,
+          // bounded at 2.5s, then take the finished card.
+          ' if (!h.getAttribute("data-dshr-scrolled")) { h.setAttribute("data-dshr-scrolled", "1");' +
+          ' try { h.scrollTop = h.scrollHeight; var kids = h.querySelectorAll("*");' +
+          ' for (var q = 0; q < kids.length; q++) { try { kids[q].scrollTop = kids[q].scrollHeight; } catch (e7) {} } } catch (e8) {}' +
+          ' lastLen = -1; setTimeout(step, 120); return; }' +
+          ' var done = txt.indexOf("INNER TEXT") !== -1;' +
+          ' if (done && txt.length === lastLen && Date.now() - stableAt > 240) { resolve(JSON.stringify({ name: NAME, text: txt, shot: SHOT })); return; }' +
+          ' if (txt.length !== lastLen) { lastLen = txt.length; stableAt = Date.now(); }' +
+          ' if (Date.now() - t0 > 4000) { resolve(JSON.stringify({ name: NAME, text: txt, shot: SHOT, partial: !done })); return; } }' +
+          ' setTimeout(step, 80); };' +
+          ' step(); })'
+        let r = await driver.cdp.send('Runtime.evaluate', { expression: expr, returnByValue: true, awaitPromise: true })
+        // (0.1.146) one bounded retry: monaco's delayed-hover occasionally
+        // exceeds 1.5s while the panel tab is being switched under freeze
+        // (09:35 round: 2/3 timeouts, 3rd chip fine). Re-hover + re-wait once;
+        // still nothing -> report the timeout honestly in the file.
+        const timedOut = (res) => { const q = unwrap(res); const v = q && q.result ? q.result.value : null; return typeof v === 'string' && v.indexOf('timeout') !== -1 }
+        if (timedOut(r)) {
+          await driver.eval(hoverIn(0))
+          await new Promise((rz) => setTimeout(rz, 300))
+          await driver.eval(hoverIn(-1))
+          r = await driver.cdp.send('Runtime.evaluate', { expression: expr, returnByValue: true, awaitPromise: true })
+          log.appendLine('[trump] hover retry @' + chip.name + (timedOut(r) ? ' -> still timeout' : ' -> ok'))
+        }
+        const rr = unwrap(r)
+        if (rr && rr.exceptionDetails) {
+          out.push({ name: chip.name, text: '<<eval-error: ' + String((rr.exceptionDetails.exception && rr.exceptionDetails.exception.description) || rr.exceptionDetails.message || '?').slice(0, 160) + '>>' })
+        } else {
+          const val = rr && rr.result ? rr.result.value : null
+          let parsed = null
+          try { parsed = JSON.parse(String(val)) } catch (e) { /* ignore */ }
+          out.push(parsed || { name: chip.name, text: '<<no-value: ' + JSON.stringify(rr).slice(0, 200) + '>>' })
+        }
+        // dismiss the hover (synthetic mouseout — still no click) before the next chip
+        if (idx < chips.length - 1) {
+          await driver.eval(
+            '(() => { var chips = document.querySelectorAll(".chat-attached-context-attachment");' +
+            ' var el = null, n = 0; for (var i = 0; i < chips.length; i++) {' +
+            ' if ((chips[i].getAttribute("aria-label") || "").indexOf("Attached element,") === 0) { if (n === ' + idx + ') { el = chips[i]; break; } n++; } }' +
+            ' if (!el) return "gone"; var r = el.getBoundingClientRect();' +
+            ' var o = { bubbles: true, cancelable: true, clientX: r.left + 10, clientY: r.top + r.height / 2, view: window, buttons: 0 };' +
+            ' el.dispatchEvent(new PointerEvent("pointerout", Object.assign({ pointerId: 1, pointerType: "mouse", isPrimary: true }, o)));' +
+            ' el.dispatchEvent(new MouseEvent("mouseout", o));' +
+            ' return "out"; })()')
+          await new Promise((r) => setTimeout(r, 60))
+        }
+      } catch (e) {
+        out.push({ name: chip.name, text: '<<exception: ' + String(e).slice(0, 120) + '>>' })
       }
-    } catch (e) {
-      out.push({ name: chip.name, text: '<<exception: ' + String(e).slice(0, 120) + '>>' })
     }
-  }
   } finally {
     await driver.eval(
       '(() => { if (window.__dshrHoverHide) { window.__dshrHoverHide.disconnect(); delete window.__dshrHoverHide; }' +
       ' var all = document.querySelectorAll("[data-dshr-hidden]");' +
       ' for (var i = 0; i < all.length; i++) { all[i].style.visibility = ""; all[i].removeAttribute("data-dshr-hidden"); }' +
-      ' delete window.__dshrHideHoverFix; return "cleared"; })()').catch(() => {})
+      ' delete window.__dshrHideHoverFix; return "cleared"; })()').catch(() => { })
   }
   return out
 }
@@ -1210,11 +1142,10 @@ async function annoWriteHeapFile(i, name, comment, E, keepPath) {
     const safe = String(name).replace(/[^a-zA-Z0-9_-]+/g, '_').slice(0, 40)
     const f = keepPath || path.join(dir, stamp + '-' + (i + 1) + '-' + safe + '.txt')
     let imgRef = ''
-    let imgPut = null
     if (E.img) {
       const ext = String(E.mime || '').indexOf('png') !== -1 ? '.png' : '.jpg'
       const ip = f.replace(/\.txt$/, '') + ext
-      imgPut = annoPut(ip, Buffer.from(E.img, 'base64'))
+      await annoPut(ip, Buffer.from(E.img, 'base64'))
       imgRef = '## SCREENSHOT (pick-time, ' + (E.imgLen || 0) + 'B)\n文件: ' + ip + '\n\n'
     }
     const head = '# element: ' + (E.fullName || E.name || name) +
@@ -1222,18 +1153,16 @@ async function annoWriteHeapFile(i, name, comment, E, keepPath) {
       '\n# time: ' + new Date().toString() +
       '\n# entry id: ' + (E.id || '') +
       '\n# via: dsh-review (heap-bridge, no hover)\n\n' + imgRef
-    await Promise.all([imgPut, annoPut(f, head + E.value + '\n')])
+    await annoPut(f, head + E.value + '\n')
     log.appendLine('[trump] heap file: ' + f + ' (' + String(E.value).length + 'B value' + (E.img ? ', img ' + E.imgLen + 'B' : '') + ')')
     return f
   } catch (e) { log.appendLine('[trump] heap file write failed: ' + String(e).slice(0, 100)); return null }
 }
 async function annoHeapCaptureNow() {
   const log = dshState.logChannel
-  annoStep('heap-snapshot')
   let prefer = ''
   try { prefer = (vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders[0] && vscode.workspace.workspaceFolders[0].name) || '' } catch (e) { /* noop */ }
-  const targetId = (dshState.annoDriver && dshState.annoDriver.workbenchId) || ''
-  return annoHeap.capture({ targetId, preferTitle: prefer, log })
+  return annoHeap.capture({ preferTitle: prefer, log })
 }
 async function annoHeapPairFill(chips, keysSend, data) {
   const log = dshState.logChannel
@@ -1271,7 +1200,8 @@ async function annoHeapPairFill(chips, keysSend, data) {
     try {
       const safe = key.replace(/[^a-zA-Z0-9_ -]+/g, '_').replace(/\s+/g, '_').slice(0, 40)
       const ext = String(I.mime || '').indexOf('png') !== -1 ? '.png' : '.jpg'
-      const p = await annoPut(path.join(dir, stamp + '-shot-' + safe + ext), Buffer.from(I.b, 'base64'))
+      const p = path.join(dir, stamp + '-shot-' + safe + ext)
+      p = await annoPut(p, Buffer.from(I.b, 'base64'))
       annoHeapShots.push(p)
       log.appendLine('[trump] heap shot: ' + p + ' (' + I.len + 'B)')
     } catch (e) { log.appendLine('[trump] heap shot failed: ' + String(e).slice(0, 90)) }
@@ -1518,18 +1448,15 @@ let annoResyncDone = ''
 function annoResyncIfOn(chips, lines, log) {
   if (!annoFeatureOn()) { annoResyncDone = ''; return }
   if (!dshState.annoDriver) return
-  if (annoStartupCleanup || annoStartupCleanupRunning) return
   const keys = annoChipKeys(chips)
   const sig = keys.join('|')
   if (sig === annoResyncDone) return
   annoResyncDone = sig
   for (let i = 0; i < chips.length; i++) {
-    const k = keys[i]
     // (0.1.185) reservations are ELEMENT chips only (attachments come from
     // the heap at send; they never need a placeholder file).
     if (chips[i].kind && chips[i].kind !== 'element') continue
-    if (annoBaseline.has(chips[i].name)) continue
-    if (!annoCaptureFiles.has(k) && !annoCaptureInflight.has(k)) {
+    if (!annoCaptureFiles.has(k)) {
       log.appendLine('[anno] resync: feature re-enabled — reserving chip #' + (i + 1) + ' @' + chips[i].name)
       void annoQuietCapture(chips[i], i, k)
     }
@@ -1606,7 +1533,7 @@ async function rebuildContextFromPage(chips, log) {
     const rebuilt = await evalOnChip(byHost, chip, evalOn, log)
     results.push({ name: chip.name, rebuilt })
   }
-  for (const ws of connCache.values()) { try { ws.close() } catch (e) {} }
+  for (const ws of connCache.values()) { try { ws.close() } catch (e) { } }
   return results
 }
 
@@ -1702,9 +1629,12 @@ async function annoPut(targetPath, content) {
     return lp
   }
 }
+function annoWinTag() {
+  try { return (dshState.annoDriver && dshState.annoDriver.winTitle) || 'unknown' } catch (e) { return 'unknown' }
+}
 async function annoSendSync(req) {
   dshState.log('[env] send window=' + (annoIsRemoteWindow() ? 'REMOTE(' + vscode.env.remoteName + ')' : 'LOCAL') +
-    ' | chips=' + annoCurrentChips.length + ' driver=' + (dshState.annoDriver ? 'yes' : 'NO') + ' busy=' + (annoSendBusy ? 'yes' : 'no') + ' heapOn=' + annoHeapOn())
+    ' | chips=' + annoCurrentChips.length + ' driver=' + (dshState.annoDriver ? 'yes' : 'NO') + ' busy=' + (annoSendBusy ? 'yes' : 'no') + ' heapOn=' + annoHeapOn() + ' win=' + annoWinTag())
   // (0.1.183) req numbers RESET on every client page load (annoPrepSeq starts
   // at 0 again) while this Set lived for the whole extension process: after a
   // refresh, req=1 was "already posted" forever -> blank sends hung the full
@@ -1713,7 +1643,6 @@ async function annoSendSync(req) {
   // Duplicate answers that leak across generations are harmless: the client
   // ignores prepared() for unknown reqs.
   annoPreparedPostedFor.clear()
-  const log = dshState.logChannel
   if (annoSendBusy) {
     // A read is already running for this send — do NOT double-drive the widget
     // and do NOT answer with a stale block; the running read will post for req.
@@ -1722,7 +1651,7 @@ async function annoSendSync(req) {
     return
   }
   annoSendBusy = true
-  annoStep('send:start')
+  const log = dshState.logChannel
   const driver = dshState.annoDriver
   if (!driver) { // (0.1.180) answer + clear busy on EVERY exit
     annoSendBusy = false
@@ -1791,7 +1720,6 @@ async function annoSendSync(req) {
       }
       if (!chips.length) await dumpCopilotDom(driver, log)
     }
-    chips = chips.map((c) => Object.assign({}, c, { text: annoFullComment(c.name, c.text) }))
     // Idempotency: capture ONLY chips created this round (not the persistent
     // leftovers in the baseline). Leftovers are still deleted below to keep the
     // state clean, but they are never reported as the user's annotations.
@@ -1943,7 +1871,6 @@ async function annoSendSync(req) {
         annoReturnIfIdle()
       }
     })()
-    annoStep('send:done')
     log.appendLine('[trump] done (view back now; session cleanup backgrounded)')
   } finally {
     if (req !== undefined && req !== null) annoPostPrepared(req, annoPreparedBlock || '') // never hang the client
@@ -1964,21 +1891,12 @@ function annoMirrorOnState(chips, lines, log) {
   const changed = stateKey !== lastBeaconStateKey
   lastBeaconStateKey = stateKey
   if (changed) {
-    log.appendLine('[anno] beacon chips=[' + chips.map((c) => c.name).join(',') + '] lines=[' + lines.map((l) => l.ref).join(',') + ']')
+    log.appendLine('[anno] beacon chips=[' + chips.map((c) => c.name).join(',') + '] lines=[' + lines.map((l) => l.ref).join(',') + '] win=' + annoWinTag())
   }
   annoChipsBeaconed(chips.length) // (0.1.115) resolve empty-window waiters
-  // Refresh BEFORE the dock push: the client gate sends straight through when
-  // its dock is empty, so a dock built from the previous beacon drops the
-  // annotation whenever chip and @line arrive in a single beacon.
-  annoCurrentChips = chips.map((c) => {
-    const lineByRefT = new Map()
-    for (const l of lines) lineByRefT.set(l.ref, l.text)
-    return { name: c.name, kind: c.kind || 'element', text: lineByRefT.has(c.name) ? annoFullComment(c.name, lineByRefT.get(c.name)) : '' }
-  })
   // (0.1.155) passive capture of freshly-seen non-baseline chips (read-only;
   // chip untouched), then push the dock list for the client's sync compose.
-  // Startup leftovers are deleted by the cleanup below, never reserved.
-  if (annoFeatureOn() && dshState.annoDriver && !annoStartupCleanup && !annoStartupCleanupRunning) {
+  if (annoFeatureOn() && dshState.annoDriver) {
     try {
       const keysX = annoChipKeys(annoCurrentChips)
       annoCurrentChips.forEach((c, i) => { if (c.text) annoChipTexts.set(keysX[i], c.text) })
@@ -1998,6 +1916,12 @@ function annoMirrorOnState(chips, lines, log) {
       annoPushDockList()
     } catch (e) { /* non-fatal */ }
   }
+  // Track chip state for send-time sync (no real-time insertion into dsh).
+  annoCurrentChips = chips.map((c) => {
+    const lineByRefT = new Map()
+    for (const l of lines) lineByRefT.set(l.ref, l.text)
+    return { name: c.name, kind: c.kind || 'element', text: lineByRefT.has(c.name) ? lineByRefT.get(c.name) : '' }
+  })
   // (0.1.115) Toggle off = feature does not exist: no startup cleanup flash,
   // no flash-back. Beacon logging + chip tracking only (diagnostics).
   if (!annoFeatureOn()) { annoStartupCleanup = false; return }
@@ -2008,7 +1932,6 @@ function annoMirrorOnState(chips, lines, log) {
   // restarts even though chips do not).
   if (annoStartupCleanup) {
     annoStartupCleanup = false
-    annoStartupCleanupRunning = true
     log.appendLine('[anno] startup cleanup: chips=' + chips.length + ' lines=' + lines.length)
     const names = chips.map((c) => c.name)
     annoCurrentChips = []
@@ -2047,7 +1970,6 @@ function annoMirrorOnState(chips, lines, log) {
         }
         log.appendLine('[anno] startup cleanup done (baseline=' + [...annoBaseline].join(',') + ')')
       } finally {
-        annoStartupCleanupRunning = false
         annoFreezeReturn = false
         annoReturnIfIdle()
       }

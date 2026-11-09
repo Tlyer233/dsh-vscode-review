@@ -284,7 +284,6 @@ function chromeQuery(chrome) {
   return '_dshRail=' + encodeURIComponent(c.railSide)
     + '&_dshHidden=' + (c.railHidden ? '1' : '0')
     + '&_dshZoom=' + encodeURIComponent(String(c.zoom))
-    + '&_dshFrameZoom=1'
 }
 
 /**
@@ -549,12 +548,17 @@ function readOsClipboardImage() {
   return readLinuxClipboardImage()
 }
 
-// One extension host = one VS Code window, so this id is unique per window and
-// stable across sidebar rebuilds. The annotation CDP driver claims its
-// workbench by it: host:port is shared by SSH windows behind one forwarded port.
+// (2.1.14) Per-window identity for the sidebar iframe URL. One extension host
+// process = one VS Code window, so a module-level id is unique across windows.
+// The annotation CDP driver claims THIS window's workbench by this id; host:port
+// is shared by two SSH windows behind one forwarded port and used to cross-wire
+// their observers. Stable for the life of the window (not per html build), and
+// `_t` still busts the frame cache on every rewrite.
 const DSH_BOOT_ID = Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
 
-/** @returns {string} this window's `_dshVscode` id (see DSH_BOOT_ID). */
+/**
+ * @returns {string} stable per-window `_dshVscode` boot id (see DSH_BOOT_ID).
+ */
 function dshComposerBootId() {
   return DSH_BOOT_ID
 }
@@ -607,20 +611,6 @@ function dshWebviewHtml(url, opts) {
     '  var overlay = document.getElementById("overlay");' +
     '  var connected = false;' +
     '  var dshChrome = ' + JSON.stringify(chrome) + ';' +
-    // CSS zoom inside the dsh page desyncs getBoundingClientRect from the
-    // layout viewport (Chromium standardized zoom), so floating UI and
-    // selection hit-testing drift. Scale the iframe element instead: the
-    // page renders at zoom 1 in a 1/z-sized viewport.
-    '  function applyFrameZoom(z) {' +
-    '    z = Number(z) || 1;' +
-    '    if (!frame) return;' +
-    '    var s = frame.style;' +
-    '    if (z === 1) { s.position = ""; s.left = ""; s.top = ""; s.width = ""; s.height = ""; s.transform = ""; s.transformOrigin = ""; return; }' +
-    '    s.position = "absolute"; s.left = "0"; s.top = "0";' +
-    '    s.width = (100 / z) + "%"; s.height = (100 / z) + "%";' +
-    '    s.transformOrigin = "0 0"; s.transform = "scale(" + z + ")";' +
-    '  }' +
-    '  applyFrameZoom(dshChrome.zoom);' +
     '  var watchdog = setTimeout(function () {' +
     '    if (!connected && overlay) overlay.classList.remove("hidden");' +
     '  }, 8000);' +
@@ -794,16 +784,15 @@ function dshWebviewHtml(url, opts) {
     '    } else if (msg.type === "dshPasteImageRequest") {' +
     '      pasteLog("parent image request hadText=" + !!msg.hadText);' +
     '      forwardParentImages(!!msg.hadText);' +
-    '    } else if (msg.type === "dshInsertText" || msg.type === "dshInsertRefs" || msg.type === "dshPasteText" || msg.type === "dshPasteImages" || msg.type === "dshSetScope" || msg.type === "dshPendingUpdated" || msg.type === "dshAnnoDock" || msg.type === "dshRemoveReference" || msg.type === "dshAnnoPrepared" || msg.type === "dshAnnoFocus" || msg.type === "dshAnnoProg" || msg.type === "dshFocusComposer") {' +
+    '    } else if (msg.type === "dshInsertText" || msg.type === "dshInsertRefs" || msg.type === "dshPasteText" || msg.type === "dshPasteImages" || msg.type === "dshSetScope" || msg.type === "dshPendingUpdated" || msg.type === "dshAnnoDock" || msg.type === "dshRemoveReference" || msg.type === "dshAnnoPrepared" || msg.type === "dshAnnoFocus" || msg.type === "dshAnnoProg") {' +
     '      if (frame && frame.contentWindow) {' +
     '        frame.contentWindow.postMessage(msg, "*");' +
-    '        if (msg.type === "dshInsertText" || msg.type === "dshInsertRefs" || msg.type === "dshFocusComposer") {' +
+    '        if (msg.type === "dshInsertText" || msg.type === "dshInsertRefs") {' +
     '          try { frame.focus(); } catch (e) {}' +
     '        }' +
     '      }' +
     '    } else if (msg.type === "dshChromeState") {' +
     '      dshChrome = { railSide: msg.railSide === "right" ? "right" : "left", railHidden: !!msg.railHidden, zoom: Number(msg.zoom) || 1 };' +
-    '      applyFrameZoom(dshChrome.zoom);' +
     '      vscode.postMessage(msg);' +
     '    } else if (msg.type === "dshViewActive" || msg.type === "dshOpenExternal" || msg.type === "dshOpenFile" || msg.type === "dshOpenPlan" || msg.type === "dshPendingRequest" || msg.type === "dshReviewAll" || msg.type === "dshScopeViolation" || msg.type === "dshScopeMissing" || msg.type === "dshScopeEmpty" || msg.type === "dshWorkspaceCreated" || msg.type === "dshScopeDiag" || msg.type === "dshScopeRequest" || msg.type === "dshCopyText" || msg.type === "dshPasteRequest" || msg.type === "dshInsertResult" || msg.type === "dshShowCommands" || msg.type === "dshAnnoDelete" || msg.type === "dshAnnoConsumed" || msg.type === "dshAnnoPrepareReq") {' +
     '      vscode.postMessage(msg);' +
@@ -1208,7 +1197,7 @@ async function sendAnnoDock(chips) {
       type: 'dshAnnoDock',
       chips: Array.isArray(chips) ? chips : [],
     })
-    state.log('[anno] dock push ' + (Array.isArray(chips) ? chips.length : 0) + ' row(s) delivered=' + ok)
+    state.log('[anno] dock push ' + (Array.isArray(chips) ? chips.length : 0) + ' row(s) delivered=' + ok + ' win=' + ((state.annoDriver && state.annoDriver.winTitle) || 'unknown'))
     return ok
   } catch (e) {
     state.log('[anno] dock post failed: ' + (e && e.message || e))
@@ -1534,11 +1523,8 @@ function setupDshBrowser(context) {
           // Pull VS Code focus back to the sidebar after every chip insert
           // (selection AND drag-drop flows), then ping the iframe so the DOM
           // focus lands on the composer (the Lexical caret needs it).
-          // Second ping: the view's DOM focus can settle after the first one
-          // (seen with Cmd+L from the editor).
           void focusDshSidebar().then(() => {
             void view.webview.postMessage({ type: 'dshFocusComposer' })
-            setTimeout(() => { void view.webview.postMessage({ type: 'dshFocusComposer' }) }, 150)
           })
         }
       })
