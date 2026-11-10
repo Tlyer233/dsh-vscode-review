@@ -1,3 +1,10 @@
+## 2.1.27:移除内置的选段批注 UI(dsh 已自带)(2026-11-10)
+
+- 移除:`client.js` 里 vendored 的 dsh-annotate 整段(选中文字→引用卡片→段落批注 chip→批量组句，含 `dsha_*` 样式、`__dshaPeek/__dshaClear/__dshaFlushNow` 三个接缝)，共 956 行；插件不再自己画批注界面。
+- 保留:Copilot 附件 dock 的发送拦截链路(`annoDockChips`/`annoSendGate`/发送进度环)与 `annotationToDsh`、`annoHeapBridge` 设置项不变，元素批注照旧工作。
+- 未动:Copilot 那条批注链路的代码一行未改。段落批注的调用点(`window.__dshaPeek/__dshaClear/__dshaFlushNow`)保持原样，读不到已移除的全局即为未命中，发送路径落回原分支。
+- 部署:GitHub main;Mac 与 3080 均经 `install.sh`(拷贝制)升级 plugin 2.1.27;dsh web 由用户重启。
+
 ## 2.1.26:顶栏一行化全部撤除,交回 dsh 原生的两行 header(2026-11-10)
 
 - 移除:`installIframeSidebarPeek()` 里所有针对 `wSkVaW_header`/`_titleRow`/`_tabs`/`_viewTabs`/`_tab` 的规则一并删掉，顶栏完全交回宿主自己画(标题行 + 视图标签行，`min-height:76px`)。
