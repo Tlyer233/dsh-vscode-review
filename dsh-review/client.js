@@ -888,57 +888,11 @@ window.__ModuleLoader__.load({
         "html.dsh-vscode-iframe .uV2eYG_root {",
         "  padding: 0 8px 4px !important;",
         "}",
-        // One compact line for the VS Code sidebar. The host puts the view tabs
-        // on a second header row (grid-column: 1/-1 + margin-top), and 0.2.2's
-        // tab hit-area expansion (--dsh-tab-hit-inline with negative margins)
-        // moves any absolutely positioned copy off center. Both rows therefore
-        // stay in flow: title row in the middle track, tabs in the right track.
-        "html.dsh-vscode-iframe .wSkVaW_header {",
-        "  grid-template-columns: auto minmax(0, 1fr) auto !important;",
-        "  min-height: 0 !important;",
-        "  padding: 4px 12px 4px 12px !important;",
-        "}",
-        "html.dsh-vscode-iframe .wSkVaW_titleRow {",
-        "  grid-row: 1 !important;",
-        "  grid-column: 2 !important;",
-        "  min-height: 0 !important;",
-        "  min-width: 0 !important;",
-        "  padding-inline-start: 0 !important;",
-        "}",
-        "html.dsh-vscode-iframe .wSkVaW_tabs {",
-        "  --dsh-tab-hit-inline: 0px;",
-        "  grid-row: 1 !important;",
-        "  grid-column: 3 !important;",
-        "  position: static !important;",
-        "  transform: none !important;",
-        "  visibility: visible !important;",
-        "  opacity: 1 !important;",
-        "  pointer-events: auto !important;",
-        "  width: auto !important;",
-        "  min-width: 0 !important;",
-        "  height: auto !important;",
-        "  margin-top: 0 !important;",
-        "  gap: 12px !important;",
-        "  padding: 0 4px !important;",
-        "  flex-wrap: nowrap !important;",
-        "  align-items: center !important;",
-        "  justify-content: flex-end !important;",
-        "  z-index: auto !important;",
-        "  background: transparent;",
-        "  border-radius: 4px;",
-        "}",
-        "html.dsh-vscode-iframe .wSkVaW_viewTabs {",
-        "  flex-wrap: nowrap !important;",
-        "  gap: 12px !important;",
-        "  min-height: 0 !important;",
-        "}",
-        "html.dsh-vscode-iframe .wSkVaW_tab {",
-        "  padding: 0 4px !important;",
-        "  margin: 0 !important;",
-        "  min-height: 0 !important;",
-        "  font-size: 12px !important;",
-        "  line-height: 18px !important;",
-        "}",
+        // The host's own header stays untouched: title row plus the view tabs on
+        // their own row. Both one-line attempts (a hover overlay over the title
+        // row, then an in-flow third grid track) cost more than the height they
+        // saved — the overlay ate clicks on the header actions, and a narrow
+        // third track made the host fold the tabs into its overflow menu.
         // 0.2.0: sidebar track zeroing is done in JS (applyRailHiddenCols)
         // to preserve the rightbar/workspace track. No CSS grid override here.
         // Right dock: RTL flips the first (sidebar) track to the right edge.
