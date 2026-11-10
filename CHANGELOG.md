@@ -1,3 +1,13 @@
+## 2.1.25:顶栏一行化改为在流同行,修悬停遮罩吃掉按钮与 0.2.2 不居中(2026-11-10)
+
+- 现象:dsh 面板顶栏原先由插件压成一行——标签行绝对定位覆盖在标题行上、悬停才显示。鼠标移到顶栏时，标题右侧的 ↑↓/`...`/放大按钮和标题本身都点不到(透明覆盖层接走了点击)；dsh 0.2.2 起标签行还不再垂直居中。
+- 根因一(遮挡):覆盖层铺满整行(`left:12px; right:12px`)并在 `:hover` 时 `pointer-events:auto`，标题行只被设成 `opacity:0`(盒子还在)，两者一起把点击吃掉。
+- 根因二(不居中):0.2.2 给 `.wSkVaW_tab` 新增点击热区扩张 `--dsh-tab-hit-inline:10px` + `min-height:35px` + `margin:-10px -10px 0`，负的上外边距让 `height:fit-content` 的内容盒上移，`top:50% + translateY(-50%)` 随之偏离；另有 `@media (width<=767px){html:not([data-platform]) .wSkVaW_tabs{padding-left:0}}` 让 767 两侧缩进不同(iframe 的 media 还受 CSS zoom 影响，会抖)。类名哈希 `wSkVaW_*` 两版一致，失效的是几何。
+- 改法(`client.js` 的 `installIframeSidebarPeek()` CSS 段):不再做覆盖层，改为在流内同行——宿主 header 是 `grid-template-columns:auto minmax(0,1fr)` 的两行网格，插件把它扩成三列 `auto minmax(0,1fr) auto`，标题行留在第 2 列(加 `min-width:0` 让长标题原生截断)，标签行进第 3 列 `grid-row:1`，绝对定位/`visibility`/`opacity`/`transform` 全套覆盖层属性与两条 `:hover` 规则一起删掉。
+- 热区归零:`.wSkVaW_tabs` 上设 `--dsh-tab-hit-inline:0px`，`.wSkVaW_tab` 改 `padding:0 4px; margin:0; min-height:0`，`.wSkVaW_viewTabs` 改不换行、间距 12px，消除 0.2.2 的上移与缩进差。标签行 `padding` 恒定给出，压掉 767 那条 media 的差异。
+- 未改:JS 逻辑、VS Code 扩展、宿主源码(抽屉判定用户已自行改过)。
+- 部署:GitHub main;Mac 与 3080 均经 `install.sh`(拷贝制)升级 plugin 2.1.25;dsh web 由用户重启，扩展无需 Reload Window。
+
 ## ext 2.1.21:侧栏的重启按钮在 mac 上只留下「dsh is not reachable」(2026-11-10)
 
 - 现象:点 dsh 面板右上角的重启按钮，dsh 进程被杀掉，新进程起不来，侧栏停在 `dsh is not reachable on 127.0.0.1:3080`。`~/.dsh/review/dsh-restart.log` 尾部重复 `env: node: No such file or directory`。
