@@ -1062,13 +1062,13 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * @returns {{ enabled: boolean, fileSend: string, snippetSend: string, sidebarSide: string, sidebarFloat: boolean, jobsTerminal: boolean, scopeFilter: boolean, autoWorkspace: boolean, openFilesInVscode: boolean, claudeAdapt: boolean, annotationToDsh: boolean }}
+     * @returns {{ enabled: boolean, fileSend: string, snippetSend: string, sidebarSide: string, sidebarFloat: boolean, jobsTerminal: boolean, scopeFilter: boolean, autoWorkspace: boolean, openFilesInVscode: boolean, annotationToDsh: boolean }}
      * @description Live 设置 → 代码审查 values; defaults if the scope is not ready.
      */
     function getReviewSettings() {
       // Default to pointer: matches the user's persisted yaml choice; fence
       // is only used when the live scope explicitly says fence.
-      const d = { enabled: true, fileSend: "path", snippetSend: "pointer", sidebarSide: "left", sidebarFloat: true, jobsTerminal: false, scopeFilter: true, autoWorkspace: true, openFilesInVscode: true, claudeAdapt: true, annotationToDsh: true, annoHeapBridge: true };
+      const d = { enabled: true, fileSend: "path", snippetSend: "pointer", sidebarSide: "left", sidebarFloat: true, jobsTerminal: false, scopeFilter: true, autoWorkspace: true, openFilesInVscode: true, annotationToDsh: true, annoHeapBridge: true };
       if (!reviewSettingsScope || typeof reviewSettingsScope.getSnapshot !== "function") return d;
       const snap = reviewSettingsScope.getSnapshot();
       const val = snap && snap.value;
@@ -1087,7 +1087,6 @@ window.__ModuleLoader__.load({
         scopeFilter: v.scopeFilter !== false,
         autoWorkspace: v.autoWorkspace !== false,
         openFilesInVscode: v.openFilesInVscode !== false,
-        claudeAdapt: v.claudeAdapt !== false,
         annotationToDsh: v.annotationToDsh !== false,
         annoHeapBridge: v.annoHeapBridge !== false,
       };
@@ -3199,16 +3198,22 @@ window.__ModuleLoader__.load({
         return normalizeScopePath(e.workbench) === normalizeScopePath(workbench);
       });
 
-      // Claude-adapt palette: warm-black surface, terracotta accent, ivory text.
-      const claude = getReviewSettings().claudeAdapt;
-      const dockBg = claude ? "var(--dsw-alias-bg-layer-2, rgba(20,20,19,0.85))" : "var(--dsw-specific-tip, var(--dsh-color-surface, transparent))";
-      const dockBorder = claude ? "1px solid rgba(217,119,87,0.25)" : "1px solid var(--dsw-alias-border-l1, #80808059)";
-      const dockTextColor = claude ? "var(--dsw-alias-label-primary, #faf9f5)" : "var(--dsh-color-text, inherit)";
-      const acceptBg = claude ? "#d97757" : "var(--dsh-color-success, #3fb950)";
-      const rejectBg = claude ? "#b53333" : "var(--dsh-color-danger, #f85149)";
-      const fileLinkColor = claude ? "#d97757" : "var(--dsh-color-accent, #50a0ff)";
-      const createColor = claude ? "#55805e" : "var(--dsh-color-success, #3fb950)";
-      const deleteColor = claude ? "#cf5b5b" : "var(--dsh-color-danger, #f85149)";
+      // Theme-agnostic palette: every colour is read from the active DSH theme
+      // (--dsw-alias-*, the same token layer the built-in palettes and
+      // dsh-claude-style override), so light/dark switching and third-party
+      // themes recolour the dock with no per-theme branch and no hardcoded hex.
+      // Accept/reject are a translucent tint of the theme's success/error hue:
+      // a 18% wash composites legibly over both warm-black and white surfaces.
+      const dockBg = "var(--dsw-alias-bg-layer-2, var(--dsw-specific-tip, transparent))";
+      const dockBorder = "1px solid var(--dsw-alias-border-l1, #80808059)";
+      const dockTextColor = "var(--dsw-alias-label-primary, inherit)";
+      const acceptFg = "var(--dsw-alias-state-success-primary, #3fb950)";
+      const rejectFg = "var(--dsw-alias-state-error-primary, #f85149)";
+      const acceptBg = "color-mix(in srgb, " + acceptFg + " 18%, transparent)";
+      const rejectBg = "color-mix(in srgb, " + rejectFg + " 18%, transparent)";
+      const fileLinkColor = "var(--dsw-alias-brand-primary, #50a0ff)";
+      const createColor = acceptFg;
+      const deleteColor = rejectFg;
 
       return h("div", {
         style: {
@@ -3232,7 +3237,7 @@ window.__ModuleLoader__.load({
             display: "flex", alignItems: "center", gap: "8px",
             padding: "6px 10px", cursor: "pointer", userSelect: "none",
             color: dockTextColor,
-            borderBottom: collapsed || live.length === 0 ? "none" : "1px solid " + (claude ? "rgba(217,119,87,0.2)" : "var(--dsh-color-border, #80808030)"),
+            borderBottom: collapsed || live.length === 0 ? "none" : "1px solid var(--dsw-alias-border-l1, #80808030)",
           }
         },
           h("span", { style: { fontSize: "11px", opacity: 0.6 } }, collapsed ? "\u25B6" : "\u25BC"),
@@ -3261,7 +3266,7 @@ window.__ModuleLoader__.load({
                 lineHeight: "18px",
                 cursor: disabled ? "default" : "pointer",
                 userSelect: "none",
-                color: "#ffffff",
+                color: action === "accept" ? acceptFg : rejectFg,
                 background: action === "accept" ? acceptBg : rejectBg,
                 opacity: disabled ? 0.35 : 1,
                 pointerEvents: disabled ? "none" : "auto",
@@ -3494,7 +3499,6 @@ window.__ModuleLoader__.load({
           const [draftScopeFilter, setDraftScopeFilter] = useState(null);
           const [draftAutoWorkspace, setDraftAutoWorkspace] = useState(null);
           const [draftOpenFilesVs, setDraftOpenFilesVs] = useState(null);
-          const [draftClaudeAdapt, setDraftClaudeAdapt] = useState(null);
           const [draftAnnotationToDsh, setDraftAnnotationToDsh] = useState(null);
           const [draftAnnoHeapBridge, setDraftAnnoHeapBridge] = useState(null);
           const [saving, setSaving] = useState(false);
@@ -3509,7 +3513,6 @@ window.__ModuleLoader__.load({
           const liveScopeFilter = live.scopeFilter;
           const liveAutoWorkspace = live.autoWorkspace;
           const liveOpenFilesVs = live.openFilesInVscode;
-          const liveClaudeAdapt = live.claudeAdapt;
           const liveAnnotationToDsh = live.annotationToDsh;
           const liveAnnoHeapBridge = live.annoHeapBridge;
           const shownEnabled = draftEnabled == null ? liveEnabled : draftEnabled;
@@ -3521,7 +3524,6 @@ window.__ModuleLoader__.load({
           const shownScopeFilter = draftScopeFilter == null ? liveScopeFilter : draftScopeFilter;
           const shownAutoWorkspace = draftAutoWorkspace == null ? liveAutoWorkspace : draftAutoWorkspace;
           const shownOpenFilesVs = draftOpenFilesVs == null ? liveOpenFilesVs : draftOpenFilesVs;
-          const shownClaudeAdapt = draftClaudeAdapt == null ? liveClaudeAdapt : draftClaudeAdapt;
           const shownAnnotationToDsh = draftAnnotationToDsh == null ? liveAnnotationToDsh : draftAnnotationToDsh;
           const shownAnnoHeapBridge = draftAnnoHeapBridge == null ? liveAnnoHeapBridge : draftAnnoHeapBridge;
           const dirty = shownEnabled !== liveEnabled
@@ -3533,7 +3535,6 @@ window.__ModuleLoader__.load({
             || shownScopeFilter !== liveScopeFilter
             || shownAutoWorkspace !== liveAutoWorkspace
             || shownOpenFilesVs !== liveOpenFilesVs
-            || shownClaudeAdapt !== liveClaudeAdapt
             || shownAnnotationToDsh !== liveAnnotationToDsh
             || shownAnnoHeapBridge !== liveAnnoHeapBridge;
           const available = snap && snap.status === "ready";
@@ -3549,11 +3550,10 @@ window.__ModuleLoader__.load({
             setDraftScopeFilter(null);
             setDraftAutoWorkspace(null);
             setDraftOpenFilesVs(null);
-            setDraftClaudeAdapt(null);
             setDraftAnnotationToDsh(null);
             setDraftAnnoHeapBridge(null);
             setFailed(false);
-          }, [liveEnabled, liveFileSend, liveSnippetSend, liveSidebarSide, liveSidebarFloat, liveJobsTerminal, liveScopeFilter, liveAutoWorkspace, liveOpenFilesVs, liveClaudeAdapt, liveAnnotationToDsh, liveAnnoHeapBridge]);
+          }, [liveEnabled, liveFileSend, liveSnippetSend, liveSidebarSide, liveSidebarFloat, liveJobsTerminal, liveScopeFilter, liveAutoWorkspace, liveOpenFilesVs, liveAnnotationToDsh, liveAnnoHeapBridge]);
 
           if (!available) return null;
 
@@ -3567,7 +3567,6 @@ window.__ModuleLoader__.load({
             setDraftScopeFilter(null);
             setDraftAutoWorkspace(null);
             setDraftOpenFilesVs(null);
-            setDraftClaudeAdapt(null);
             setDraftAnnotationToDsh(null);
             setDraftAnnoHeapBridge(null);
             setFailed(false);
@@ -3606,9 +3605,6 @@ window.__ModuleLoader__.load({
             }
             if (shownOpenFilesVs !== liveOpenFilesVs) {
               chain = chain.then(function () { return reviewScope.set("openFilesInVscode", shownOpenFilesVs); });
-            }
-            if (shownClaudeAdapt !== liveClaudeAdapt) {
-              chain = chain.then(function () { return reviewScope.set("claudeAdapt", shownClaudeAdapt); });
             }
             if (shownAnnotationToDsh !== liveAnnotationToDsh) {
               chain = chain.then(function () { return reviewScope.set("annotationToDsh", shownAnnotationToDsh); });
@@ -3786,22 +3782,6 @@ window.__ModuleLoader__.load({
                 h("div", null,
                   h("label", { htmlFor: "dshr-open-files-vs" }, "点击文件用 VS Code 编辑器打开"),
                   h("p", { className: "dshr-hint" }, "点击对话里的文件链接 / 产物卡片 / 行内文件提及时,在 VS Code 编辑器打开该文件,而不是 dsh 内置预览(仅 VS Code 侧栏内生效;关闭后恢复 dsh 原生预览)。默认开。"),
-                ),
-              ),
-              h("div", { className: "dshr-field" },
-                h("input", {
-                  id: "dshr-claude-adapt",
-                  type: "checkbox",
-                  checked: shownClaudeAdapt,
-                  disabled: !writable || saving,
-                  onChange: function (e) {
-                    setDraftClaudeAdapt(!!e.target.checked);
-                    setFailed(false);
-                  },
-                }),
-                h("div", null,
-                  h("label", { htmlFor: "dshr-claude-adapt" }, "适配 Claude 界面"),
-                  h("p", { className: "dshr-hint" }, "开启后 Review Changes 待审栏使用 Claude 主题配色（暖黑底、陶橙点缀），与 dsh-claude-style / dsh-anthropic-fonts 协调。关闭恢复默认配色。默认开。"),
                 ),
               ),
               h("div", { className: "dshr-field" },
@@ -4571,14 +4551,14 @@ window.__ModuleLoader__.load({
           if (!current) {
             if (Date.now() - annoIframeBootAt > 10000) return;
           } else {
-          if (connectInFlight) return;
-          const nowEmpty = Date.now();
-          // Short throttle — keep pullback snappy when user re-opens a workspace.
-          if (vscodeScopePullingAt && nowEmpty - vscodeScopePullingAt < 2000) return;
-          vscodeScopePullingAt = nowEmpty;
-          postScopeMessage("dshScopeEmpty", {});
-          goHome();
-          return;
+            if (connectInFlight) return;
+            const nowEmpty = Date.now();
+            // Short throttle — keep pullback snappy when user re-opens a workspace.
+            if (vscodeScopePullingAt && nowEmpty - vscodeScopePullingAt < 2000) return;
+            vscodeScopePullingAt = nowEmpty;
+            postScopeMessage("dshScopeEmpty", {});
+            goHome();
+            return;
           }
         }
 
@@ -4921,26 +4901,26 @@ window.__ModuleLoader__.load({
             }
           } catch (err) { /* label not in a policy state */ }
           if (pref === "queue") {
-          // (2.0.50) PRIMARY SOURCE = ctx.configForms, the exact host the GUI's
-          // own ComposerSubmissionPolicy adopts (ui-conversation client.js
-          // ~19539: new ComposerSubmissionPolicy(ctx.configForms.get(
-          // "ui-conversation"))). The web profile has NO server-side settings
-          // persistence provider — remote.settings.describe() only ever sees
-          // defaults, which is why a live "Steer" read as queue.
-          try {
-            const form = ctx.configForms && typeof ctx.configForms.get === "function" ? ctx.configForms.get("ui-conversation") : null;
-            const sec = form && typeof form.getSnapshot === "function" ? form.getSnapshot() : null;
-            const v = sec && sec.value ? sec.value.busyEnter : null;
-            if (v === "steer" || v === "queue") pref = v;
-          } catch (err) { /* configForms missing on old builds */ }
-          if (pref === "queue") {
+            // (2.0.50) PRIMARY SOURCE = ctx.configForms, the exact host the GUI's
+            // own ComposerSubmissionPolicy adopts (ui-conversation client.js
+            // ~19539: new ComposerSubmissionPolicy(ctx.configForms.get(
+            // "ui-conversation"))). The web profile has NO server-side settings
+            // persistence provider — remote.settings.describe() only ever sees
+            // defaults, which is why a live "Steer" read as queue.
             try {
-              const st = ctx.remote && ctx.remote.settings && typeof ctx.remote.settings.describe === "function"
-                ? ctx.remote.settings.describe("ui-conversation") : null;
-              const v2 = st && st.value ? (typeof st.value.get === "function" ? st.value.get("busyEnter") : st.value.busyEnter) : null;
-              if (v2 === "steer" || v2 === "queue") pref = v2;
-            } catch (err) { /* settings plane unavailable */ }
-          }
+              const form = ctx.configForms && typeof ctx.configForms.get === "function" ? ctx.configForms.get("ui-conversation") : null;
+              const sec = form && typeof form.getSnapshot === "function" ? form.getSnapshot() : null;
+              const v = sec && sec.value ? sec.value.busyEnter : null;
+              if (v === "steer" || v === "queue") pref = v;
+            } catch (err) { /* configForms missing on old builds */ }
+            if (pref === "queue") {
+              try {
+                const st = ctx.remote && ctx.remote.settings && typeof ctx.remote.settings.describe === "function"
+                  ? ctx.remote.settings.describe("ui-conversation") : null;
+                const v2 = st && st.value ? (typeof st.value.get === "function" ? st.value.get("busyEnter") : st.value.busyEnter) : null;
+                if (v2 === "steer" || v2 === "queue") pref = v2;
+              } catch (err) { /* settings plane unavailable */ }
+            }
           }
           let running = false;
           try {
@@ -5444,72 +5424,72 @@ window.__ModuleLoader__.load({
         };
       }, "dsh-review: workbench scope watchdog");
 
-    // Annotation dock chips (0.2.3): the row ABOVE the composer input — the
-    // dsh side of "Copilot has two: a chip above the input and an @ref line
-    // inside it". Native slot conversation.input.dock, same mechanism as
-    // dsh-annotate. Pure mirror of the Copilot attachment strip: state arrives
-    // via dshAnnoDock (extension, from the Copilot observer beacon); ✕ posts
-    // dshAnnoDelete and the extension performs the REAL CDP click on the
-    // Copilot chip (only that removes the native pin + renumbers).
-    // Also the consume detector: our vscode-ref chips leave the input (send or
-    // manual clear) and the draft is empty -> dshAnnoConsumed -> the extension
-    // real-clicks every remaining Copilot chip away.
-    function AnnoDockChips(props) {
-      const [, force] = useState(0);
-      useEffect(function () {
-        return subscribeAnnoDock(function () { force(function (n) { return n + 1; }); });
-      }, []);
-      const inputSnapshot = props && props.useInput ? props.useInput(function (s) { return s; }) : null;
-      // (0.2.4) The old "draft non-empty -> empty" consume trigger is removed:
-      // it also fired on a manual clear (Cmd+A + delete), which flashed Copilot
-      // by mistake. Consume now fires ONLY on a real send — see the global
-      // markAnnoSend() send-detection above (Enter in composer / send button).
-      const chips = annoDockChips;
-      // (0.2.5) Toggle off = feature does not exist: no dock chips either.
-      if (!getReviewSettings().annotationToDsh) return null;
-      if (chips.length === 0) return null;
-      // (0.2.9) USER RULING: no chip strip above the dsh composer. The dock
-      // data (annoDockChips) stays — it is the ③ interception gate — but the
-      // UI is not rendered: dsh send -> Copilot capture -> appended paths ->
-      // agent, invisibly.
-      return null;
-      // eslint-disable-next-line no-unreachable
-      return h("div", {
-        style: {
-          display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap",
-          width: "100%", boxSizing: "border-box",
-          maxWidth: "calc(var(--dsh-composer-card-max-width, 800px) - var(--dsh-composer-dock-inset, 0px) * 4)",
-          margin: "0 auto 4px", padding: "0 2px",
-        }
-      }, chips.map(function (c) {
-        return h("span", {
-          key: c.key || (c.name + "|" + c.text),
-          title: c.text ? c.name + " — " + c.text : c.name,
+      // Annotation dock chips (0.2.3): the row ABOVE the composer input — the
+      // dsh side of "Copilot has two: a chip above the input and an @ref line
+      // inside it". Native slot conversation.input.dock, same mechanism as
+      // dsh-annotate. Pure mirror of the Copilot attachment strip: state arrives
+      // via dshAnnoDock (extension, from the Copilot observer beacon); ✕ posts
+      // dshAnnoDelete and the extension performs the REAL CDP click on the
+      // Copilot chip (only that removes the native pin + renumbers).
+      // Also the consume detector: our vscode-ref chips leave the input (send or
+      // manual clear) and the draft is empty -> dshAnnoConsumed -> the extension
+      // real-clicks every remaining Copilot chip away.
+      function AnnoDockChips(props) {
+        const [, force] = useState(0);
+        useEffect(function () {
+          return subscribeAnnoDock(function () { force(function (n) { return n + 1; }); });
+        }, []);
+        const inputSnapshot = props && props.useInput ? props.useInput(function (s) { return s; }) : null;
+        // (0.2.4) The old "draft non-empty -> empty" consume trigger is removed:
+        // it also fired on a manual clear (Cmd+A + delete), which flashed Copilot
+        // by mistake. Consume now fires ONLY on a real send — see the global
+        // markAnnoSend() send-detection above (Enter in composer / send button).
+        const chips = annoDockChips;
+        // (0.2.5) Toggle off = feature does not exist: no dock chips either.
+        if (!getReviewSettings().annotationToDsh) return null;
+        if (chips.length === 0) return null;
+        // (0.2.9) USER RULING: no chip strip above the dsh composer. The dock
+        // data (annoDockChips) stays — it is the ③ interception gate — but the
+        // UI is not rendered: dsh send -> Copilot capture -> appended paths ->
+        // agent, invisibly.
+        return null;
+        // eslint-disable-next-line no-unreachable
+        return h("div", {
           style: {
-            display: "inline-flex", alignItems: "center", gap: "6px",
-            maxWidth: "340px", height: "26px", padding: "0 8px",
-            borderRadius: "999px",
-            border: "1px solid color-mix(in srgb, CanvasText 20%, transparent)",
-            background: "color-mix(in srgb, CanvasText 8%, Canvas)",
-            color: "CanvasText", fontSize: "12px", lineHeight: "1",
+            display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap",
+            width: "100%", boxSizing: "border-box",
+            maxWidth: "calc(var(--dsh-composer-card-max-width, 800px) - var(--dsh-composer-dock-inset, 0px) * 4)",
+            margin: "0 auto 4px", padding: "0 2px",
           }
-        },
-          h("span", { style: { opacity: 0.6, fontSize: "13px" } }, "\u{1F4F7}"),
-          h("span", { style: { fontWeight: 500, whiteSpace: "nowrap" } }, c.name),
-          c.text ? h("span", { style: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", opacity: 0.75 } }, c.text) : null,
-          h("button", {
-            type: "button",
-            "aria-label": "Delete annotation " + c.name,
-            onClick: function (e) {
-              e.preventDefault();
-              e.stopPropagation();
-              try { window.parent.postMessage({ type: "dshAnnoDelete", name: c.name, key: c.key }, "*"); } catch (err) { /* noop */ }
-            },
-            style: { border: "0", background: "transparent", color: "inherit", opacity: 0.55, cursor: "pointer", fontSize: "11px", padding: "0", lineHeight: "1" }
-          }, "\u2715")
-        );
-      }));
-    }
+        }, chips.map(function (c) {
+          return h("span", {
+            key: c.key || (c.name + "|" + c.text),
+            title: c.text ? c.name + " — " + c.text : c.name,
+            style: {
+              display: "inline-flex", alignItems: "center", gap: "6px",
+              maxWidth: "340px", height: "26px", padding: "0 8px",
+              borderRadius: "999px",
+              border: "1px solid color-mix(in srgb, CanvasText 20%, transparent)",
+              background: "color-mix(in srgb, CanvasText 8%, Canvas)",
+              color: "CanvasText", fontSize: "12px", lineHeight: "1",
+            }
+          },
+            h("span", { style: { opacity: 0.6, fontSize: "13px" } }, "\u{1F4F7}"),
+            h("span", { style: { fontWeight: 500, whiteSpace: "nowrap" } }, c.name),
+            c.text ? h("span", { style: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", opacity: 0.75 } }, c.text) : null,
+            h("button", {
+              type: "button",
+              "aria-label": "Delete annotation " + c.name,
+              onClick: function (e) {
+                e.preventDefault();
+                e.stopPropagation();
+                try { window.parent.postMessage({ type: "dshAnnoDelete", name: c.name, key: c.key }, "*"); } catch (err) { /* noop */ }
+              },
+              style: { border: "0", background: "transparent", color: "inherit", opacity: 0.55, cursor: "pointer", fontSize: "11px", padding: "0", lineHeight: "1" }
+            }, "\u2715")
+          );
+        }));
+      }
 
       ctx.inject(["slots", "conversation", "inputTriggers"], function (scope) {
         try {
@@ -5527,10 +5507,10 @@ window.__ModuleLoader__.load({
                 conversationApi.__dshrSendWrapped = true;
                 try { window.__dshrSendWrapped = true; } catch (err) { /* noop */ }
                 try { window.parent.postMessage({ type: "dshPasteLog", line: "[send] sendSession gate installed (client 2.1.1)" }, "*"); } catch (err) { /* noop */ }
-              if (!window.__dshrStatClick) {
-                window.__dshrStatClick = true;
-                document.addEventListener("click", annoWatchContextPopover, true);
-              }
+                if (!window.__dshrStatClick) {
+                  window.__dshrStatClick = true;
+                  document.addEventListener("click", annoWatchContextPopover, true);
+                }
               }
             } catch (err) {
               try { window.parent.postMessage({ type: "dshPasteLog", line: "[send] gate install failed: " + String(err).slice(0, 90) }, "*"); } catch (e2) { /* noop */ }

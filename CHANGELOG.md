@@ -1,3 +1,13 @@
+## 2.1.28:Review Changes 浮条配色改吃主题 token(去 hex、删「适配 Claude 界面」开关)(2026-11-10)
+
+- 根因:浮条里的 `#d97757`/`#b53333` 是把 dsh-claude-style 的结果抄了一份;而非 Claude 分支用的 `--dsh-color-*` 在 DSH 里**从未定义**(core css/theme/全仓库 0 处定义),20 处 `var(--dsh-color-*, fallback)` 全部走 fallback —— 表面是 token,实际是写死。
+- 改法:`client.js` 浮条调色板改读 DSH 官方 token 层 `--dsw-alias-*`(bg-layer-2 / border-l1 / label-primary / brand-primary / state-success-primary / state-error-primary),主题切换(light/dark)与第三方主题(dsh-claude-style)自动跟随,浮条里不再有按主题分支的代码。
+- 按钮:`✓ 全部接受` / `✕ 全部撤回` 改为该色相的半透明淡底 `color-mix(in srgb, var(--dsw-alias-state-*-primary) 18%, transparent)`,文字取同色相 —— 叠在暖黑底与纯白底上都可读,不再依赖 `#ffffff`。
+- 移除:`claudeAdapt` 整条链路(`client.js`:默认值/读取/draft 状态/dirty/保存/设置页 UI; `index.js`:schema 与默认值)。
+- install.sh:装完加硬校验 —— 安装目录必须是真目录、不含符号链接、`package.json` 版本必须等于仓库版本,任一不满足直接 die(拷贝制,禁止软链;软链会让版本检查穿透到源码树而永远通过)。
+- 未改:VS Code 扩展(仍 2.1.21)、影子仓 / pending 逻辑。
+- 部署:GitHub main;Mac 与 3080 均经 `install.sh`(拷贝制)升级 plugin 2.1.28;dsh web 由用户重启。
+
 ## 2.1.27:移除内置的选段批注 UI(dsh 已自带)(2026-11-10)
 
 - 移除:`client.js` 里 vendored 的 dsh-annotate 整段(选中文字→引用卡片→段落批注 chip→批量组句，含 `dsha_*` 样式、`__dshaPeek/__dshaClear/__dshaFlushNow` 三个接缝)，共 956 行；插件不再自己画批注界面。

@@ -258,9 +258,21 @@ install_dsh_plugin() {
   fi
   # --force: same version must still replace the previous tarball copy.
   dsh plugin --profile web add "$tgz" --force
-  if [ -L "$HOME/.dsh/profiles/web/node_modules/dsh-review" ]; then
+  local installed="$HOME/.dsh/profiles/web/node_modules/dsh-review"
+  if [ -L "$installed" ]; then
     die "install ended as a symlink again — lock not healed; run: dsh plugin --profile web remove dsh-review && dsh plugin --profile web add $tgz --force"
   fi
+  # Copy install only: symlinks into the source checkout are forbidden. A link
+  # would make "installed" mean "whatever the repo says right now", so every
+  # version check below would read through it and always pass.
+  [ -d "$installed" ] || die "installed copy missing: $installed"
+  local linked
+  linked="$(find "$installed" -maxdepth 2 -type l 2>/dev/null | head -n 1 || true)"
+  [ -z "${linked:-}" ] || die "installed copy contains a symlink ($linked) — copy install violated"
+  local inst_ver
+  inst_ver="$(node -p "require('$installed/package.json').version" 2>/dev/null || true)"
+  [ "$inst_ver" = "$plug_ver" ] || die "installed version '${inst_ver:-<none>}' != repo version '$plug_ver' ($installed)"
+  echo "verified copy install: $installed @ $inst_ver (no symlinks)"
   # Installed: drop stale tarballs, keep only the recorded one.
   local keep
   keep="$(basename "$tgz")"
