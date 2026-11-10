@@ -1,1 +1,2 @@
-client.js 里的 build 号必须等于 package.json 的 version（改版本时一起改，两处）：0.1.78
+client.js 上报给扩展的构建号（dshClientBuild，扩展日志回显「正在运行的 dsh 客户端构建 =」）：0.2.3
+这是 client 与扩展之间的协议版本，随协议改动而改，不跟 package.json 的发布版本走。
