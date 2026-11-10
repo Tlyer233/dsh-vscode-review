@@ -1,3 +1,10 @@
+## ext 2.1.21:侧栏的重启按钮在 mac 上只留下「dsh is not reachable」(2026-11-10)
+
+- 现象:点 dsh 面板右上角的重启按钮，dsh 进程被杀掉，新进程起不来，侧栏停在 `dsh is not reachable on 127.0.0.1:3080`。`~/.dsh/review/dsh-restart.log` 尾部重复 `env: node: No such file or directory`。
+- 根因:从 Dock 或 Launchpad 启动的 VS Code 继承极简 PATH(`/usr/bin:/bin:/usr/sbin:/sbin`)，其中没有 node。扩展用 `/bin/sh -c '<绝对路径>/dsh --profile web --no-open'` 启动，而 `~/.local/bin/dsh` 是 `#!/usr/bin/env node` 的符号链接，`env` 找不到 node 就直接终止。已用 `env -i PATH=/usr/bin:/bin:/usr/sbin:/sbin` 复现，补上 node 目录后同一命令输出 `0.2.2-rc.1`。
+- 修复(`lib/dsh-process.js`):新增 `dshLaunchEnv()`，把 `findNodeBinStrict()` 所在目录前置进子进程 PATH，`startDshProcess` 与 `startDshProcessWith` 两条 Unix 启动路径统一使用；bili 路径原先已前置 `~/.local/bin`，行为不变。Windows 的直接 argv 启动与 `restartDshBili` 未改动。
+- 部署:GitHub main;Mac 与 3080 均经 `install.sh` 升级 ext 2.1.21(plugin 仍 2.1.24);VS Code 需完整退出重开才会加载新扩展代码。
+
 ## 2.1.24:回滚 2.1.23 的缩放带改动(2026-11-10)
 
 - 回滚:dsh-review 代码整体回到 2.1.22 的形态——`clampIframeZoom` 恢复固定带 `0.5–2.0` 与 0.1 步进,`zoomCeiling`/`DRAWER_BREAKPOINT`/`frameWidthPx`/`ResizeObserver` 兜底与 StatsLine 改动一并撤销,VS Code 扩展的缩放手感与 0.2.1 时一致。

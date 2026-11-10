@@ -516,11 +516,31 @@ function startDshProcess(extraEnv) {
     cwd: os.homedir(),
     detached: true,
     stdio: ['ignore', out, out],
-    env: Object.assign({}, process.env, extraEnv || {}),
+    env: dshLaunchEnv(extraEnv),
   })
   child.unref()
   try { fs.closeSync(out) } catch { /* child keeps the inherited fd */ }
   return child.pid
+}
+
+/**
+ * @param {NodeJS.ProcessEnv} [extraEnv]
+ * @returns {NodeJS.ProcessEnv}
+ * @description A VS Code started from the Dock or Launchpad inherits a minimal
+ * PATH (/usr/bin:/bin:/usr/sbin:/sbin), and the dsh launcher is a symlink to a
+ * `#!/usr/bin/env node` script. Without a node directory on PATH the child dies
+ * with "env: node: No such file or directory" and the restart button only ever
+ * shows the offline overlay. Prepend the directory holding the node we can find
+ * so `env node` resolves the same way it does in a terminal.
+ */
+function dshLaunchEnv(extraEnv) {
+  const env = Object.assign({}, process.env, extraEnv || {})
+  const node = findNodeBinStrict()
+  if (!node) return env
+  const dir = path.dirname(node)
+  const parts = String(env.PATH || '').split(path.delimiter)
+  if (!parts.includes(dir)) env.PATH = [dir].concat(parts).join(path.delimiter)
+  return env
 }
 
 /**
@@ -543,7 +563,7 @@ function startDshProcessWith(command, extraEnv) {
     cwd: os.homedir(),
     detached: true,
     stdio: ['ignore', out, out],
-    env: Object.assign({}, process.env, extraEnv || {}),
+    env: dshLaunchEnv(extraEnv),
   })
   child.unref()
   try { fs.closeSync(out) } catch { /* child keeps the inherited fd */ }
