@@ -1,16 +1,8 @@
-## 2.1.23:适配 dsh 0.2.2 的抽屉档——悬浮态作为缩放地板(2026-11-10)
+## 2.1.24:回滚 2.1.23 的缩放带改动(2026-11-10)
 
-- 背景:dsh 0.2.2 的 `@deepseek-ai/dsh-client-ui-layout` 新增手机/平板适配档 `const drawer = viewport < 768 && !windowsTitlebar`,并新增 `data-sidebar-drawer` 与遮罩。`0.2.1-rc.2/rc.3/rc.5` 的该包里 `data-sidebar-drawer` 出现 0 次,`0.2.2-rc.1` 出现 2 次,抽屉是这一小版本新加的档,不是我们改坏的。
-- 宿主量的 `viewport` 是帧未缩放宽度,等于 `innerWidth ÷ 页面 zoom`(实测:mac 763px 面板在页面 zoom 0.99 时侧栏停靠、1.0 时抽屉;763/0.9 = 847 与侧栏 x 坐标逐一吻合)。VS Code 侧栏面板 763px 时差 5px 落进抽屉,遮罩盖住对话。
-- 缩放带改为按帧宽计算:`zoomCeiling() = (innerWidth - 0.5) / 768`,`clampIframeZoom` 的上下界取 `[min(1, 天花板), 天花板]`,帧宽够放下 zoom 1 时保留原来的 0.5 下界。窄面板(700/763/768)钉在测量宽度 768 的悬浮态,`Cmd -` 与滚轮缩小都不再往下走,因而再也进不了抽屉;宽面板(893/1024/1440)照旧可缩到 0.5,放大到抽屉线封顶。
-- `applyZoom()` 每次写 CSS 前统一走一次钳制,`ResizeObserver` 挂在 `document.documentElement` 上、rAF 节流重算,拖动 VS Code 面板宽度时天花板随之升降。阈值只留 `DRAWER_BREAKPOINT` 一份,从盒子量,不用 `matchMedia`。
-- `hostScalesFrame()`(`_dshFrameZoom=1`,扩展自己在 iframe 元素上做缩放)时页面 CSS zoom 仍不写,此时 `innerWidth` 已是缩放后的值,同一式子成立。已核扩展宿主收到 `dshChromeState` 只存不回射,补钳制不会形成消息环。
-- StatsLine:`statsLineSelectors()` 原来兜底硬编码 `.FJxK0a_root`/`.FJxK0a_sep`,该样式表在 `dsh-client-ui-conversation` 的 0.2.1 与 0.2.2 里都不存在(module.css 清单两版一致,无 StatsLine),兜底两版都命不中,属升级前就存在的静默失效。改为解析不到就返回 null,`compactNativeStatsLine()` 直接不注入样式,不留假兜底。
-- `BUILD_STAMP.txt`:0.1.78 之后没人同步,client.js 里早已不存在等于包版本的号。改成只说明 `dshClientBuild` 上报的是 client 与扩展之间的协议号(现值 `0.2.3`),不跟发布版本走。
-- 未改:VS Code 扩展、`dshScopeRequest` 的 `build:"0.2.0"` 与 `dshClientBuild` 的 `version:"0.2.3"` 协议串。
-- 验证:`node --check client.js` 通过;钳制数值表(700/763/768/893/1024/1200/1440)已逐档核对,窄档测量宽度恒 ≥768、宽档保留 0.5 下界。
-- 部署:GitHub main;Mac 与 3080 均经 `install.sh` 升级 plugin 2.1.23;dsh web 由用户手动重启。
-- 已知未解:dsh 0.2.2 同时删除 `@deepseek-ai/dsh-tool-subagent-control` 的 `./list-agents` 与 `./list-agents/locale/*.json` 子导出(`list_agents` 并入主入口),`codex`/`reviewer`/`fable-optimize-sglang` 等自定义 preset 仍引用旧路径,显示 `Failed to load`。本次按用户要求只备份各 preset 的 `cordis.patch.yml`(`.bak-20261110090654`),未删条目。
+- 回滚:dsh-review 代码整体回到 2.1.22 的形态——`clampIframeZoom` 恢复固定带 `0.5–2.0` 与 0.1 步进,`zoomCeiling`/`DRAWER_BREAKPOINT`/`frameWidthPx`/`ResizeObserver` 兜底与 StatsLine 改动一并撤销,VS Code 扩展的缩放手感与 0.2.1 时一致。
+- 原因:把缩放上下界同时钉在抽屉线上会让窄面板的缩放带塌成一个值,`Cmd +`/`Cmd -`/滚轮全部被收回同一数字,用户无法缩放。抽屉适配重新设计。
+- 部署:GitHub main;Mac 与 3080 均经 `install.sh`(拷贝制)升级 plugin 2.1.24;两台 pending 已先备份(`~/.dsh` 外的 tgz)再由脚本重置;dsh web 由用户重启。
 
 ## 2.1.22:影子仓 12G 膨胀 + 删除审查丢失 + 双进程竞态(2026-11-09)
 

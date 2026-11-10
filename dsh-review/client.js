@@ -546,47 +546,15 @@ window.__ModuleLoader__.load({
     const IFRAME_ZOOM_KEY = "dsh-review-zoom";
     let iframeChromeLive = null;
 
-    // dsh 0.2.2's ui-layout switches the sidebar to a drawer below this width,
-    // where an expanded sidebar cannot survive (it resets narrowExpanded), so
-    // the drawer mask covers the conversation. The host measures the layout
-    // viewport as the frame width divided by the page zoom, so the page keeps
-    // that product at or above the line instead of the frame width itself.
-    const DRAWER_BREAKPOINT = 768;
-
     /**
-     * @description Frame width in CSS pixels the page is laid out in.
-     * @returns {number}
-     */
-    function frameWidthPx() {
-      if (typeof window === "undefined") return 0;
-      const w = Number(window.innerWidth);
-      return Number.isFinite(w) ? w : 0;
-    }
-
-    /**
-     * @description Largest page zoom that still keeps the host out of its drawer tier.
-     * @returns {number}
-     */
-    function zoomCeiling() {
-      const w = frameWidthPx();
-      if (w <= 0) return 2;
-      return Math.min(2, Math.max(0.5, (w - 0.5) / DRAWER_BREAKPOINT));
-    }
-
-    /**
-     * @description Clamp iframe zoom in 0.1 steps into the band this frame affords:
-     * the ceiling keeps the host out of its drawer tier, and the floor stops the
-     * page zooming out past the floating layout. A frame wide enough for zoom 1
-     * keeps the old 0.5 floor.
+     * @description Clamp iframe zoom to 0.5–2.0 in 0.1 steps.
      * @param {unknown} n
      * @returns {number}
      */
     function clampIframeZoom(n) {
       const x = Number(n);
       if (!Number.isFinite(x)) return 1;
-      const ceiling = zoomCeiling();
-      const floor = ceiling < 1 ? ceiling : 0.5;
-      return Math.round(Math.min(Math.max(x, floor), ceiling) * 1000) / 1000;
+      return Math.min(2, Math.max(0.5, Math.round(x * 10) / 10));
     }
 
     /**
@@ -1041,19 +1009,20 @@ window.__ModuleLoader__.load({
 
     /**
      * Resolve native StatsLine hashed class names from its injected stylesheet.
-     * @returns {{ root: string, sep: string } | null}
+     * @returns {{ root: string, sep: string }}
      */
     function statsLineSelectors() {
+      let root = ".FJxK0a_root";
+      let sep = ".FJxK0a_sep";
       try {
         const tag = document.querySelector('style[data-plugin-css="@deepseek-ai/dsh-client-ui-conversation/StatsLine.module.css"]');
         const css = (tag && tag.textContent) || "";
         const mRoot = css.match(/\.([A-Za-z0-9_-]+_root)\{/);
         const mSep = css.match(/\.([A-Za-z0-9_-]+_sep)\{/);
-        if (mRoot && mSep) return { root: "." + mRoot[1], sep: "." + mSep[1] };
-      } catch (err) { /* treated as absent */ }
-      // No such stylesheet in dsh 0.2.1 or 0.2.2; a hardcoded hash would match
-      // nothing and only bury the fact that the component moved.
-      return null;
+        if (mRoot) root = "." + mRoot[1];
+        if (mSep) sep = "." + mSep[1];
+      } catch (err) { /* fallback hash */ }
+      return { root: root, sep: sep };
     }
 
     /**
@@ -1065,7 +1034,6 @@ window.__ModuleLoader__.load({
       if (!inVscodeIframe()) return;
       try { document.documentElement.classList.remove("dsh-hide-native-stats"); } catch (err) { /* noop */ }
       const sel = statsLineSelectors();
-      if (!sel) return;
       let style = document.getElementById(STATS_COMPACT_STYLE_ID);
       if (!style) {
         style = document.createElement("style");
@@ -2445,12 +2413,6 @@ window.__ModuleLoader__.load({
 
         function applyZoom() {
           if (!inVscodeIframe() && !vscodeIframeHint()) return;
-          // The page zoom that is actually written never exceeds what this frame
-          // width affords, so the host's measured width stays at or above its
-          // drawer line. Widening the panel lifts the ceiling and Cmd +/0 can
-          // climb back; a host that scales the iframe element owns the zoom and
-          // its frame width is already the scaled one.
-          if (!hostScalesFrame()) zoom = clampIframeZoom(zoom);
           // A host that scales the iframe element itself (ext ≥ 2.1.19) owns the
           // zoom; CSS zoom here would double it and desync popover positioning.
           const value = zoom === 1 || hostScalesFrame() ? "" : String(zoom);
@@ -2460,23 +2422,6 @@ window.__ModuleLoader__.load({
         }
 
         applyZoom();
-
-        // Dragging the VS Code panel narrower moves the drawer line over the page,
-        // so the ceiling is recomputed from the frame box rather than a media query.
-        let zoomFrameObserver = null;
-        let zoomFrameRaf = null;
-        if (typeof ResizeObserver !== "undefined") {
-          try {
-            zoomFrameObserver = new ResizeObserver(function () {
-              if (zoomFrameRaf !== null) return;
-              zoomFrameRaf = requestAnimationFrame(function () {
-                zoomFrameRaf = null;
-                applyZoom();
-              });
-            });
-            zoomFrameObserver.observe(document.documentElement);
-          } catch (err) { /* no observer: zoom changes only by user action */ }
-        }
 
         /**
          * @description Cmd/Ctrl + wheel zooms the VS Code iframe only.
