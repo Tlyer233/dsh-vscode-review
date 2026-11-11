@@ -2546,6 +2546,14 @@ window.__ModuleLoader__.load({
               count: result.count,
               reason: result.reason || "",
             });
+            // (2.1.30) The host pulls VS Code focus to the sidebar and pings
+            // back dshFocusComposer; if that round-trip lands after our own
+            // caret work, re-assert once more so cmd+L (selection) and
+            // cmd+shift+L (file) end up in the same place.
+            if (bridgeActive) {
+              setTimeout(function () { try { focusComposer(); } catch (err) { /* noop */ } }, 160);
+              setTimeout(function () { try { focusComposer(); } catch (err) { /* noop */ } }, 460);
+            }
           } else if (msg.type === "dshAnnoDock") {
             // Full-state mirror of the Copilot attachment strip (event-driven:
             // the extension posts this on every observer beacon, never polls).

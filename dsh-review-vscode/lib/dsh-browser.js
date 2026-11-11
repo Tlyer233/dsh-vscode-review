@@ -1524,15 +1524,17 @@ function setupDshBrowser(context) {
             + (msg.reason ? ' reason=' + msg.reason : '')
             + (msg.source ? ' source=' + msg.source : '')
           state.log(line)
-          if (msg.mode && msg.mode !== 'chip') {
-            void vscode.window.showWarningMessage('dsh chip 未生效: ' + line)
-          }
-          // Pull VS Code focus back to the sidebar after every chip insert
-          // (selection AND drag-drop flows), then ping the iframe so the DOM
-          // focus lands on the composer (the Lexical caret needs it).
+          // (2.1.24) Focus handoff runs FIRST. The old order put a
+          // showWarningMessage() for non-chip modes ahead of it; that toast can
+          // take keyboard focus, so the selection path (cmd+L) ended up with the
+          // caret outside the composer while the file path (cmd+shift+L, always
+          // chip mode) kept it. Non-chip is now log-only.
           void focusDshSidebar().then(() => {
             void view.webview.postMessage({ type: 'dshFocusComposer' })
           })
+          if (msg.mode && msg.mode !== 'chip') {
+            state.log('[insert] chip 未生效(mode=' + String(msg.mode) + ', reason=' + String(msg.reason || '') + '): ' + line)
+          }
         }
       })
 

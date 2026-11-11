@@ -1,3 +1,12 @@
+## 2.1.30 + ext 2.1.24:代码段(cmd+L)插入后不聚焦 dsh 输入框(2026-11-11)
+
+- 现象:文件插入 `cmd+shift+L` 光标落到 dsh 输入框;代码段插入 `cmd+L` 不落。
+- 定位:两条命令在扩展里都走 `sendRefsToDsh()`,焦点交接也只有 `dshInsertResult` 一个入口 —— 差异在 client 的 `insertRefsAtCaret()` 返回值:`file`/`folder` 不需要自定义 refSource,恒为 `mode:"chip"`; `selection` 需要 `refSourceRegistered`,未注册时退化为 `mode:"text"`。
+- 根因:扩展的 `dshInsertResult` 处理里,非 chip 模式先 `showWarningMessage('dsh chip 未生效')` 再 `focusDshSidebar()`;通知可抢走键盘焦点,导致 text 模式(selection)光标不落,而 chip 模式(file)不受影响。
+- 改法:① `dsh-browser.js` 焦点交接提到最前,非 chip 只写日志不再弹通知;② `client.js` 插入结果回报后 160ms/460ms 各补一次 `focusComposer()`,兜住宿主焦点往返的时序差。
+- 未改:refSource 注册逻辑、命令与键位。
+- 部署:GitHub main;Mac 与 3080 均经 `install.sh` 升级 plugin 2.1.30 + ext 2.1.24;VS Code 需 Reload Window。
+
 ## 2.1.29 + ext 2.1.23:Remote-SSH 下设置开关失效(split-brain)的根治(2026-11-11)
 
 - 现象:在 3080 的 dsh 设置卡里关掉「浏览器元素批注发给 dsh」,从 Mac 用 VS Code Remote-SSH 打开 Copilot 仍被弹回 dsh;3080 本地看文件已经是 `false`。
