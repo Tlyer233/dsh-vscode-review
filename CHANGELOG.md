@@ -1,3 +1,11 @@
+## 2.1.29 + ext 2.1.23:Remote-SSH 下设置开关失效(split-brain)的根治(2026-11-11)
+
+- 现象:在 3080 的 dsh 设置卡里关掉「浏览器元素批注发给 dsh」,从 Mac 用 VS Code Remote-SSH 打开 Copilot 仍被弹回 dsh;3080 本地看文件已经是 `false`。
+- 根因(split-brain):扩展被 `remote.extensionKind: {"dsn.dsh-review-vscode": ["ui"]}` 钉在 **UI 侧(Mac)**,而设置卡由**远端(3080)的 dsh** 提供并写入 `/home/xi/.dsh/review/shadow/settings.json`;扩展的 `annoFeatureOn()` 读的却是 `/Users/xi/.dsh/review/shadow/settings.json`(仍是 `true`)。两台机器两个文件,开关永远到不了扩展。
+- 改法(推送链路,不再靠文件):① `client.js` 新增 `postReviewSettings()`,在 `dshBridgeHello` 握手时与每次保存成功后,把 `{annotationToDsh, annoHeapBridge}` 通过 `dshReviewSettings` 消息推给父窗口;② `dsh-browser.js` 收到后交给 `state.onReviewSettings`;③ `extension.js` 用 `pushedReviewSettings` 缓存,`annoFeatureOn()`/`annoHeapOn()` **优先用推送值**,读不到才回退到本地文件(浏览器直开 / 老客户端仍走文件)。
+- 保留:2.1.22 的两个闸(启动闸改读 `annoFeatureOn()`;`annoReturnIfIdle()` 单点加闸)。
+- 部署:GitHub main;Mac 与 3080 均经 `install.sh`(拷贝制)升级 plugin 2.1.29 + ext 2.1.23;VS Code 需完整退出重开(Remote-SSH 窗口同理)才加载新扩展。
+
 ## ext 2.1.22:关掉「浏览器元素批注发给 dsh」后仍被弹回 dsh 的根治(2026-11-11)
 
 - 现象:dsh 设置卡里 `annotationToDsh` 与 `annoHeapBridge` 都关掉,点 Copilot 仍然被弹回 dsh 侧栏。

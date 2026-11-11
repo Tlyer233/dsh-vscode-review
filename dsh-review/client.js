@@ -1430,6 +1430,32 @@ window.__ModuleLoader__.load({
             return;
           }
           postToParent({ type: "dshBridgeHello" });
+          // (2.1.29) The settings card is served by THIS dsh, but the VS Code
+          // extension is forced to ["ui"] and runs on the local side, so in a
+          // Remote-SSH window it was reading the LOCAL settings.json and the
+          // toggle was a no-op. Push the live values over the bridge instead;
+          // the extension prefers them and only falls back to its file.
+          postReviewSettings();
+        }
+
+        /**
+         * (2.1.29) Mirror the review settings to the VS Code extension.
+         * @description The card writes through /dsh-review/settings on THIS
+         * host, while the extension (extensionKind ["ui"]) reads its own local
+         * settings.json — in an SSH window those are different machines, so the
+         * toggle never reached it. This push is the authoritative value.
+         */
+        function postReviewSettings() {
+          try {
+            const rs = getReviewSettings();
+            postToParent({
+              type: "dshReviewSettings",
+              settings: {
+                annotationToDsh: rs.annotationToDsh !== false,
+                annoHeapBridge: rs.annoHeapBridge !== false,
+              },
+            });
+          } catch (e) { /* noop */ }
         }
 
         // Real dsh UI activity -> tell the VSCode extension which window the
@@ -3459,6 +3485,7 @@ window.__ModuleLoader__.load({
           }).then(function (value) {
             snapshot = { status: "ready", writable: true, value: value, revision: snapshot.revision + 1 };
             notify();
+            try { postReviewSettings(); } catch (e) { /* noop */ }
             return value;
           });
         },

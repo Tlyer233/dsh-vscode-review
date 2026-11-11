@@ -1275,6 +1275,13 @@ function setupDshBrowser(context) {
           state.log('[client] 正在运行的 dsh 客户端构建 = ' + String(msg.version || '?'))
           return
         }
+        // (2.1.23) The dsh settings card pushes the live toggle values: in a
+        // Remote-SSH window this extension runs on the UI side, so its own
+        // settings.json is a different machine's file.
+        if (msg.type === 'dshReviewSettings') {
+          if (typeof state.onReviewSettings === 'function') state.onReviewSettings(msg.settings)
+          return
+        }
         if (!msg) return
         if (msg.type === 'dshChromeState') {
           saveIframeChrome(msg)

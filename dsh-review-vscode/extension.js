@@ -128,6 +128,20 @@ function activate(context) {
 
   setupDshBrowser(context)
 
+  // (2.1.23) Authoritative review settings pushed by the dsh client over the
+  // webview channel (see postReviewSettings in dsh-review/client.js). The card
+  // is served by the dsh the sidebar points at; this extension is forced to
+  // ["ui"] and may run on a different machine (Remote-SSH), where the local
+  // settings.json is unrelated. Null until the first push.
+  dshState.onReviewSettings = (s) => {
+    pushedReviewSettings = s && typeof s === 'object' ? s : null
+    try {
+      dshState.log('[anno] settings pushed by dsh client: annotationToDsh=' +
+        (pushedReviewSettings ? String(pushedReviewSettings.annotationToDsh) : 'none') +
+        ' annoHeapBridge=' + (pushedReviewSettings ? String(pushedReviewSettings.annoHeapBridge) : 'none'))
+    } catch (e) { /* noop */ }
+  }
+
   // Element annotation → dsh mirror (Comment on Elements). Gated by
   // dshReview.annotationToDsh (default on). The CDP driver injects an
   // event-driven MutationObserver into THIS window's workbench (scoped via the
@@ -524,7 +538,11 @@ function annoHoverCardVisible() {
     return true
   }
 }
+/** (2.1.23) Live values pushed by the dsh client; null until the first push. */
+let pushedReviewSettings = null
 function annoFeatureOn() {
+  // Pushed value wins: the file below may belong to another machine.
+  if (pushedReviewSettings) return pushedReviewSettings.annotationToDsh !== false
   try {
     const raw = readShadowSettings()
     if (!raw) return true
@@ -1136,6 +1154,7 @@ function annoChipKeys(chips) {
  * freebie of the same scan and land as extra files listed in the block.
  */
 function annoHeapOn() {
+  if (pushedReviewSettings) return pushedReviewSettings.annoHeapBridge !== false
   try {
     const raw = readShadowSettings()
     if (!raw) return true
