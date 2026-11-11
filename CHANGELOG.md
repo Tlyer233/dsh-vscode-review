@@ -1,3 +1,12 @@
+## ext 2.1.22:关掉「浏览器元素批注发给 dsh」后仍被弹回 dsh 的根治(2026-11-11)
+
+- 现象:dsh 设置卡里 `annotationToDsh` 与 `annoHeapBridge` 都关掉,点 Copilot 仍然被弹回 dsh 侧栏。
+- 根因一(启动闸读错源):`extension.js` 激活时读的是 `vscode.workspace.getConfiguration('dshReview').get('annotationToDsh')`,而 `package.json` **从未贡献**这个配置键 → 永远 `undefined` → `!== false` 恒真 → CDP 驱动无条件注入 workbench(实测 `window.__dshAnnoWb` 始终存在)。真正读文件的只有事件时的 `annoFeatureOn()`。
+- 根因二(回跳没有统一闸):`dshView.show(true)` 的调用点是 `annoReturnIfIdle()`,而 `annoReturnToDsh = true` 有 12 个设置点(onOpened / beacon 防抖 / send / delete / startup cleanup),逐个加闸必然漏;dsh 视图容器注册在 `secondarySidebar`,与 Copilot Chat 抢同一个副边栏坑位,任何一条漏网路径都会把 Copilot 顶掉。
+- 改法:① 激活闸改读 `annoFeatureOn()`(即 `<shadowRoot>/settings.json` 的 `annotationToDsh`),关=驱动根本不启动;② `annoReturnIfIdle()` 入口加 `if (!annoFeatureOn()) { annoReturnToDsh = false; return }`,所有回跳路径单点归零,且不影响用户主动"发送到 dsh"(`sendRefsToDsh` 走 `focusDshSidebar()`,不过这个闸)。
+- 未改:VS Code 扩展的其余命令、dsh 插件(仍 2.1.28)、侧栏注册位置(仍在 secondarySidebar)。
+- 部署:GitHub main;Mac 与 3080 均经 `install.sh`(拷贝制)升级 ext 2.1.22;VS Code 需 Ctrl+Q 完整退出重开才加载新扩展代码。
+
 ## 2.1.28:Review Changes 浮条配色改吃主题 token(去 hex、删「适配 Claude 界面」开关)(2026-11-10)
 
 - 根因:浮条里的 `#d97757`/`#b53333` 是把 dsh-claude-style 的结果抄了一份;而非 Claude 分支用的 `--dsh-color-*` 在 DSH 里**从未定义**(core css/theme/全仓库 0 处定义),20 处 `var(--dsh-color-*, fallback)` 全部走 fallback —— 表面是 token,实际是写死。

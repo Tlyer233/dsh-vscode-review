@@ -134,7 +134,12 @@ function activate(context) {
   // dsh composer webview, so a sibling SSH window is never touched) and mirrors
   // NEW element chips + their comment text into the dsh composer. No polling.
   try {
-    const annoOn = vscode.workspace.getConfiguration('dshReview').get('annotationToDsh') !== false
+    // (2.1.22) ROOT FIX: gate on the dsh 设置 card file, NOT on a VS Code
+    // setting this extension never contributes — getConfiguration() returned
+    // undefined, "undefined !== false" is true, so the CDP driver was injected
+    // into the workbench even with the toggle OFF. Off now means the feature
+    // does not exist: no driver, no observer, no view switching.
+    const annoOn = annoFeatureOn()
     if (annoOn) {
       const annoDriver = new AnnoDriver({
         log: (msg) => log.appendLine('[anno] ' + msg),
@@ -552,6 +557,12 @@ async function waitForChipBeacon(ms) {
   })
 }
 function annoReturnIfIdle() {
+  // (2.1.22) ROOT FIX: every flash-back path funnels through here, so this is
+  // the one gate that stops ALL of them (onOpened / debounced beacon / send /
+  // delete / startup cleanup) even when a stale caller already armed the flag.
+  // The dsh sidebar is in the secondary sidebar — the same slot Copilot Chat
+  // uses — so an ungated show(true) here is what yanks Copilot back to dsh.
+  if (!annoFeatureOn()) { annoReturnToDsh = false; return }
   if (annoFreezeReturn) return // annoSendSync is reading the widget; keep it open
   if (annoReturnTimeout) { clearTimeout(annoReturnTimeout); annoReturnTimeout = null }
   if (!annoReturnToDsh || annoDeletesInFlight > 0) return
